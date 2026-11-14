@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref, computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Plus, ArrowRight, Document, Wallet, TrendCharts, Coin, Box, FolderOpened } from '@element-plus/icons-vue'
+import { Plus, ArrowRight, Document, Wallet, TrendCharts, Coin, Box } from '@element-plus/icons-vue'
 import PageHeader from '../components/PageHeader.vue'
 import StatusTag from '../components/StatusTag.vue'
 import GroupedBarChart from '../components/GroupedBarChart.vue'
@@ -29,12 +29,25 @@ const dim = ref<'customer' | 'brand' | 'city' | 'line'>('customer')
 const showAllDims = ref(false)
 const DIM_LIMIT = 10
 /** 业务（品牌）筛选，空字符串为全部业务；写入地址栏便于分享。 */
-const brand = ref(String(route.query.brand || ''))
+const brand = ref(String(route.query.brand || '')),
+  group = ref(brand.value ? '' : String(route.query.group || ''))
+/** 业务选择器的值：'' 全部；'g:集团' 整个集团；'l:业务线' 单条业务线。 */
+const scope = computed({
+  get: () => (brand.value ? `l:${brand.value}` : group.value ? `g:${group.value}` : ''),
+  set: (v: string) => {
+    brand.value = v.startsWith('l:') ? v.slice(2) : ''
+    group.value = v.startsWith('g:') ? v.slice(2) : ''
+  },
+})
 
 async function load() {
   loading.value = true
   try {
-    const q = brand.value ? `?brand=${encodeURIComponent(brand.value)}` : ''
+    const q = brand.value
+      ? `?brand=${encodeURIComponent(brand.value)}`
+      : group.value
+        ? `?group=${encodeURIComponent(group.value)}`
+        : ''
     ;[data.value, contracts.value] = await Promise.all([
       api<Dashboard>(`/dashboard${q}`),
       api<Contract[]>('/contracts'),
@@ -47,17 +60,31 @@ async function load() {
   }
 }
 onMounted(load)
-watch(brand, (b) => {
+watch([brand, group], ([b, g]) => {
   if (b && dim.value === 'brand') dim.value = 'customer'
-  router.replace({ query: { ...route.query, brand: b || undefined } })
+  router.replace({ query: { ...route.query, brand: b || undefined, group: g || undefined } })
   load()
 })
 const brandRowClass = ({ row }: { row: BrandLines }) => (row.brand === brand.value ? 'current-brand' : '')
-const brandOptions = computed(() => data.value?.brand_lines.map((b) => b.brand) ?? [])
+/** 有合同数据的业务线，按客户集团分组。 */
+const scopeGroups = computed(() => {
+  const out: { group: string; lines: string[] }[] = []
+  for (const r of data.value?.brand_lines ?? []) {
+    let g = out.find((x) => x.group === r.group)
+    if (!g) out.push((g = { group: r.group, lines: [] }))
+    g.lines.push(r.brand)
+  }
+  return out
+})
 const scopedContracts = computed(() =>
-  brand.value ? contracts.value.filter((c) => c.brands.includes(brand.value)) : contracts.value,
+  brand.value
+    ? contracts.value.filter((c) => c.brands.includes(brand.value))
+    : group.value
+      ? contracts.value.filter((c) => c.brands.some((b) => groupOf.value[b] === group.value))
+      : contracts.value,
 )
-const scopeName = computed(() => (brand.value ? brandName(brand.value) : '全部业务'))
+const groupOf = computed(() => Object.fromEntries((data.value?.brand_lines ?? []).map((r) => [r.brand, r.group])))
+const scopeName = computed(() => brand.value || (group.value ? `${group.value}（全部业务线）` : '全部业务'))
 const mainLines = computed(() => (data.value?.line_summary ?? []).filter((l) => l.name in LINE_COLOR))
 const minorLines = computed(() => (data.value?.line_summary ?? []).filter((l) => !(l.name in LINE_COLOR)))
 const minorNote = computed(
@@ -118,11 +145,12 @@ const allDimRows = computed<BizRow[]>(() =>
           : data.value.by_line,
 )
 const dimRows = computed(() => (showAllDims.value ? allDimRows.value : allDimRows.value.slice(0, DIM_LIMIT)))
-const dimName = computed(() => ({ customer: '客户', brand: '品牌', city: '城市', line: '产品线' })[dim.value])
+const dimName = computed(() => ({ customer: '客户', brand: '业务线', city: '城市', line: '产品线' })[dim.value])
 watch(dim, () => (showAllDims.value = false))
 const dimMax = computed(() => Math.max(1, ...dimRows.value.map((r) => r.contract_amount)))
+/** 业务线名称已在业务字典中维护，直接显示。 */
 function brandName(n: string) {
-  return n === '小象' ? '美团小象' : n === '快乐猴' ? '美团快乐猴' : n
+  return n
 }
 const agingMax = computed(() => Math.max(1, ...(data.value?.aging.map((a) => a.contract_amount) ?? [1])))
 const agingColor = ['#9fb3a6', '#e0a458', '#d9773c', '#c4512e', '#9e2f22']
@@ -140,15 +168,14 @@ const openQuote = (q: Quote) => router.push(`/quotes?detail=${q.id}`)
         家客户 · 合同额按下单月、到账按收款日
       </template>
       <div class="biz-switch" role="group" aria-label="按业务筛选">
-        <el-radio-group v-model="brand" size="small" :disabled="loading || !data">
-          <el-radio-button value="">全部业务</el-radio-button>
-          <el-radio-button v-for="b in brandOptions" :key="b" :value="b">{{ brandName(b) }}</el-radio-button>
-        </el-radio-group>
+        <el-select v-model="scope" size="small" class="scope-select" :disabled="loading || !data">
+          <el-option label="全部业务" value="" />
+          <el-option-group v-for="g in scopeGroups" :key="g.group" :label="g.group">
+            <el-option :label="`${g.group}（全部）`" :value="`g:${g.group}`" />
+            <el-option v-for="l in g.lines" :key="l" :label="l" :value="`l:${l}`" />
+          </el-option-group>
+        </el-select>
       </div>
-      <el-button size="small" @click="router.push('/projects')">
-        <el-icon><FolderOpened /></el-icon>
-        项目台账
-      </el-button>
       <el-button v-if="canWrite()" size="small" type="primary" @click="router.push('/quotes?new=1')">
         <el-icon><Plus /></el-icon>
         快速报价
@@ -265,11 +292,12 @@ const openQuote = (q: Quote) => router.push(`/quotes?detail=${q.id}`)
             </div>
           </div>
           <el-table class="brand-matrix" :data="data.brand_lines" size="small" :row-class-name="brandRowClass">
-            <el-table-column label="业务" min-width="88">
+            <el-table-column label="业务线" min-width="110">
               <template #default="{ row }">
-                <el-button link @click="brand = row.brand === brand ? '' : row.brand">
+                <el-button link @click="scope = row.brand === brand ? '' : `l:${row.brand}`">
                   {{ brandName(row.brand) }}
                 </el-button>
+                <small class="matrix-group">{{ row.group }}</small>
               </template>
             </el-table-column>
             <el-table-column v-for="n in [CABINET, IOT]" :key="n" align="center">
@@ -416,7 +444,7 @@ const openQuote = (q: Quote) => router.push(`/quotes?detail=${q.id}`)
             </div>
             <el-radio-group v-model="dim" size="small">
               <el-radio-button value="customer">客户</el-radio-button>
-              <el-radio-button v-if="!brand" value="brand">品牌</el-radio-button>
+              <el-radio-button v-if="!brand" value="brand">业务线</el-radio-button>
               <el-radio-button value="city">城市</el-radio-button>
               <el-radio-button value="line">产品线</el-radio-button>
             </el-radio-group>
@@ -592,6 +620,15 @@ const openQuote = (q: Quote) => router.push(`/quotes?detail=${q.id}`)
   </div>
 </template>
 <style scoped>
+.matrix-group {
+  display: block;
+  color: #8a958e;
+  font-size: 11px;
+  line-height: 1.2;
+}
+.scope-select {
+  width: 200px;
+}
 .biz-switch {
   display: flex;
   align-items: center;

@@ -6,7 +6,8 @@ import PageHeader from '../components/PageHeader.vue'
 import ProjectTypeManager from '../components/ProjectTypeManager.vue'
 import SupplierTemplateManager from '../components/SupplierTemplateManager.vue'
 import ProductDrawings from '../components/ProductDrawings.vue'
-import { api, post, put, canWrite } from '../api'
+import ExcelTools from '../components/ExcelTools.vue'
+import { api, post, put, canWrite, canFinance } from '../api'
 import type { Partner, Product } from '../types'
 import { money, missingInvoiceFields, invoiceText, invoiceTypeName } from '../utils'
 const partners = ref<Partner[]>([]),
@@ -140,13 +141,28 @@ function edit(row: Partner | Product) {
   }
   dialog.value = true
 }
+/** 当前标签对应的 Excel 数据集。 */
+const excel = computed(
+  () =>
+    ({
+      CUSTOMER: { dataset: 'customers', title: '客户资料', canImport: canWrite() },
+      SUPPLIER: { dataset: 'suppliers', title: '供应商资料', canImport: canWrite() },
+      PRODUCT: { dataset: 'products', title: '标准产品库', canImport: canWrite() },
+      TYPES: { dataset: 'project-types', title: '项目类型', canImport: canWrite() },
+      COSTS: { dataset: 'supplier-templates', title: '供应商成本模板', canImport: canFinance() },
+    })[tab.value]!,
+)
+/** 导入后重新挂载项目类型 / 成本模板组件以刷新数据。 */
+const reloadKey = ref(0)
+async function afterImport() {
+  reloadKey.value++
+  await load()
+}
 const isConfig = computed(() => tab.value === 'TYPES' || tab.value === 'COSTS')
 const kindName = computed(() => (tab.value === 'PRODUCT' ? '标准产品' : tab.value === 'CUSTOMER' ? '客户' : '供应商'))
 async function save() {
   if (
-    tab.value === 'PRODUCT'
-      ? !product.value.scenario.trim() || !product.value.name.trim() || !product.value.specification.trim()
-      : !partner.value.name.trim()
+    tab.value === 'PRODUCT' ? !product.value.scenario.trim() || !product.value.name.trim() : !partner.value.name.trim()
   )
     return ElMessage.warning('请填写必填资料')
   busy.value = true
@@ -173,7 +189,14 @@ onMounted(load)
       title="基础资料"
       description="客户、供应商、标准产品、项目类型与供应商成本，报价与经营分析都以此为基础。"
     >
-      <el-button v-if="canWrite() && !isConfig" type="primary" @click="open">
+      <ExcelTools
+        :key="excel.dataset"
+        :dataset="excel.dataset"
+        :title="excel.title"
+        :can-import="excel.canImport"
+        @imported="afterImport"
+      />
+      <el-button v-if="canWrite() && !isConfig" type="primary" size="small" @click="open">
         <el-icon><Plus /></el-icon>
         {{ tab === 'PRODUCT' ? '新增标准产品' : tab === 'CUSTOMER' ? '新增客户' : '新增供应商' }}
       </el-button>
@@ -212,8 +235,8 @@ onMounted(load)
         />
         <span class="muted count">共 {{ filteredProducts.length }} 个产品</span>
       </div>
-      <ProjectTypeManager v-if="tab === 'TYPES'" :products="products" />
-      <SupplierTemplateManager v-else-if="tab === 'COSTS'" />
+      <ProjectTypeManager v-if="tab === 'TYPES'" :key="`t${reloadKey}`" :products="products" />
+      <SupplierTemplateManager v-else-if="tab === 'COSTS'" :key="`c${reloadKey}`" />
       <el-table v-else-if="tab !== 'PRODUCT'" :data="filteredPartners.slice((page - 1) * 12, page * 12)">
         <el-table-column :label="tab === 'CUSTOMER' ? '客户名称' : '供应商名称'" prop="name" min-width="220" />
         <el-table-column label="联系人 / 电话" min-width="150">
@@ -357,7 +380,7 @@ onMounted(load)
             </el-form-item>
           </div>
           <el-form-item label="产品名称" required><el-input v-model="product.name" maxlength="200" /></el-form-item>
-          <el-form-item label="规格" required>
+          <el-form-item label="规格（软件、服务类可留空）">
             <el-input v-model="product.specification" maxlength="200" placeholder="例如：650×850×250 mm" />
           </el-form-item>
           <el-form-item label="型号 / 关键配置"><el-input v-model="product.model" maxlength="100" /></el-form-item>

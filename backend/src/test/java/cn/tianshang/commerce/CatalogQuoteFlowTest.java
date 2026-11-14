@@ -117,7 +117,7 @@ class CatalogQuoteFlowTest extends ApiTestSupport {
 
         var q = getJson("/api/quotes/" + quote);
         assertThat(q.path("city").asText()).isEqualTo("天津");
-        assertThat(q.path("brand").asText()).isEqualTo("小象");
+        assertThat(q.path("brand").asText()).isEqualTo("小象前置仓");
         assertThat(q.path("supplier_name").asText()).startsWith("测试供应商");
         assertThat(q.path("project_type_name").asText()).startsWith("测试前置仓");
         assertThat(q.path("amount").decimalValue()).isEqualByComparingTo("12500");

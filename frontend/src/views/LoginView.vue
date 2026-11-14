@@ -46,7 +46,7 @@ async function submit() {
           <span>03 利润与回款</span>
         </div>
       </div>
-      <div class="login-bottom">快乐猴 / 小象项目经营工作台</div>
+      <div class="login-bottom">项目经营工作台</div>
     </section>
     <section class="login-form-wrap">
       <form class="login-form" @submit.prevent="submit">

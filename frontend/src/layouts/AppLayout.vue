@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onMounted } from 'vue'
+import { businesses, loadBusinesses } from '../business'
 import { useRoute, useRouter } from 'vue-router'
 import {
   DataAnalysis,
@@ -32,6 +33,10 @@ async function logout() {
   session.user = null
   await router.push('/login')
 }
+/** 侧边栏显示业务字典中启用的客户集团与业务线。 */
+const activeGroups = computed(() => businesses.groups.filter((g) => g.active && g.lines.some((l) => l.active)))
+const activeLines = computed(() => activeGroups.value.flatMap((g) => g.lines.filter((l) => l.active)))
+onMounted(() => loadBusinesses().catch(() => undefined))
 </script>
 <template>
   <div class="workspace">
@@ -60,11 +65,10 @@ async function logout() {
         </router-link>
       </nav>
       <div class="sidebar-project">
-        <div class="mini-label">当前业务空间</div>
-        <strong>美团项目事业部</strong>
+        <div class="mini-label">服务客户</div>
+        <strong>{{ activeGroups.map((g) => g.name).join(' · ') || '未设置业务字典' }}</strong>
         <div class="brand-pills">
-          <span>快乐猴</span>
-          <span>小象超市</span>
+          <span v-for="l in activeLines" :key="l.id">{{ l.short_name || l.name }}</span>
         </div>
         <p>报价 · 成本 · 利润 · 回款</p>
       </div>

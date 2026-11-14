@@ -1,5 +1,6 @@
 package cn.tianshang.commerce.catalog;
 
+import cn.tianshang.commerce.business.BusinessService;
 import cn.tianshang.commerce.common.*;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.*;
@@ -18,9 +19,11 @@ import org.springframework.transaction.annotation.Transactional;
 public class CatalogService {
 
     private final Database db;
+    private final BusinessService business;
 
-    public CatalogService(Database db) {
+    public CatalogService(Database db, BusinessService business) {
         this.db = db;
+        this.business = business;
     }
 
     // ---------- 项目类型 ----------
@@ -54,7 +57,7 @@ public class CatalogService {
 
     public record TypeInput(
         @NotBlank @Size(max = 100) String name,
-        @NotNull @Pattern(regexp = "小象|快乐猴|其他|未指定") String brand,
+        @NotBlank @Size(max = 30) String brand,
         @Size(max = 1000) String note,
         boolean active,
         @NotNull @Size(max = 100) List<@Valid TypeLine> items
@@ -64,13 +67,22 @@ public class CatalogService {
     @Transactional
     public String saveType(String id, @Valid TypeInput t) {
         requireDistinct(t.items().stream().map(TypeLine::productId).toList());
+        String current =
+            id == null
+                ? null
+                : db.jdbc
+                      .queryForList("SELECT brand FROM project_type WHERE id=?", String.class, id)
+                      .stream()
+                      .findFirst()
+                      .orElse(null);
+        String brand = business.resolve(t.brand(), current);
         if (id == null) {
             id = db.id();
             db.jdbc.update(
                 "INSERT INTO project_type(id,name,brand,note,active) VALUES(?,?,?,?,?)",
                 id,
                 t.name().trim(),
-                t.brand(),
+                brand,
                 blank(t.note()),
                 t.active()
             );
@@ -79,7 +91,7 @@ public class CatalogService {
             db.jdbc.update(
                 "UPDATE project_type SET name=?,brand=?,note=?,active=?,updated_at=CURRENT_TIMESTAMP WHERE id=?",
                 t.name().trim(),
-                t.brand(),
+                brand,
                 blank(t.note()),
                 t.active(),
                 id

@@ -1,5 +1,6 @@
 package cn.tianshang.commerce.master;
 
+import cn.tianshang.commerce.business.BusinessService;
 import cn.tianshang.commerce.common.*;
 import cn.tianshang.commerce.contract.Contracts;
 import jakarta.validation.Valid;
@@ -14,9 +15,11 @@ import org.springframework.transaction.annotation.Transactional;
 public class MasterService {
 
     private final Database db;
+    private final BusinessService business;
 
-    public MasterService(Database db) {
+    public MasterService(Database db, BusinessService business) {
         this.db = db;
+        this.business = business;
     }
 
     public List<Map<String, Object>> partners() {
@@ -89,7 +92,7 @@ public class MasterService {
 
     public record ProjectInput(
         @NotBlank @Size(max = 300) String name,
-        @NotNull @Pattern(regexp = "小象|快乐猴|其他|未指定") String brand,
+        @NotBlank @Size(max = 30) String brand,
         @NotBlank String customerId,
         @Size(max = 150) String externalId,
         LocalDate orderDate,
@@ -123,7 +126,7 @@ public class MasterService {
             id,
             code,
             p.name().trim(),
-            p.brand(),
+            business.resolve(p.brand(), null),
             p.customerId(),
             blankToNull(p.externalId()),
             p.orderDate(),
@@ -148,7 +151,7 @@ public class MasterService {
         db.jdbc.update(
             "UPDATE project SET name=?,brand=?,external_id=?,order_date=?,note=?,contract_no=?,shipping_status=?,city=?,project_type_id=? WHERE id=?",
             p.name().trim(),
-            p.brand(),
+            business.resolve(p.brand(), db.text(original, "brand")),
             blankToNull(p.externalId()),
             p.orderDate(),
             p.note(),
@@ -180,7 +183,7 @@ public class MasterService {
     public record ProductInput(
         @NotBlank @Size(max = 60) String scenario,
         @NotBlank @Size(max = 200) String name,
-        @NotBlank @Size(max = 200) String specification,
+        @Size(max = 200) String specification,
         @Size(max = 100) String model,
         @NotBlank @Size(max = 30) String unit,
         @Size(max = 36) String supplierId,
@@ -202,7 +205,7 @@ public class MasterService {
             id,
             p.scenario().trim(),
             p.name().trim(),
-            p.specification().trim(),
+            Objects.toString(p.specification(), "").trim(),
             Objects.toString(p.model(), "").trim(),
             p.unit(),
             supplier(p.supplierId()),
@@ -268,7 +271,7 @@ public class MasterService {
             "UPDATE product SET scenario=?,name=?,specification=?,model=?,unit=?,supplier_id=?,mainstream=? WHERE id=?",
             p.scenario().trim(),
             p.name().trim(),
-            p.specification().trim(),
+            Objects.toString(p.specification(), "").trim(),
             Objects.toString(p.model(), "").trim(),
             p.unit(),
             supplier(p.supplierId()),

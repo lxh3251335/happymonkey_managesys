@@ -189,6 +189,7 @@ export interface MonthRow extends BizRow {
 /** 品牌（业务）× 产品线对比，始终基于全部业务 */
 export interface BrandLines {
   brand: string
+  group: string
   contract_amount: number
   gross_margin: number | null
   lines: BizRow[]
@@ -199,6 +200,7 @@ export interface Dashboard {
   /** 当前筛选下的产品线汇总，固定顺序：电控柜、物联网电箱，其余有数据才出现 */
   line_summary: BizRow[]
   brand: string | null
+  group: string | null
   brand_lines: BrandLines[]
   by_customer: BizRow[]
   by_brand: BizRow[]
@@ -375,4 +377,22 @@ export interface ProductDrawing {
   note: string | null
   uploaded_by: string
   created_at: string
+}
+export interface BusinessLine {
+  id: string
+  group_id: string
+  name: string
+  short_name: string | null
+  sort: number
+  active: boolean
+  note: string | null
+  projects: number
+  project_types: number
+}
+export interface BusinessGroup {
+  id: string
+  name: string
+  sort: number
+  active: boolean
+  lines: BusinessLine[]
 }

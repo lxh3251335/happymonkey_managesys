@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { Plus, Search, Refresh } from '@element-plus/icons-vue'
 import PageHeader from '../components/PageHeader.vue'
+import BusinessSelect from '../components/BusinessSelect.vue'
 import { api, post, canWrite } from '../api'
 import type { Project, Partner, ProjectType } from '../types'
 import { day, today } from '../utils'
@@ -20,7 +21,7 @@ const rows = ref<Project[]>([]),
   router = useRouter()
 const fresh = () => ({
   name: '',
-  brand: '小象',
+  brand: '未指定',
   customerId: '',
   externalId: '',
   orderDate: today(),
@@ -116,16 +117,14 @@ onMounted(load)
           :prefix-icon="Search"
           @input="page = 1"
         />
-        <el-select v-model="brand" clearable placeholder="全部品牌" @change="page = 1">
-          <el-option v-for="s in ['小象', '快乐猴', '其他', '未指定']" :key="s" :label="s" :value="s" />
-        </el-select>
+        <BusinessSelect v-model="brand" clearable placeholder="全部业务线" class="business-filter" @change="page = 1" />
         <el-button :icon="Refresh" @click="load">刷新</el-button>
         <span class="filter-count">共 {{ filtered.length }} 个项目</span>
       </div>
       <el-table :data="filtered.slice((page - 1) * 12, page * 12)">
         <el-table-column label="项目 / 门店" prop="name" min-width="290" show-overflow-tooltip />
         <el-table-column label="客户" prop="customer_name" min-width="120" />
-        <el-table-column label="品牌 / 类型" width="120">
+        <el-table-column label="业务线 / 类型" width="130">
           <template #default="{ row }">
             {{ row.brand }}
             <small class="cell-secondary">{{ row.project_type_name || '未设类型' }}</small>
@@ -173,10 +172,8 @@ onMounted(load)
           <el-input v-model="form.name" maxlength="300" placeholder="例如：小象上海长临路店" />
         </el-form-item>
         <div class="form-grid">
-          <el-form-item label="所属品牌" required>
-            <el-select v-model="form.brand">
-              <el-option v-for="b in ['小象', '快乐猴', '其他', '未指定']" :key="b" :value="b" :label="b" />
-            </el-select>
+          <el-form-item label="业务线" required>
+            <BusinessSelect v-model="form.brand" />
           </el-form-item>
           <el-form-item label="客户" required>
             <el-select v-model="form.customerId" filterable :disabled="!!editing" placeholder="选择客户">
@@ -232,3 +229,8 @@ onMounted(load)
     </el-dialog>
   </div>
 </template>
+<style scoped>
+.business-filter {
+  width: 170px;
+}
+</style>

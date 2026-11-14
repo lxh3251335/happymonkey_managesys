@@ -5,6 +5,7 @@ import { Delete, Plus } from '@element-plus/icons-vue'
 import { api, post, put, canWrite } from '../api'
 import type { Product, ProjectType, Quote } from '../types'
 import { money } from '../utils'
+import BusinessSelect from './BusinessSelect.vue'
 
 const props = defineProps<{ products: Product[] }>()
 const types = ref<ProjectType[]>([]),
@@ -18,7 +19,7 @@ interface Line {
   quantity: number
   unitPrice: number | undefined
 }
-const form = ref({ name: '', brand: '小象', note: '', active: true, items: [] as Line[] })
+const form = ref({ name: '', brand: '未指定', note: '', active: true, items: [] as Line[] })
 
 async function load() {
   try {
@@ -50,7 +51,13 @@ async function open(t?: ProjectType) {
           unitPrice: i.unit_price == null ? undefined : Number(i.unit_price),
         })),
       }
-    : { name: '', brand: '小象', note: '', active: true, items: [{ productId: '', quantity: 1, unitPrice: undefined }] }
+    : {
+        name: '',
+        brand: '未指定',
+        note: '',
+        active: true,
+        items: [{ productId: '', quantity: 1, unitPrice: undefined }],
+      }
   dialog.value = true
   if (!quotes.value.length) quotes.value = await api<Quote[]>('/quotes').catch(() => [])
 }
@@ -103,7 +110,7 @@ async function save() {
           <el-tag v-if="!row.active" size="small" type="info" class="gap">已停用</el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="品牌" prop="brand" width="80" />
+      <el-table-column label="业务线" prop="brand" width="110" />
       <el-table-column label="标准配置" min-width="320">
         <template #default="{ row }">
           <span v-if="!row.items.length" class="muted">未设置配置</span>
@@ -133,10 +140,8 @@ async function save() {
           <el-form-item label="类型名称" required>
             <el-input v-model="form.name" maxlength="100" placeholder="如：小象前置仓" />
           </el-form-item>
-          <el-form-item label="品牌">
-            <el-select v-model="form.brand">
-              <el-option v-for="b in ['小象', '快乐猴', '其他']" :key="b" :value="b" :label="b" />
-            </el-select>
+          <el-form-item label="业务线">
+            <BusinessSelect v-model="form.brand" />
           </el-form-item>
           <el-form-item label="状态">
             <el-switch v-model="form.active" active-text="启用" inactive-text="停用" />

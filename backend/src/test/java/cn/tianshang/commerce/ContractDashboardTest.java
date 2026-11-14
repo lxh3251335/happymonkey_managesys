@@ -183,8 +183,8 @@ class ContractDashboardTest extends ApiTestSupport {
             }
         var brands = new HashMap<String, BigDecimal>();
         d.path("by_brand").forEach(x -> brands.put(x.path("name").asText(), x.path("contract_amount").decimalValue()));
-        assertThat(brands.get("小象")).isEqualByComparingTo("100.00");
-        assertThat(brands.get("快乐猴")).isEqualByComparingTo("200.00");
+        assertThat(brands.get("小象前置仓")).isEqualByComparingTo("100.00");
+        assertThat(brands.get("快乐猴超市")).isEqualByComparingTo("200.00");
         assertThat(d.path("aging").get(2).path("contract_amount").decimalValue()).isEqualByComparingTo("210.00");
         assertThat(d.path("by_line").get(0).path("name").asText()).isEqualTo("电控柜");
     }

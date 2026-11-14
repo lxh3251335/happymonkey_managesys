@@ -72,8 +72,8 @@ class BusinessAnalysisTest extends ApiTestSupport {
         assertThat(line(lines, "物联网电箱").path("gross_margin").decimalValue()).isEqualByComparingTo("0.64");
 
         var brandLines = all.path("brand_lines");
-        assertThat(brandLines.get(0).path("brand").asText()).isEqualTo("小象");
-        assertThat(brandLines.get(1).path("brand").asText()).isEqualTo("快乐猴");
+        assertThat(brandLines.get(0).path("brand").asText()).isEqualTo("小象前置仓");
+        assertThat(brandLines.get(1).path("brand").asText()).isEqualTo("快乐猴超市");
         var monkeyIot = line(brandLines.get(1).path("lines"), "物联网电箱");
         assertThat(monkeyIot.path("contract_amount").decimalValue()).isEqualByComparingTo("500");
         assertThat(monkeyIot.path("gross_margin").decimalValue()).isEqualByComparingTo("0.6");
@@ -84,7 +84,7 @@ class BusinessAnalysisTest extends ApiTestSupport {
             ).isEqualByComparingTo("3000");
 
         var xiaoxiang = getJson("/api/dashboard?brand=小象");
-        assertThat(xiaoxiang.path("brand").asText()).isEqualTo("小象");
+        assertThat(xiaoxiang.path("brand").asText()).isEqualTo("小象前置仓");
         assertThat(xiaoxiang.path("totals").path("contract_amount").decimalValue()).isEqualByComparingTo("8000");
         assertThat(xiaoxiang.path("by_customer").get(0).path("contract_amount").decimalValue()).isEqualByComparingTo(
             "8000"

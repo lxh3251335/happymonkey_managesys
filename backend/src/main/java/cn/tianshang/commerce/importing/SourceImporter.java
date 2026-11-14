@@ -16,10 +16,12 @@ public class SourceImporter {
 
     private final Database db;
     private final ObjectMapper mapper;
+    private final cn.tianshang.commerce.business.BusinessService business;
 
-    public SourceImporter(Database db, ObjectMapper mapper) {
+    public SourceImporter(Database db, ObjectMapper mapper, cn.tianshang.commerce.business.BusinessService business) {
         this.db = db;
         this.mapper = mapper;
+        this.business = business;
     }
 
     @Transactional
@@ -50,7 +52,7 @@ public class SourceImporter {
                     projectId,
                     code,
                     r.path("project").asText(),
-                    r.path("brand").asText(),
+                    business.resolveOrUnassigned(r.path("brand").asText()),
                     customer,
                     date,
                     note,

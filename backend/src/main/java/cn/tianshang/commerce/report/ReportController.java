@@ -14,7 +14,10 @@ public class ReportController {
     }
 
     @GetMapping
-    public Map<String, Object> dashboard(@RequestParam(required = false) String brand) {
-        return service.dashboard(brand);
+    public Map<String, Object> dashboard(
+        @RequestParam(required = false) String brand,
+        @RequestParam(required = false) String group
+    ) {
+        return service.dashboard(brand, group);
     }
 }

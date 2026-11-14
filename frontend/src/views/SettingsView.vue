@@ -3,6 +3,7 @@ import { ref, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import PageHeader from '../components/PageHeader.vue'
 import TemplateManager from '../components/TemplateManager.vue'
+import BusinessManager from '../components/BusinessManager.vue'
 import { api, post, put, session } from '../api'
 import type { User, Audit, ImportBatch } from '../types'
 import { roleName, day } from '../utils'
@@ -108,6 +109,7 @@ onMounted(load)
         <el-tab-pane label="账户安全" name="account" />
         <template v-if="session.user?.role === 'ADMIN'">
           <el-tab-pane label="用户与角色" name="users" />
+          <el-tab-pane label="业务字典" name="business" />
           <el-tab-pane label="报价模板" name="templates" />
           <el-tab-pane label="操作审计" name="audit" />
           <el-tab-pane label="历史数据导入" name="imports" />
@@ -150,6 +152,7 @@ onMounted(load)
         </el-table>
       </div>
       <TemplateManager v-if="tab === 'templates'" />
+      <BusinessManager v-if="tab === 'business'" />
       <el-table v-if="tab === 'audit'" :data="audits" max-height="600">
         <el-table-column label="日期" width="120">
           <template #default="{ row }">{{ day(row.created_at) }}</template>

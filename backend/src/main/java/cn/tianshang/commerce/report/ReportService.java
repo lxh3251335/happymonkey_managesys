@@ -33,11 +33,18 @@ public class ReportService {
     private final Database db;
     private final QuoteService quotes;
     private final ContractLedger ledger;
+    private final cn.tianshang.commerce.business.BusinessService business;
 
-    public ReportService(Database db, QuoteService quotes, ContractLedger ledger) {
+    public ReportService(
+        Database db,
+        QuoteService quotes,
+        ContractLedger ledger,
+        cn.tianshang.commerce.business.BusinessService business
+    ) {
         this.db = db;
         this.quotes = quotes;
         this.ledger = ledger;
+        this.business = business;
     }
 
     /** 一个分组的累计值。 */
@@ -82,27 +89,36 @@ public class ReportService {
     }
 
     public Map<String, Object> dashboard() {
-        return dashboard(null);
+        return dashboard(null, null);
     }
 
     public Map<String, Object> dashboard(String brandFilter) {
-        String brand = Contracts.blankToNull(brandFilter);
+        return dashboard(brandFilter, null);
+    }
+
+    /** brand：按业务线筛选；group：按客户集团筛选（含其下全部业务线）。两者都空为全部业务。 */
+    public Map<String, Object> dashboard(String brandFilter, String groupFilter) {
+        String brand = Contracts.blankToNull(business.canonical(brandFilter));
+        String group = brand == null ? Contracts.blankToNull(groupFilter) : null;
+        var groupOf = business.groupOfLine();
+        java.util.function.Predicate<String> inScope = b ->
+            brand != null ? brand.equals(b) : group == null || group.equals(groupOf.get(b));
         var all = ledger.contracted();
-        var facts =
-            brand == null
-                ? all
-                : all
-                      .stream()
-                      .filter(f -> f.brand().equals(brand))
-                      .toList();
+        var facts = all
+            .stream()
+            .filter(f -> inScope.test(f.brand()))
+            .toList();
         var today = LocalDate.now();
         String cashSql = """
             SELECT e.quotation_id,e.kind,e.amount,e.paid_on,p.brand,p.city,c.name AS customer_name
             FROM cash_entry e JOIN quotation q ON q.id=e.quotation_id JOIN project p ON p.id=q.project_id
             JOIN partner c ON c.id=p.customer_id
             """;
-        var cash =
-            brand == null ? db.jdbc.queryForList(cashSql) : db.jdbc.queryForList(cashSql + " WHERE p.brand=?", brand);
+        var cash = db.jdbc
+            .queryForList(cashSql)
+            .stream()
+            .filter(e -> inScope.test(Objects.toString(e.get("brand"), "")))
+            .toList();
         var monthLines = new HashMap<String, Map<String, Acc>>();
 
         var months = new TreeMap<String, Acc>();
@@ -246,7 +262,10 @@ public class ReportService {
         out.put("by_line", ranked(lines, total.contract));
         out.put("line_summary", lineSummary(lines, total.contract));
         out.put("brand", brand);
-        out.put("brand_lines", brandLines(all));
+        out.put("group", group);
+        var brandLines = brandLines(all);
+        for (var row : brandLines) row.put("group", groupOf.getOrDefault(row.get("brand").toString(), "未归类"));
+        out.put("brand_lines", brandLines);
         out.put(
             "aging",
             aging
