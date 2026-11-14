@@ -1,0 +1,51 @@
+package cn.tianshang.commerce.master;
+
+import jakarta.validation.Valid;
+import java.util.*;
+import org.springframework.web.bind.annotation.*;
+
+@RestController
+@RequestMapping("/api")
+public class MasterController {
+
+    private final MasterService service;
+
+    public MasterController(MasterService service) {
+        this.service = service;
+    }
+
+    @GetMapping("/partners")
+    public List<Map<String, Object>> partners() {
+        return service.partners();
+    }
+
+    @PostMapping("/partners")
+    public Map<String, String> partner(@Valid @RequestBody MasterService.PartnerInput input) {
+        return service.partner(input);
+    }
+
+    @GetMapping("/projects")
+    public List<Map<String, Object>> projects() {
+        return service.projects();
+    }
+
+    @PostMapping("/projects")
+    public Map<String, String> project(@Valid @RequestBody MasterService.ProjectInput input) {
+        return service.project(input);
+    }
+
+    @PutMapping("/projects/{id}")
+    public void update(@PathVariable String id, @Valid @RequestBody MasterService.ProjectInput input) {
+        service.updateProject(id, input);
+    }
+
+    @GetMapping("/products")
+    public List<Map<String, Object>> products() {
+        return service.products();
+    }
+
+    @PostMapping("/products")
+    public Map<String, String> product(@Valid @RequestBody MasterService.ProductInput input) {
+        return service.product(input);
+    }
+}

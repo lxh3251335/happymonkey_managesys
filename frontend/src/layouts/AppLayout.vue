@@ -1,0 +1,113 @@
+<script setup lang="ts">
+import { computed } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import {
+  DataAnalysis,
+  FolderOpened,
+  Document,
+  Connection,
+  Wallet,
+  Grid,
+  Setting,
+  SwitchButton,
+  ArrowRight,
+  ArrowDown,
+} from '@element-plus/icons-vue'
+import { api, session } from '../api'
+import { roleName, today } from '../utils'
+const route = useRoute(),
+  router = useRouter()
+const menu = [
+  { path: '/', name: '经营总览', icon: DataAnalysis },
+  { path: '/projects', name: '项目台账', icon: FolderOpened },
+  { path: '/quotes', name: '客户报价', icon: Document },
+  { path: '/offers', name: '供应商比价', icon: Connection },
+  { path: '/cash', name: '回款与应收', icon: Wallet },
+  { path: '/masters', name: '基础资料', icon: Grid },
+  { path: '/settings', name: '系统管理', icon: Setting },
+]
+const current = computed(() => route.meta.title as string)
+async function logout() {
+  await api('/auth/logout', { method: 'POST' })
+  session.user = null
+  await router.push('/login')
+}
+</script>
+<template>
+  <div class="workspace">
+    <aside class="sidebar">
+      <router-link class="brand" to="/">
+        <span class="brand-mark">
+          T
+          <span>.</span>
+        </span>
+        <div>
+          <strong>天商 · 商务云</strong>
+          <small>TIANSHANG COMMERCE</small>
+        </div>
+      </router-link>
+      <div class="workspace-label">项目经营工作台</div>
+      <nav>
+        <router-link
+          v-for="item in menu"
+          :key="item.path"
+          :to="item.path"
+          :class="{ active: route.path === item.path }"
+        >
+          <el-icon><component :is="item.icon" /></el-icon>
+          <span>{{ item.name }}</span>
+          <span v-if="route.path === item.path" class="nav-dot"></span>
+        </router-link>
+      </nav>
+      <div class="sidebar-project">
+        <div class="mini-label">当前业务空间</div>
+        <strong>美团项目事业部</strong>
+        <div class="brand-pills">
+          <span>快乐猴</span>
+          <span>小象超市</span>
+        </div>
+        <p>报价 · 成本 · 利润 · 回款</p>
+      </div>
+      <div class="sidebar-bottom">
+        <span class="online-dot"></span>
+        企业工作空间
+        <small>V 0.1</small>
+      </div>
+    </aside>
+    <div class="main-shell">
+      <header class="topbar">
+        <div class="breadcrumb">
+          工作台
+          <el-icon><ArrowRight /></el-icon>
+          <strong>{{ current }}</strong>
+        </div>
+        <div class="topbar-right">
+          <span class="current-date">{{ today().replaceAll('-', ' / ') }}</span>
+          <span class="top-divider"></span>
+          <span class="avatar">{{ session.user?.display_name.slice(0, 1) }}</span>
+          <span class="user-name">
+            {{ session.user?.display_name }}
+            <small>{{ roleName[session.user?.role || ''] }}</small>
+          </span>
+          <el-dropdown>
+            <el-icon class="user-dropdown"><ArrowDown /></el-icon>
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item @click="router.push('/settings')">账户设置</el-dropdown-item>
+                <el-dropdown-item @click="logout">
+                  <el-icon><SwitchButton /></el-icon>
+                  退出登录
+                </el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
+        </div>
+      </header>
+      <main class="page-content"><router-view /></main>
+      <footer class="workspace-footer">
+        天商 · 项目经营管理
+        <span>数据随业务沉淀，让每一笔报价有据可查。</span>
+      </footer>
+    </div>
+  </div>
+</template>

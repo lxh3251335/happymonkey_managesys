@@ -1,0 +1,44 @@
+name: tianshang-commerce
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: commerce
+      POSTGRES_USER: commerce
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?请在.env设置数据库密码}
+      TZ: Asia/Shanghai
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U commerce -d commerce"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+  backend:
+    build: ./backend
+    environment:
+      SPRING_PROFILES_ACTIVE: prod
+      DB_URL: jdbc:postgresql://db:5432/commerce
+      DB_USER: commerce
+      DB_PASSWORD: ${DB_PASSWORD:?请设置数据库密码}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?请设置初始管理员密码}
+      JAVA_TOOL_OPTIONS: -Duser.timezone=Asia/Shanghai
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+  web:
+    build:
+      context: .
+      dockerfile: deploy/web.Dockerfile
+    ports:
+      - '80:80'
+      - '443:443'
+    volumes:
+      - ${TLS_DIR:?请指定HTTPS证书目录}:/etc/nginx/tls:ro
+    depends_on:
+      - backend
+    restart: unless-stopped
+volumes:
+  postgres_data:

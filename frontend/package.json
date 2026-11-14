@@ -1,0 +1,30 @@
+{
+  "name": "tian-commerce-web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --configLoader native --host 127.0.0.1",
+    "build": "vue-tsc -b && vite build --configLoader native",
+    "preview": "vite preview --configLoader native --host 127.0.0.1 --port 5173 --strictPort",
+    "format:check": "prettier --check src vite.config.ts",
+    "test:smoke": "node ../tools/browser-check.mjs",
+    "format:java": "prettier --plugin=prettier-plugin-java --write \"../backend/src/**/*.java\"",
+    "format:java:check": "prettier --plugin=prettier-plugin-java --check \"../backend/src/**/*.java\""
+  },
+  "dependencies": {
+    "@element-plus/icons-vue": "2.3.2",
+    "element-plus": "2.11.8",
+    "vue": "3.5.45",
+    "vue-router": "4.6.4"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "6.0.2",
+    "playwright": "1.56.1",
+    "prettier": "3.6.2",
+    "prettier-plugin-java": "2.8.1",
+    "typescript": "5.9.3",
+    "vite": "7.2.2",
+    "vue-tsc": "3.1.4"
+  }
+}

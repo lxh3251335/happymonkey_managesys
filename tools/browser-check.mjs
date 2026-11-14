@@ -1,0 +1,45 @@
+import { createRequire } from 'node:module'
+import fs from 'node:fs/promises'
+import assert from 'node:assert/strict'
+import { fileURLToPath } from 'node:url'
+const require = createRequire(new URL('../frontend/package.json', import.meta.url))
+const { chromium } = require('playwright')
+process.chdir(fileURLToPath(new URL('../', import.meta.url)))
+const base = process.env.TEST_BASE_URL || 'http://127.0.0.1:5173'
+await fs.mkdir('artifacts', { recursive: true })
+const browser = await chromium.launch({ headless: true, ...(process.env.BROWSER_EXECUTABLE ? { executablePath: process.env.BROWSER_EXECUTABLE } : {}) })
+const page = await browser.newPage({ viewport: { width: 1600, height: 1120 }, deviceScaleFactor: 1 })
+const errors = []
+page.on('pageerror', e => errors.push(e.message))
+await page.goto(`${base}/login`)
+await page.waitForLoadState('networkidle')
+await page.screenshot({ path: 'artifacts/login.png', fullPage: true })
+await page.getByLabel('用户名', { exact: true }).fill('admin')
+await page.getByLabel('密码', { exact: true }).fill(process.env.TEST_ADMIN_PASSWORD || 'DevAdmin2026!')
+await page.getByRole('button', { name: '登录工作空间' }).click()
+await page.waitForURL(`${base}/`)
+await page.getByRole('heading', { name: '经营总览', exact: true }).waitFor()
+await page.waitForLoadState('networkidle')
+await page.locator('.metric-card').first().waitFor()
+await page.screenshot({ path: 'artifacts/dashboard.png', fullPage: true, animations: 'disabled' })
+const response = await page.request.get(`${base}/api/dashboard`)
+assert.equal(response.status(), 200)
+const data = await response.json()
+assert.equal(data.projects, 172)
+assert.equal(data.amount, 2722341)
+assert.equal(data.receivable, 0)
+assert.equal(data.received, 0)
+for (const [url, title] of [['/projects','项目台账'],['/quotes','客户报价'],['/offers','供应商比价'],['/cash','回款与应收'],['/masters','基础资料'],['/settings','系统管理']]) {
+  await page.goto(`${base}${url}`)
+  await page.waitForLoadState('networkidle')
+  await page.getByRole('heading', { name: title, exact: true }).waitFor()
+  await page.screenshot({ path: `artifacts/${url.slice(1)}.png`, fullPage: true })
+}
+await page.setViewportSize({ width: 768, height: 1024 })
+await page.goto(`${base}/`)
+await page.waitForLoadState('networkidle')
+await page.locator('.metric-card').first().waitFor()
+await page.screenshot({ path: 'artifacts/tablet.png', fullPage: true, animations: 'disabled' })
+assert.deepEqual(errors, [])
+console.log(JSON.stringify({ pages: 8, projects: data.projects, quoteAmount: data.amount, incomplete: data.incomplete, browserErrors: errors }, null, 2))
+await browser.close()

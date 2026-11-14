@@ -1,0 +1,7 @@
+services:
+  backend:
+    environment:
+      IMPORT_SOURCE: 'true'
+      SOURCE_SEED: /app/import/source-seed.json
+    volumes:
+      - ./docs/source-seed.json:/app/import/source-seed.json:ro

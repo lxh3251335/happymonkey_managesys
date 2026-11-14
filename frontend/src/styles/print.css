@@ -1,0 +1,154 @@
+.print-page {
+  background: #ecefe8;
+  min-height: 100vh;
+  padding: 30px;
+}
+.print-toolbar {
+  max-width: 1000px;
+  margin: 0 auto 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: #6e7b62;
+  font-size: 13px;
+}
+.print-sheet {
+  background: #fff;
+  max-width: 1000px;
+  margin: auto;
+  padding: 55px;
+  box-shadow: 0 4px 24px #24331d0d;
+  color: #243a28;
+}
+.print-sheet > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: 24px;
+  border-bottom: 2px solid #304d32;
+}
+.print-sheet > header strong {
+  font-size: 28px;
+  letter-spacing: 6px;
+}
+.print-sheet > header span {
+  font-size: 17px;
+  letter-spacing: 4px;
+}
+.print-title {
+  margin: 35px 0;
+}
+.print-title h1 {
+  font-size: 23px;
+  font-weight: 500;
+  line-height: 1.6;
+}
+.print-title p {
+  font-size: 11px;
+  color: #778671;
+  margin-top: 12px;
+}
+.print-meta {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 15px;
+  margin: 25px 0;
+  font-size: 11px;
+}
+.customer-quote-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+.customer-quote-table th {
+  background: #f0f4eb;
+  text-align: left;
+  padding: 14px 8px;
+  font-weight: 500;
+  border-top: 1px solid #cad5c1;
+  border-bottom: 1px solid #cad5c1;
+}
+.customer-quote-table td {
+  padding: 18px 8px;
+  border-bottom: 1px solid #e1e8da;
+  line-height: 1.7;
+}
+.customer-quote-table th:nth-last-child(-n + 3),
+.customer-quote-table td:nth-last-child(-n + 3) {
+  text-align: right;
+}
+.print-total {
+  text-align: right;
+  padding: 26px 8px;
+  font-size: 12px;
+}
+.print-total strong {
+  font-size: 26px;
+  font-weight: 500;
+  margin-left: 35px;
+}
+.print-notes {
+  font-size: 12px;
+  line-height: 2;
+  margin-top: 20px;
+  padding: 20px;
+  background: #f8faf5;
+}
+.print-notes p {
+  margin-top: 10px;
+  white-space: pre-wrap;
+}
+.print-sheet > footer {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 70px;
+  padding: 25px 0;
+  font-size: 11px;
+  border-top: 1px solid #dce5d5;
+}
+@media print {
+  @page {
+    size: A4;
+    margin: 15mm;
+  }
+  body,
+  .print-page {
+    background: white;
+  }
+  .print-page {
+    padding: 0;
+  }
+  .print-toolbar {
+    display: none;
+  }
+  .print-sheet {
+    box-shadow: none;
+    padding: 0;
+    width: 100%;
+    max-width: none;
+  }
+  .customer-quote-table tr {
+    break-inside: avoid;
+  }
+  .customer-quote-table thead {
+    display: table-header-group;
+  }
+  .print-total,
+  .print-notes,
+  .print-sheet > footer {
+    break-inside: avoid;
+  }
+}
+@media (max-width: 700px) {
+  .print-page {
+    padding: 16px;
+  }
+  .print-sheet {
+    padding: 20px;
+    overflow-x: auto;
+  }
+  .customer-quote-table {
+    min-width: 650px;
+  }
+}

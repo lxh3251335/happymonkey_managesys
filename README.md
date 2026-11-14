@@ -1,1 +1,106 @@
-# -_-
+# 天商 · 项目经营管理
+
+面向快乐猴、小象项目的内部商务管理系统。已实现可运行的 V0.1：项目登记、客户与产品资料、报价版本、对客报价单打印、成本与利润查询、供应商比价、客户回款与应收台账、角色权限及操作审计。
+
+这是单企业内部使用的首版。云端采用 PostgreSQL，本机体验采用持久化 H2 数据库。当前尚未部署公网，也尚未调用云智冷接口。
+
+## 本机体验
+
+本项目已完成构建时，可在项目目录的 PowerShell 中运行：
+
+```powershell
+.\scripts\start-local.ps1 -SkipBuild
+```
+
+访问 **http://127.0.0.1:5173**。
+
+- 开发账号：`admin`
+- 开发密码：`DevAdmin2026!`
+- 仅本机监听。登录后可在“系统管理 → 账户安全”修改密码。
+- 停止：`.\scripts\stop-local.ps1`。数据库保留在 `backend/data/`。
+- 已修改过的密码不会因重新启动而恢复默认值。
+
+首次从源码运行需要 Java 17、Maven 3.9、Node.js 22.18+ 和 npm：
+
+```powershell
+.\scripts\start-local.ps1
+```
+
+脚本执行后端测试、前端类型检查与构建，再隐藏启动本项目的两个服务。日志位于 `logs/`。若端口已被其他程序占用，脚本会停止并提示。
+
+手动开发：在 `backend` 运行 `mvn spring-boot:run`，另在 `frontend` 运行 `npm ci`、`npm run dev`。默认端口为 8080 / 5173。
+
+## 操作流程
+
+需要迁移到 Mac mini 时，参见 [Mac mini 迁移说明](docs/mac-mini-migration.md)。已提供 `scripts/start-local.sh`，Mac 上安装 Java 17 JDK、Maven 3.9 和 Node.js 22.18+ 后可通过 Bash 启动。业务数据库和历史导入包需要单独保留，不能只用 Git 搬源码。
+
+1. 在“基础资料”登记客户、供应商和产品。
+2. 在“项目台账”登记门店，可维护云智冷项目 ID。
+3. 在“客户报价”选择项目、产品和数量，填写销售单价与成本。保存后得到独立版本草稿。
+4. 查看报价并出具，生成对客报价单；打印窗口可保存为 PDF，客户版本不含成本、利润和来源明细。
+5. 客户确认后，填写应收截止日期，确认该报价为订单；每个项目只允许一个已确认版本。
+6. 财务在“回款与应收”登记部分或全部回款。凭证号不可重复，不能超收；退款必须关联原收款流水。
+7. 在“供应商比价”登记正式报价。按同一标准产品及采购数量比较含税到货总价、交期、起订量、有效期。
+
+历史报价保持为“历史报价”，不凭发货状态推断合同或客户欠款。首次使用时，应先核实历史订单及实际收款，再补录。
+
+## 计算口径
+
+- 明细销售金额 = 数量 × 销售单价，逐行四舍五入到分，再求和。
+- 利润 = 报价合计 − 成本合计。
+- 销售毛利率 = 利润 ÷ 报价；成本利润率 = 利润 ÷ 成本。零分母和缺失成本不显示为 0%。
+- 报价、成本应采用同一税口径；税口径未知的历史记录保留待核实标记。当前利润是报价测算，未登记的安装、运输、管理等费用不在其中。
+- 经营总览按每项目最新报价版本汇总，利润与毛利率只统计金额和成本完整的报价；已确认应收单独统计。
+- 供应商到货总价 = 含税单价 × 采购数量 + 本次含税运费。过期或起订量不满足的报价不参与最低价排名。
+
+## 项目结构
+
+```text
+backend/src/main/java/cn/tianshang/commerce/
+  auth/       登录、密码、账户初始化
+  master/     客户、供应商、产品、项目
+  quote/      报价版本、金额核算、客户版本
+  supplier/   供应商报价、比价
+  finance/    应收、回款、退款
+  report/     经营汇总
+  importing/  历史快照导入
+  admin/      用户、审计
+  common/     JDBC 数据访问、异常
+frontend/src/
+  views/      页面
+  components/ 可复用表单与报价组件
+  layouts/    主布局
+  styles/     分主题样式
+docs/         架构、数据核对、部署和迭代说明
+deploy/       Nginx 与容器构建
+scripts/      本机启停
+tools/        原表只读提取、导入整理与浏览器验证
+```
+
+采用模块化单体，HTTP 控制器委托业务服务，事务和权限在服务端执行，SQL 通过公共 JDBC 数据访问层参数化执行。没有引入暂时用不到的微服务。Vue 页面和业务模块分别拆分，避免单文件堆叠。
+
+## 历史数据
+
+原始 Excel 不会修改。两份表分别作为归一化快照和原始核对来源，不重复入账。当前导入及隔离规则见 [数据核对说明](docs/data-import.md)。原始提取、归一化 JSON 和本机数据库均不纳入 Git。
+
+`tools/inspect_workbooks.py` 接受两份原表路径，随后运行 `tools/prepare_source_seed.py` 生成 `docs/source-seed.json`。在后端首次启动时设置 `IMPORT_SOURCE=true` 可导入。相同批次重复启动不会重复导入。通用在线 Excel 导入尚未提供。
+
+## 验证与部署
+
+```powershell
+# 后端：真实权限、事务和 SQL 集成测试；默认独立内存测试库
+cd backend
+mvn verify
+# 前端：TypeScript 检查、生产构建
+cd ../frontend
+npm ci
+npm run build
+npm run format:check
+npm run format:java:check
+```
+
+已配置 GitHub Actions：前端构建、H2 测试及 PostgreSQL 测试。未推送到远端时，CI 尚未实际运行。
+
+云部署参见 [部署说明](docs/deployment.md)，设计边界参见 [架构约定](docs/architecture.md)，验收与下一阶段参见 [迭代记录](docs/roadmap.md)。
+
+样式和开发方式参考 [若依官方文档](https://doc.ruoyi.vip/ruoyi-vue/)，组件使用 [Element Plus](https://element-plus.org/en-US/guide/installation)。本系统为独立代码实现，并未直接复用若依完整源码。

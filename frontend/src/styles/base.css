@@ -1,0 +1,159 @@
+@import './layout.css';
+@import './dashboard.css';
+@import './forms.css';
+@import './login.css';
+@import './print.css';
+
+:root {
+  font-family: 'Bahnschrift', 'Microsoft YaHei UI', 'PingFang SC', sans-serif;
+  color: #253731;
+  background: #f4f6f3;
+  font-synthesis: none;
+  --forest: #194f40;
+  --ink: #253731;
+  --muted: #7f8a84;
+  --line: #e8ece7;
+  --el-color-primary: #24634f;
+  --el-color-primary-light-3: #608f7c;
+  --el-color-primary-light-5: #8baf9d;
+  --el-color-primary-light-7: #bdd2c7;
+  --el-color-primary-light-8: #d9e5de;
+  --el-color-primary-light-9: #edf4ef;
+  --el-color-primary-dark-2: #194f40;
+  --el-border-color: #dfe5de;
+  --el-border-color-lighter: #edf0eb;
+  --el-text-color-primary: #253731;
+  --el-text-color-regular: #53645b;
+  --el-font-family: 'Bahnschrift', 'Microsoft YaHei UI', 'PingFang SC', sans-serif;
+  --el-border-radius-base: 6px;
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+  font-size: 14px;
+}
+button,
+input {
+  font: inherit;
+}
+a {
+  text-decoration: none;
+  color: inherit;
+}
+h1,
+h2,
+h3,
+p {
+  margin: 0;
+}
+button:focus-visible,
+a:focus-visible {
+  outline: 3px solid #c3a35e;
+  outline-offset: 3px;
+}
+.el-button {
+  height: 36px;
+  padding: 10px 16px;
+  font-weight: 500;
+}
+.el-button .el-icon {
+  margin-right: 6px;
+}
+.el-button.is-link {
+  height: auto;
+  padding: 3px 2px;
+}
+.el-button--primary {
+  box-shadow: 0 2px 2px #143d3010;
+}
+.el-table {
+  --el-table-header-bg-color: #f8faf7;
+  --el-table-border-color: #edf0eb;
+  --el-table-row-hover-bg-color: #f5f8f3;
+  color: #41554a;
+  font-size: 13px;
+}
+.el-table th.el-table__cell {
+  font-size: 12px;
+  font-weight: 500;
+  color: #7e8a80;
+  height: 46px;
+}
+.el-table td.el-table__cell {
+  height: 58px;
+}
+.el-table .cell {
+  padding: 0 16px;
+}
+.el-table__inner-wrapper::before {
+  display: none;
+}
+.el-input__wrapper,
+.el-select__wrapper {
+  min-height: 36px;
+  box-shadow: 0 0 0 1px #e0e6df inset;
+}
+.el-dialog {
+  border-radius: 12px;
+  padding: 25px 28px;
+}
+.el-dialog__title {
+  font-size: 18px;
+  font-weight: 600;
+}
+.el-dialog__body {
+  padding-top: 18px;
+}
+.el-dialog__footer {
+  border-top: 1px solid var(--line);
+  padding-top: 18px;
+  margin-top: 16px;
+}
+.el-dialog .el-select,
+.el-dialog .el-date-editor.el-input,
+.el-dialog .el-input-number {
+  width: 100%;
+}
+.el-alert {
+  margin-bottom: 18px;
+}
+.el-empty {
+  padding: 54px 10px;
+}
+.muted {
+  color: var(--muted);
+}
+.profit-text {
+  color: #277058;
+}
+.danger-text {
+  color: #b95542;
+}
+.mono {
+  font-family: 'Cascadia Code', Consolas, monospace;
+  font-size: 12px;
+}
+.cell-secondary {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+  margin-top: 5px;
+}
+.section-gap {
+  margin-top: 22px;
+}
+.loading-block {
+  text-align: center;
+  padding: 100px 0;
+  color: var(--muted);
+}
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}

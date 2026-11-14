@@ -1,0 +1,15 @@
+.git
+.m2
+.npm-cache
+.tools
+**/node_modules
+**/target
+**/dist
+**/data
+artifacts
+logs
+*.log
+logs-*.txt
+docs/source-*.json
+docs/import-review.json
+.env
