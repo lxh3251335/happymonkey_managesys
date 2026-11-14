@@ -22,7 +22,7 @@ public class SupplierService {
     public List<Map<String, Object>> offers() {
         return db.jdbc.queryForList(
             """
-            SELECT o.*,s.name AS supplier_name,p.name AS product_name,p.specification,p.brand,p.model
+            SELECT o.*,s.name AS supplier_name,p.name AS product_name,p.specification,p.scenario,p.model
             FROM supplier_offer o JOIN partner s ON s.id=o.supplier_id JOIN product p ON p.id=o.product_id
             ORDER BY o.quoted_on DESC,o.id
             """

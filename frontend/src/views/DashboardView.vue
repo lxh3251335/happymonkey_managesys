@@ -6,7 +6,7 @@ import PageHeader from '../components/PageHeader.vue'
 import StatusTag from '../components/StatusTag.vue'
 import GroupedBarChart from '../components/GroupedBarChart.vue'
 import ContractTable from '../components/ContractTable.vue'
-import { api, canWrite, session } from '../api'
+import { api, canWrite } from '../api'
 import type { BizRow, BrandLines, Contract, Dashboard, Quote } from '../types'
 import { money, percent, wan, axisWan } from '../utils'
 
@@ -130,45 +130,32 @@ const openQuote = (q: Quote) => router.push(`/quotes?detail=${q.id}`)
 </script>
 <template>
   <div>
-    <PageHeader
-      eyebrow="BUSINESS OVERVIEW"
-      title="经营总览"
-      description="合同、到账、应收与毛利，按月份、客户和业务一览。"
-    >
-      <el-button @click="router.push('/projects')">
+    <PageHeader title="经营总览">
+      <template v-if="data" #description>
+        <strong>{{ t.contracts }}</strong>
+        份合同 ·
+        <strong>{{ t.projects }}</strong>
+        个门店 ·
+        <strong>{{ data.concentration.customer_count }}</strong>
+        家客户 · 合同额按下单月、到账按收款日
+      </template>
+      <div class="biz-switch" role="group" aria-label="按业务筛选">
+        <el-radio-group v-model="brand" size="small" :disabled="loading || !data">
+          <el-radio-button value="">全部业务</el-radio-button>
+          <el-radio-button v-for="b in brandOptions" :key="b" :value="b">{{ brandName(b) }}</el-radio-button>
+        </el-radio-group>
+      </div>
+      <el-button size="small" @click="router.push('/projects')">
         <el-icon><FolderOpened /></el-icon>
         项目台账
       </el-button>
-      <el-button v-if="canWrite()" type="primary" @click="router.push('/quotes?new=1')">
+      <el-button v-if="canWrite()" size="small" type="primary" @click="router.push('/quotes?new=1')">
         <el-icon><Plus /></el-icon>
         快速报价
       </el-button>
     </PageHeader>
     <el-alert v-if="error" :title="error" type="error" show-icon :closable="false" />
     <template v-if="data">
-      <div class="overview-strip">
-        <div>
-          <span class="online-dot"></span>
-          {{ session.user?.display_name }}，欢迎回来
-          <span class="strip-divider">/</span>
-          <span>
-            <strong>{{ t.contracts }}</strong>
-            份合同 ·
-            <strong>{{ t.projects }}</strong>
-            个门店 ·
-            <strong>{{ data.concentration.customer_count }}</strong>
-            家客户
-          </span>
-        </div>
-        <div class="biz-switch" role="group" aria-label="按业务筛选">
-          <span class="muted">业务</span>
-          <el-radio-group v-model="brand" size="small" :disabled="loading">
-            <el-radio-button value="">全部业务</el-radio-button>
-            <el-radio-button v-for="b in brandOptions" :key="b" :value="b">{{ brandName(b) }}</el-radio-button>
-          </el-radio-group>
-        </div>
-      </div>
-
       <section class="metric-grid biz-metrics">
         <article class="metric-card">
           <div class="metric-label">

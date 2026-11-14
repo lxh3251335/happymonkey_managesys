@@ -50,17 +50,25 @@ const blank = (v: string | null | undefined) => v || '＿＿＿＿＿＿＿＿�
       <section class="parties">
         <div>
           <h3>甲方（买方）</h3>
-          <p>名称：{{ quote.customer_name }}</p>
-          <p>联系人：{{ blank(quote.customer_contact) }}</p>
-          <p>电话：{{ blank(quote.customer_phone) }}</p>
-          <p>地址：{{ blank(null) }}</p>
+          <p>名称：{{ quote.customer_invoice_title || quote.customer_name }}</p>
+          <p>纳税人识别号：{{ blank(quote.customer_tax_no) }}</p>
+          <p>地址：{{ blank(quote.customer_address) }}</p>
+          <p>
+            联系人：{{ blank(quote.customer_contact) }}　电话：{{
+              blank(quote.customer_phone || quote.customer_invoice_phone)
+            }}
+          </p>
+          <p>开户行：{{ blank(quote.customer_bank_name) }}</p>
+          <p>账号：{{ blank(quote.customer_bank_account) }}</p>
         </div>
         <div>
           <h3>乙方（卖方）</h3>
           <p>名称：{{ t?.company_name || '天商' }}</p>
-          <p>联系人：{{ blank(t?.contact) }}</p>
-          <p>电话：{{ blank(t?.phone) }}</p>
+          <p>纳税人识别号：{{ blank(t?.tax_no) }}</p>
           <p>地址：{{ blank(t?.address) }}</p>
+          <p>联系人：{{ blank(t?.contact) }}　电话：{{ blank(t?.phone) }}</p>
+          <p>开户行：{{ blank(t?.bank_name) }}</p>
+          <p>账号：{{ blank(t?.bank_account) }}</p>
         </div>
       </section>
 

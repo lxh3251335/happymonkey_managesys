@@ -37,7 +37,7 @@ public class CatalogService {
         var items = new HashMap<String, List<Map<String, Object>>>();
         for (var i : db.jdbc.queryForList(
             """
-            SELECT i.*,p.name,p.specification,p.model,p.unit,p.brand AS product_brand
+            SELECT i.*,p.name,p.specification,p.model,p.unit,p.scenario AS product_scenario
             FROM project_type_item i JOIN product p ON p.id=i.product_id ORDER BY i.position
             """
         ))

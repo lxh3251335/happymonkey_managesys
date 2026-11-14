@@ -58,4 +58,11 @@ public class MasterController {
     public void updateProduct(@PathVariable String id, @Valid @RequestBody MasterService.ProductInput input) {
         service.updateProduct(id, input);
     }
+
+    public record MainstreamInput(boolean mainstream) {}
+
+    @PutMapping("/products/{id}/mainstream")
+    public void mainstream(@PathVariable String id, @RequestBody MainstreamInput input) {
+        service.setMainstream(id, input.mainstream());
+    }
 }

@@ -12,6 +12,13 @@ export interface Partner {
   contact: string
   phone: string
   note: string
+  invoice_title: string | null
+  tax_no: string | null
+  address: string | null
+  invoice_phone: string | null
+  bank_name: string | null
+  bank_account: string | null
+  invoice_type: 'SPECIAL' | 'NORMAL' | null
 }
 export interface Project {
   id: string
@@ -32,7 +39,12 @@ export interface Project {
 }
 export interface Product {
   id: string
-  brand: string
+  /** 应用场景，如小象前置仓、快乐猴、冷库 */
+  scenario: string
+  supplier_id: string | null
+  supplier_name: string | null
+  mainstream: boolean
+  drawings: number
   name: string
   specification: string
   model: string
@@ -93,6 +105,12 @@ export interface Quote {
   contract_no?: string | null
   customer_contact?: string | null
   customer_phone?: string | null
+  customer_invoice_title?: string | null
+  customer_tax_no?: string | null
+  customer_address?: string | null
+  customer_invoice_phone?: string | null
+  customer_bank_name?: string | null
+  customer_bank_account?: string | null
   /** 仅对客版本：出具时固定的模板快照 */
   template?: PrintTemplate | null
 }
@@ -101,7 +119,7 @@ export interface Offer {
   supplier_name: string
   product_id: string
   product_name: string
-  brand: string
+  scenario: string
   specification: string
   model: string
   unit_price: number
@@ -347,4 +365,14 @@ export interface PrefillLine {
   labor_cost: number | null
   finance_cost: number | null
   unit_cost: number | null
+}
+export interface ProductDrawing {
+  id: string
+  product_id: string
+  file_name: string
+  extension: string
+  size_bytes: number
+  note: string | null
+  uploaded_by: string
+  created_at: string
 }

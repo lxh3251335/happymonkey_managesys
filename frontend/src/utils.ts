@@ -88,3 +88,40 @@ export function rmbUpper(value: number | null | undefined): string {
   if (cent) out += digits[cent] + '分'
   return `${Number(value) < 0 ? '负' : ''}${out}`
 }
+/** 开票信息必填五项（抬头缺省用名称）：税号、地址、电话、开户行、账号。返回缺少的项目名称。 */
+export function missingInvoiceFields(p: {
+  name: string
+  invoice_title: string | null
+  tax_no: string | null
+  address: string | null
+  invoice_phone: string | null
+  bank_name: string | null
+  bank_account: string | null
+}): string[] {
+  const items: [string, string | null][] = [
+    ['税号', p.tax_no],
+    ['地址', p.address],
+    ['电话', p.invoice_phone],
+    ['开户行', p.bank_name],
+    ['账号', p.bank_account],
+  ]
+  return items.filter(([, v]) => !v).map(([k]) => k)
+}
+/** 复制用的开票信息文本，未填抬头时使用名称。 */
+export function invoiceText(p: {
+  name: string
+  invoice_title: string | null
+  tax_no: string | null
+  address: string | null
+  invoice_phone: string | null
+  bank_name: string | null
+  bank_account: string | null
+}): string {
+  return [
+    `单位名称：${p.invoice_title || p.name}`,
+    `纳税人识别号：${p.tax_no || ''}`,
+    `地址、电话：${[p.address, p.invoice_phone].filter(Boolean).join(' ')}`,
+    `开户行及账号：${[p.bank_name, p.bank_account].filter(Boolean).join(' ')}`,
+  ].join('\n')
+}
+export const invoiceTypeName: Record<string, string> = { SPECIAL: '增值税专用发票', NORMAL: '增值税普通发票' }

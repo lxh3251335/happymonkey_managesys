@@ -31,7 +31,7 @@ onMounted(load)
 
 const setPrice = (t: ProjectType) => t.items.reduce((s, i) => s + Number(i.quantity) * Number(i.unit_price || 0), 0)
 const formTotal = computed(() => form.value.items.reduce((s, i) => s + i.quantity * (i.unitPrice || 0), 0))
-const label = (p: Product) => `${p.brand} / ${p.name} / ${p.specification}${p.model ? ' / ' + p.model : ''}`
+const label = (p: Product) => `${p.scenario} / ${p.name} / ${p.specification}${p.model ? ' / ' + p.model : ''}`
 /** 同品牌的最近报价可作为配置来源。 */
 const sourceQuotes = computed(() => quotes.value.filter((q) => q.brand === form.value.brand).slice(0, 300))
 

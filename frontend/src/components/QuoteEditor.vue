@@ -200,7 +200,7 @@ const margin = computed(() => (profit.value == null || total.value === 0 ? null 
 
 function productLabel(id: string) {
   const p = props.products.find((x) => x.id === id)
-  return p ? `${p.brand} / ${p.name} / ${p.specification}${p.model ? ' / ' + p.model : ''}` : ''
+  return p ? `${p.scenario} / ${p.name} / ${p.specification}${p.model ? ' / ' + p.model : ''}` : ''
 }
 function selectProduct(line: LineDraft) {
   const p = props.products.find((p) => p.id === line.productId)

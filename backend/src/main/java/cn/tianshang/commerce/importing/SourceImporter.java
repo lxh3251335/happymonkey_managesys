@@ -78,7 +78,7 @@ public class SourceImporter {
             String productId = products.get(productKey);
             if (productId == null) {
                 var existing = db.jdbc.queryForList(
-                    "SELECT id FROM product WHERE brand=? AND name=? AND specification=? AND model=?",
+                    "SELECT id FROM product WHERE scenario=? AND name=? AND specification=? AND model=?",
                     r.path("brand").asText(),
                     r.path("name").asText(),
                     r.path("specification").asText(),
@@ -87,7 +87,7 @@ public class SourceImporter {
                 productId = existing.isEmpty() ? db.id() : existing.get(0).get("id").toString();
                 products.put(productKey, productId);
                 if (existing.isEmpty()) db.jdbc.update(
-                    "INSERT INTO product(id,brand,name,specification,model,unit) VALUES(?,?,?,?,?,'台')",
+                    "INSERT INTO product(id,scenario,name,specification,model,unit) VALUES(?,?,?,?,?,'台')",
                     productId,
                     r.path("brand").asText(),
                     r.path("name").asText(),

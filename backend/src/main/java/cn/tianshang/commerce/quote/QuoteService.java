@@ -50,6 +50,8 @@ public class QuoteService {
             """
             SELECT q.*,p.name AS project_name,p.brand,p.code AS project_code,p.external_id,
             p.city,p.contract_no,c.name AS customer_name,c.contact AS customer_contact,c.phone AS customer_phone,
+            c.invoice_title AS customer_invoice_title,c.tax_no AS customer_tax_no,c.address AS customer_address,
+            c.invoice_phone AS customer_invoice_phone,c.bank_name AS customer_bank_name,c.bank_account AS customer_bank_account,
             t.name AS template_name,s.name AS supplier_name,pt.name AS project_type_name
             FROM quotation q JOIN project p ON p.id=q.project_id
             JOIN partner c ON c.id=p.customer_id LEFT JOIN quote_template t ON t.id=q.template_id
@@ -205,6 +207,12 @@ public class QuoteService {
             "project_code",
             "customer_contact",
             "customer_phone",
+            "customer_invoice_title",
+            "customer_tax_no",
+            "customer_address",
+            "customer_invoice_phone",
+            "customer_bank_name",
+            "customer_bank_account",
             "created_at"
         ))
             out.put(key, original.get(key));

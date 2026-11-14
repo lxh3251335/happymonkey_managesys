@@ -35,7 +35,16 @@ class AdminEditTest extends ApiTestSupport {
         String quote = postJson("/api/quotes", quoteInput(project, product, "50")).path("id").asText();
         putJson(
             "/api/products/" + product,
-            Map.of("brand", "小象", "name", "新品名" + UUID.randomUUID(), "specification", "新规格", "unit", "套")
+            Map.of(
+                "scenario",
+                "小象前置仓",
+                "name",
+                "新品名" + UUID.randomUUID(),
+                "specification",
+                "新规格",
+                "unit",
+                "套"
+            )
         ).andExpect(status().isOk());
         var item = getJson("/api/quotes/" + quote).path("items").get(0);
         assertThat(item.path("specification").asText()).isEqualTo("650*850*250");

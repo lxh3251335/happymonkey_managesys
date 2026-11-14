@@ -101,7 +101,7 @@ onMounted(load)
             v-for="p in products"
             :key="p.id"
             :value="p.id"
-            :label="`${p.brand} / ${p.name} / ${p.specification} / ${p.model}`"
+            :label="`${p.scenario} / ${p.name} / ${p.specification} / ${p.model}`"
           />
         </el-select>
         <el-input-number v-model="quantity" :min="0.001" :max="999999" :precision="3" @change="compare" />
@@ -193,7 +193,7 @@ onMounted(load)
                 v-for="p in products"
                 :key="p.id"
                 :value="p.id"
-                :label="`${p.brand} / ${p.name} / ${p.specification} / ${p.model}`"
+                :label="`${p.scenario} / ${p.name} / ${p.specification} / ${p.model}`"
               />
             </el-select>
           </el-form-item>

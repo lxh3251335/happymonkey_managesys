@@ -93,7 +93,7 @@ public abstract class ApiTestSupport {
         return postJson(
             "/api/products",
             Map.of(
-                "brand",
+                "scenario",
                 "小象",
                 "name",
                 "测试电箱" + UUID.randomUUID(),

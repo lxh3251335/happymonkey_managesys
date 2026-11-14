@@ -33,7 +33,7 @@ class CatalogQuoteFlowTest extends ApiTestSupport {
     private String productNamed(String name) throws Exception {
         return postJson(
             "/api/products",
-            Map.of("brand", "小象", "name", name + UUID.randomUUID(), "specification", "s", "unit", "台")
+            Map.of("scenario", "小象前置仓", "name", name + UUID.randomUUID(), "specification", "s", "unit", "台")
         )
             .path("id")
             .asText();

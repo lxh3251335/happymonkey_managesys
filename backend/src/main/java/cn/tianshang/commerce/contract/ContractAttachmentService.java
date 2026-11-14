@@ -1,17 +1,13 @@
 package cn.tianshang.commerce.contract;
 
 import cn.tianshang.commerce.common.*;
-import java.io.*;
-import java.nio.file.*;
-import java.security.*;
-import java.time.LocalDate;
+import cn.tianshang.commerce.common.FileStore;
+import java.nio.file.Path;
 import java.util.*;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.transaction.support.*;
 import org.springframework.web.multipart.MultipartFile;
 
 /**
@@ -24,27 +20,7 @@ public class ContractAttachmentService {
 
     public static final long MAX_BYTES = 20L * 1024 * 1024;
 
-    /** 扩展名 → 下载时的 Content-Type。 */
-    static final Map<String, String> TYPES = Map.of(
-        "pdf",
-        "application/pdf",
-        "jpg",
-        "image/jpeg",
-        "jpeg",
-        "image/jpeg",
-        "png",
-        "image/png",
-        "doc",
-        "application/msword",
-        "docx",
-        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        "xls",
-        "application/vnd.ms-excel",
-        "xlsx",
-        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        "ofd",
-        "application/ofd"
-    );
+    static final Set<String> ALLOWED = Set.of("pdf", "jpg", "jpeg", "png", "doc", "docx", "xls", "xlsx", "ofd");
 
     static final Map<String, String> CATEGORIES = Map.of(
         "CONTRACT",
@@ -61,16 +37,12 @@ public class ContractAttachmentService {
 
     private final Database db;
     private final ContractLedger ledger;
-    private final Path root;
+    private final FileStore store;
 
-    public ContractAttachmentService(
-        Database db,
-        ContractLedger ledger,
-        @Value("${app.attachment-dir:./data/attachments}") String dir
-    ) {
+    public ContractAttachmentService(Database db, ContractLedger ledger, FileStore store) {
         this.db = db;
         this.ledger = ledger;
-        this.root = Path.of(dir).toAbsolutePath().normalize();
+        this.store = store;
     }
 
     public List<Map<String, Object>> list(String customerId, String contractKey) {
@@ -111,70 +83,22 @@ public class ContractAttachmentService {
         if (!exists) throw new ApiException("未找到该合同的门店订单");
         if (category == null || !CATEGORIES.containsKey(category)) throw new ApiException("附件类别不正确");
         if (note != null && note.length() > 500) throw new ApiException("备注不能超过 500 字");
-        if (file == null || file.isEmpty()) throw new ApiException("请选择文件");
-        if (file.getSize() > MAX_BYTES) throw new ApiException("单个附件不能超过 20 MB");
-        String name = cleanName(file.getOriginalFilename());
-        String ext = extension(name);
-        if (!TYPES.containsKey(ext)) throw new ApiException("仅支持 PDF、图片（JPG/PNG）、Word、Excel 和 OFD 文件");
-
         String id = db.id();
-        var today = LocalDate.now();
-        String relative = today.getYear() + "/" + String.format("%02d", today.getMonthValue()) + "/" + id;
-        Path target = root.resolve(relative).normalize();
-        if (!target.startsWith(root)) throw new IllegalStateException("附件路径越界");
-        String sha;
-        try {
-            Files.createDirectories(target.getParent());
-            Path temp = Files.createTempFile(target.getParent(), id, ".part");
-            try {
-                var digest = MessageDigest.getInstance("SHA-256");
-                byte[] head = new byte[8];
-                int headLen;
-                try (
-                    InputStream in = new DigestInputStream(file.getInputStream(), digest);
-                    OutputStream out = Files.newOutputStream(temp)
-                ) {
-                    headLen = in.readNBytes(head, 0, head.length);
-                    out.write(head, 0, headLen);
-                    in.transferTo(out);
-                }
-                if (!signatureMatches(ext, Arrays.copyOf(head, headLen))) throw new ApiException(
-                    "文件内容与扩展名不符，请确认文件未损坏"
-                );
-                sha = HexFormat.of().formatHex(digest.digest());
-                if (
-                    db.jdbc.queryForObject(
-                        "SELECT COUNT(*) FROM contract_attachment WHERE customer_id=? AND contract_no=? AND sha256=? AND deleted_at IS NULL",
-                        Integer.class,
-                        customerId,
-                        contractKey,
-                        sha
-                    ) >
-                    0
-                ) throw new ApiException("该文件已上传到此合同");
-                Files.move(temp, target, StandardCopyOption.ATOMIC_MOVE);
-            } finally {
-                Files.deleteIfExists(temp);
-            }
-        } catch (IOException e) {
-            throw new UncheckedIOException("附件保存失败", e);
-        } catch (NoSuchAlgorithmException e) {
-            throw new IllegalStateException(e);
-        }
-        // 数据库回滚时删除已落盘的文件，避免孤儿文件
-        if (
-            TransactionSynchronizationManager.isSynchronizationActive()
-        ) TransactionSynchronizationManager.registerSynchronization(
-            new TransactionSynchronization() {
-                @Override
-                public void afterCompletion(int status) {
-                    if (status != STATUS_COMMITTED) try {
-                        Files.deleteIfExists(target);
-                    } catch (IOException ignored) {
-                        // 清理失败不影响业务结果
-                    }
-                }
-            }
+        var saved = store.save(
+            id,
+            file,
+            ALLOWED,
+            MAX_BYTES,
+            "仅支持 PDF、图片（JPG/PNG）、Word、Excel 和 OFD 文件",
+            sha ->
+                db.jdbc.queryForObject(
+                    "SELECT COUNT(*) FROM contract_attachment WHERE customer_id=? AND contract_no=? AND sha256=? AND deleted_at IS NULL",
+                    Integer.class,
+                    customerId,
+                    contractKey,
+                    sha
+                ) >
+                0
         );
         db.jdbc.update(
             """
@@ -185,18 +109,26 @@ public class ContractAttachmentService {
             customerId,
             contractKey,
             category,
-            name,
-            ext,
-            file.getSize(),
-            sha,
-            relative,
+            saved.fileName(),
+            saved.extension(),
+            saved.size(),
+            saved.sha256(),
+            saved.relativePath(),
             note == null || note.isBlank() ? null : note.trim(),
             actor()
         );
         db.audit(
             "ATTACHMENT_UPLOADED",
             id,
-            "合同 " + contractKey + "，" + CATEGORIES.get(category) + "：" + name + "（" + file.getSize() + " 字节）"
+            "合同 " +
+                contractKey +
+                "，" +
+                CATEGORIES.get(category) +
+                "：" +
+                saved.fileName() +
+                "（" +
+                saved.size() +
+                " 字节）"
         );
         return Map.of("id", id);
     }
@@ -205,12 +137,11 @@ public class ContractAttachmentService {
 
     public Stored file(String id) {
         var row = db.one("SELECT * FROM contract_attachment WHERE id=? AND deleted_at IS NULL", id);
-        Path path = root.resolve(row.get("storage_path").toString()).normalize();
-        if (!path.startsWith(root) || !Files.isRegularFile(path)) throw new ApiException("附件文件缺失，请联系管理员");
+        Path path = store.existing(row.get("storage_path").toString());
         db.audit("ATTACHMENT_DOWNLOADED", id, db.text(row, "file_name"));
         return new Stored(
             row.get("file_name").toString(),
-            TYPES.getOrDefault(row.get("extension").toString(), "application/octet-stream"),
+            FileStore.contentType(row.get("extension").toString()),
             ((Number) row.get("size_bytes")).longValue(),
             path
         );
@@ -235,40 +166,6 @@ public class ContractAttachmentService {
             id
         );
         db.audit("ATTACHMENT_DELETED", id, db.text(row, "contract_no") + "：" + db.text(row, "file_name"));
-    }
-
-    static String cleanName(String original) {
-        String n = original == null ? "" : original.replace('\\', '/');
-        n = n.substring(n.lastIndexOf('/') + 1).replaceAll("[\\p{Cntrl}\"<>|:*?]", "").trim();
-        if (n.isEmpty() || n.startsWith(".")) throw new ApiException("文件名不正确");
-        if (n.length() > 200) {
-            String ext = extension(n);
-            n = n.substring(0, 190) + (ext.isEmpty() ? "" : "." + ext);
-        }
-        return n;
-    }
-
-    static String extension(String name) {
-        int dot = name.lastIndexOf('.');
-        return dot < 0 ? "" : name.substring(dot + 1).toLowerCase(Locale.ROOT);
-    }
-
-    /** 文件头校验，防止把可执行内容改扩展名上传。 */
-    static boolean signatureMatches(String ext, byte[] h) {
-        return switch (ext) {
-            case "pdf" -> starts(h, 0x25, 0x50, 0x44, 0x46); // %PDF
-            case "png" -> starts(h, 0x89, 0x50, 0x4E, 0x47);
-            case "jpg", "jpeg" -> starts(h, 0xFF, 0xD8, 0xFF);
-            case "docx", "xlsx", "ofd" -> starts(h, 0x50, 0x4B, 0x03, 0x04); // ZIP
-            case "doc", "xls" -> starts(h, 0xD0, 0xCF, 0x11, 0xE0); // OLE2
-            default -> false;
-        };
-    }
-
-    private static boolean starts(byte[] h, int... sig) {
-        if (h.length < sig.length) return false;
-        for (int i = 0; i < sig.length; i++) if ((h[i] & 0xFF) != sig[i]) return false;
-        return true;
     }
 
     private static String actor() {

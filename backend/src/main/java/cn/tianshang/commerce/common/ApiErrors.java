@@ -47,6 +47,6 @@ public class ApiErrors {
     @ExceptionHandler(MaxUploadSizeExceededException.class)
     @ResponseStatus(HttpStatus.PAYLOAD_TOO_LARGE)
     public Map<String, String> tooLarge(Exception e) {
-        return Map.of("message", "单个附件不能超过 20 MB");
+        return Map.of("message", "文件过大：合同附件不超过 20 MB，图纸不超过 30 MB");
     }
 }
