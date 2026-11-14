@@ -1,6 +1,7 @@
 package cn.tianshang.commerce.importing;
 
 import cn.tianshang.commerce.common.Database;
+import cn.tianshang.commerce.contract.Contracts;
 import com.fasterxml.jackson.databind.*;
 import java.math.*;
 import java.nio.file.*;
@@ -45,14 +46,16 @@ public class SourceImporter {
                 String note =
                     "历史发货状态：" + r.path("shipping").asText() + "；原合同号：" + r.path("contract").asText();
                 db.jdbc.update(
-                    "INSERT INTO project(id,code,name,brand,customer_id,order_date,note) VALUES(?,?,?,?,?,?,?)",
+                    "INSERT INTO project(id,code,name,brand,customer_id,order_date,note,contract_no,shipping_status) VALUES(?,?,?,?,?,?,?,?,?)",
                     projectId,
                     code,
                     r.path("project").asText(),
                     r.path("brand").asText(),
                     customer,
                     date,
-                    note
+                    note,
+                    Contracts.blankToNull(r.path("contract").asText()),
+                    Contracts.shipping(r.path("shipping").asText())
                 );
                 db.jdbc.update(
                     "INSERT INTO quotation(id,code,project_id,version,status,tax_basis,note,created_at) VALUES(?,?,?,1,'HISTORICAL','UNKNOWN',?,?)",

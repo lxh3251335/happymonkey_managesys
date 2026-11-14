@@ -1,6 +1,7 @@
 package cn.tianshang.commerce.master;
 
 import cn.tianshang.commerce.common.*;
+import cn.tianshang.commerce.contract.Contracts;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.*;
 import java.time.LocalDate;
@@ -63,7 +64,9 @@ public class MasterService {
         @NotBlank String customerId,
         @Size(max = 150) String externalId,
         LocalDate orderDate,
-        @Size(max = 2000) String note
+        @Size(max = 2000) String note,
+        @Size(max = 100) String contractNo,
+        @Pattern(regexp = "^$|制作中|已发货") String shippingStatus
     ) {}
 
     @PreAuthorize("hasAnyRole('ADMIN','SALES')")
@@ -73,7 +76,7 @@ public class MasterService {
         String id = db.id(),
             code = "XM-" + LocalDate.now().getYear() + "-" + id.substring(0, 8).toUpperCase();
         db.jdbc.update(
-            "INSERT INTO project(id,code,name,brand,customer_id,external_id,order_date,note) VALUES(?,?,?,?,?,?,?,?)",
+            "INSERT INTO project(id,code,name,brand,customer_id,external_id,order_date,note,contract_no,shipping_status) VALUES(?,?,?,?,?,?,?,?,?,?)",
             id,
             code,
             p.name().trim(),
@@ -81,7 +84,9 @@ public class MasterService {
             p.customerId(),
             blankToNull(p.externalId()),
             p.orderDate(),
-            p.note()
+            p.note(),
+            Contracts.blankToNull(p.contractNo()),
+            Contracts.shipping(p.shippingStatus())
         );
         db.audit("PROJECT_CREATED", id, p.name());
         return Map.of("id", id);
@@ -96,12 +101,14 @@ public class MasterService {
             "已登记项目不允许更换客户，请新建项目"
         );
         db.jdbc.update(
-            "UPDATE project SET name=?,brand=?,external_id=?,order_date=?,note=? WHERE id=?",
+            "UPDATE project SET name=?,brand=?,external_id=?,order_date=?,note=?,contract_no=?,shipping_status=? WHERE id=?",
             p.name().trim(),
             p.brand(),
             blankToNull(p.externalId()),
             p.orderDate(),
             p.note(),
+            Contracts.blankToNull(p.contractNo()),
+            Contracts.shipping(p.shippingStatus()),
             id
         );
         db.audit("PROJECT_UPDATED", id, "更新项目信息及云智冷关联ID");

@@ -17,7 +17,16 @@ const rows = ref<Project[]>([]),
   error = ref(''),
   page = ref(1),
   router = useRouter()
-const fresh = () => ({ name: '', brand: '小象', customerId: '', externalId: '', orderDate: today(), note: '' })
+const fresh = () => ({
+  name: '',
+  brand: '小象',
+  customerId: '',
+  externalId: '',
+  orderDate: today(),
+  note: '',
+  contractNo: '',
+  shippingStatus: '',
+})
 const form = ref(fresh())
 const filtered = computed(() =>
   rows.value.filter(
@@ -44,6 +53,8 @@ function open(p?: Project) {
         externalId: p.external_id || '',
         orderDate: day(p.order_date) === '—' ? '' : day(p.order_date),
         note: p.note || '',
+        contractNo: p.contract_no || '',
+        shippingStatus: p.shipping_status || '',
       }
     : fresh()
   dialog.value = true
@@ -101,6 +112,12 @@ onMounted(load)
         <el-table-column label="接单日期" width="120">
           <template #default="{ row }">{{ day(row.order_date) }}</template>
         </el-table-column>
+        <el-table-column label="合同号 / 发货" min-width="170">
+          <template #default="{ row }">
+            {{ row.contract_no || '—' }}
+            <small class="cell-secondary">{{ row.shipping_status || '未登记发货' }}</small>
+          </template>
+        </el-table-column>
         <el-table-column label="云智冷项目 ID" min-width="160">
           <template #default="{ row }">
             <span :class="row.external_id ? 'mono' : 'muted'">{{ row.external_id || '待关联' }}</span>
@@ -149,6 +166,15 @@ onMounted(load)
           </el-form-item>
           <el-form-item label="云智冷项目 ID">
             <el-input v-model="form.externalId" maxlength="150" placeholder="可稍后关联" />
+          </el-form-item>
+          <el-form-item label="合同号">
+            <el-input v-model="form.contractNo" maxlength="100" placeholder="签约后填写，计入合同额" />
+          </el-form-item>
+          <el-form-item label="发货状态">
+            <el-select v-model="form.shippingStatus" clearable placeholder="未登记">
+              <el-option label="制作中" value="制作中" />
+              <el-option label="已发货" value="已发货" />
+            </el-select>
           </el-form-item>
         </div>
         <el-form-item label="项目备注">

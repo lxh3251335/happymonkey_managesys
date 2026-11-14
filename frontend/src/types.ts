@@ -23,6 +23,8 @@ export interface Project {
   order_date: string | null
   note: string
   quote_count: number
+  contract_no: string | null
+  shipping_status: string | null
 }
 export interface Product {
   id: string
@@ -110,34 +112,109 @@ export interface CashEntry {
   note: string
   reverses_id: string | null
 }
-export interface Breakdown {
-  name: string
-  amount: number
-  count: number
-}
 export interface ImportBatch {
   id: string
   detail: string
   created_at: string
 }
+/** 经营分组：合同额按下单月份，到账额按收款日期（收款减退款）。 */
+export interface BizRow {
+  name: string
+  contract_amount: number
+  received: number
+  outstanding: number
+  collection_rate: number | null
+  share: number | null
+  profit: number
+  gross_margin: number | null
+  margin_coverage: number | null
+  projects: number
+  contracts: number
+  avg_per_project: number | null
+  quantity: number
+}
+export interface DashboardTotals extends BizRow {
+  confirmed_amount: number
+  pending_amount: number
+  receivable: number
+  overdue_amount: number
+  overdue_projects: number
+  backlog_amount: number
+  backlog_projects: number
+  incomplete_cost_projects: number
+  current_month: string
+  current_month_contract: number
+  current_month_received: number
+}
 export interface Dashboard {
+  totals: DashboardTotals
+  monthly: BizRow[]
+  by_customer: BizRow[]
+  by_brand: BizRow[]
+  by_line: BizRow[]
+  /** contract_amount 为该账龄段的未收余额 */
+  aging: BizRow[]
+  /** contract_amount 为未发货的合同额 */
+  backlog: BizRow[]
+  concentration: {
+    top_customer: string | null
+    top1_share: number | null
+    top3_share: number | null
+    customer_count: number
+  }
   projects: number
   customers: number
-  quotes: number
-  amount: number
-  incomplete: number
-  complete_quotes: number
-  profit: number
-  cost: number
-  gross_margin: number | null
-  receivable: number
-  received: number
-  accepted: number
-  overdue: number
   recent: Quote[]
-  customers_breakdown: Breakdown[]
-  brands_breakdown: Breakdown[]
   imports: ImportBatch[]
+}
+export interface ContractItem {
+  project_id: string
+  project_code: string
+  project_name: string
+  brand: string
+  quote_id: string
+  quote_code: string
+  status: Quote['status']
+  shipping_status: string | null
+  order_date: string | null
+  due_date: string | null
+  amount: number
+  received: number
+  outstanding: number
+}
+export interface Contract {
+  customer_id: string
+  customer_name: string
+  contract_no: string | null
+  contract_key: string
+  brands: string[]
+  projects: number
+  shipped: number
+  confirmed_projects: number
+  confirmation: 'PENDING' | 'PARTIAL' | 'CONFIRMED'
+  amount: number
+  confirmed_amount: number
+  received: number
+  outstanding: number
+  overdue: number
+  collection_rate: number | null
+  order_date: string | null
+  due_date: string | null
+  items: ContractItem[]
+}
+export interface ContractReceipt {
+  id: string
+  customer_id: string
+  customer_name: string
+  contract_no: string
+  kind: 'RECEIPT' | 'REFUND'
+  amount: number
+  paid_on: string
+  reference: string
+  note: string
+  reverses_id: string | null
+  allocations: number
+  refunded: number
 }
 export interface Audit {
   id: string

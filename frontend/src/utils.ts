@@ -34,3 +34,11 @@ export const statusName: Record<string, string> = {
 }
 export const taxName: Record<string, string> = { INCLUDED: '含税', EXCLUDED: '未税', UNKNOWN: '税口径待核实' }
 export const roleName: Record<string, string> = { ADMIN: '管理员', SALES: '商务', FINANCE: '财务', VIEWER: '只读' }
+/** 金额以“万元”紧凑显示，用于指标卡和图表坐标。 */
+export const wan = (n: number | null | undefined, digits = 2) =>
+  n == null
+    ? '待补充'
+    : `${(Number(n) / 10000).toLocaleString('zh-CN', { minimumFractionDigits: digits, maximumFractionDigits: digits })} 万`
+export const axisWan = (n: number) =>
+  n === 0 ? '0' : `${(n / 10000).toLocaleString('zh-CN', { maximumFractionDigits: 1 })}万`
+export const monthLabel = (m: string) => (/^\d{4}-\d{2}$/.test(m) ? `${Number(m.slice(5))}月` : m)

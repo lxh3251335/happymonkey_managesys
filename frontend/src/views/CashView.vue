@@ -1,15 +1,20 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
+import { useRoute } from 'vue-router'
+import ContractTable from '../components/ContractTable.vue'
 import { ElMessage } from 'element-plus'
 import { Plus, Search } from '@element-plus/icons-vue'
 import PageHeader from '../components/PageHeader.vue'
-import { api, post, canFinance } from '../api'
-import type { CashEntry, Quote } from '../types'
-import { money, today, day } from '../utils'
+import { api, post, canFinance, canWrite } from '../api'
+import type { CashEntry, Contract, ContractReceipt, Quote } from '../types'
+import { money, today, day, afterDays } from '../utils'
 const entries = ref<CashEntry[]>([]),
   balances = ref<Quote[]>([]),
   keyword = ref(''),
-  tab = ref('balances'),
+  route = useRoute(),
+  tab = ref(String(route.query.tab || 'contracts')),
+  contracts = ref<Contract[]>([]),
+  receipts = ref<ContractReceipt[]>([]),
   dialog = ref(false),
   busy = ref(false),
   error = ref('')
@@ -36,7 +41,12 @@ const total = computed(() => balances.value.reduce((s, q) => s + Number(q.outsta
 const received = computed(() => balances.value.reduce((s, q) => s + Number(q.received), 0))
 async function load() {
   try {
-    ;[entries.value, balances.value] = await Promise.all([api<CashEntry[]>('/cash'), api<Quote[]>('/cash/balances')])
+    ;[entries.value, balances.value, contracts.value, receipts.value] = await Promise.all([
+      api<CashEntry[]>('/cash'),
+      api<Quote[]>('/cash/balances'),
+      api<Contract[]>('/contracts'),
+      api<ContractReceipt[]>('/contracts/receipts'),
+    ])
     error.value = ''
   } catch (e) {
     error.value = (e as Error).message
@@ -54,6 +64,78 @@ async function save() {
     await post('/cash', form.value)
     dialog.value = false
     ElMessage.success('收付款流水已登记')
+    await load()
+  } catch (e) {
+    ElMessage.error((e as Error).message)
+  } finally {
+    busy.value = false
+  }
+}
+// 合同：确认应收、整笔回款与退款（按门店剩余应收比例自动分摊）
+const active = ref<Contract>(),
+  confirmDialog = ref(false),
+  dueDate = ref(afterDays(30)),
+  contractDialog = ref(false)
+const freshContract = () => ({
+  kind: 'RECEIPT',
+  amount: 0,
+  paidOn: today(),
+  reference: '',
+  note: '',
+  reversesId: null as string | null,
+})
+const cform = ref(freshContract())
+const contractRefundable = computed(() =>
+  receipts.value.filter(
+    (r) =>
+      r.kind === 'RECEIPT' &&
+      active.value &&
+      r.customer_id === active.value.customer_id &&
+      r.contract_no === active.value.contract_key &&
+      Number(r.amount) > Number(r.refunded),
+  ),
+)
+function openConfirm(c: Contract) {
+  active.value = c
+  dueDate.value = afterDays(30)
+  confirmDialog.value = true
+}
+function openContract(c: Contract, kind: 'RECEIPT' | 'REFUND') {
+  active.value = c
+  cform.value = { ...freshContract(), kind, amount: kind === 'RECEIPT' ? Number(c.outstanding) : 0 }
+  contractDialog.value = true
+}
+async function confirmContract() {
+  if (!active.value || !dueDate.value) return ElMessage.warning('请填写应收截止日期')
+  busy.value = true
+  try {
+    const r = await post<{ confirmed: number }>('/contracts/confirm', {
+      customerId: active.value.customer_id,
+      contractKey: active.value.contract_key,
+      dueDate: dueDate.value,
+    })
+    confirmDialog.value = false
+    ElMessage.success(`已确认 ${r.confirmed} 个门店订单的应收`)
+    await load()
+  } catch (e) {
+    ElMessage.error((e as Error).message)
+  } finally {
+    busy.value = false
+  }
+}
+async function saveContract() {
+  if (!active.value || !cform.value.reference.trim() || cform.value.amount <= 0)
+    return ElMessage.warning('请填写正数金额及凭证号')
+  if (cform.value.kind === 'REFUND' && !cform.value.reversesId) return ElMessage.warning('请选择原合同收款')
+  busy.value = true
+  try {
+    const r = await post<{ allocations: number }>('/contracts/receipts', {
+      ...cform.value,
+      customerId: active.value.customer_id,
+      contractKey: active.value.contract_key,
+    })
+    contractDialog.value = false
+    ElMessage.success(`已登记，分摊到 ${r.allocations} 个门店订单`)
     await load()
   } catch (e) {
     ElMessage.error((e as Error).message)
@@ -99,12 +181,60 @@ onMounted(load)
     <section class="panel">
       <div class="filter-bar">
         <el-tabs v-model="tab" class="table-tabs">
-          <el-tab-pane label="应收台账" name="balances" />
+          <el-tab-pane label="合同台账" name="contracts" />
+          <el-tab-pane label="合同收款" name="receipts" />
+          <el-tab-pane label="门店应收" name="balances" />
           <el-tab-pane label="收付款流水" name="entries" />
         </el-tabs>
-        <el-input v-model="keyword" clearable :prefix-icon="Search" placeholder="搜索客户、项目或流水号" />
+        <el-input
+          v-if="tab === 'balances' || tab === 'entries'"
+          v-model="keyword"
+          clearable
+          :prefix-icon="Search"
+          placeholder="搜索客户、项目或流水号"
+        />
       </div>
-      <template v-if="tab === 'balances'">
+      <template v-if="tab === 'contracts'">
+        <ContractTable
+          :contracts="contracts"
+          :actions="canFinance() || canWrite()"
+          @confirm="openConfirm"
+          @receipt="
+            (c) => (canFinance() ? openContract(c, 'RECEIPT') : ElMessage.warning('登记回款需要财务或管理员权限'))
+          "
+          @refund="
+            (c) => (canFinance() ? openContract(c, 'REFUND') : ElMessage.warning('登记退款需要财务或管理员权限'))
+          "
+        />
+        <div class="panel-bottom-note">
+          按合同整笔登记回款时，系统按各门店剩余应收比例自动分摊到门店订单，分摊流水号为“凭证号#序号”。
+        </div>
+      </template>
+      <el-table v-else-if="tab === 'receipts'" :data="receipts">
+        <el-table-column label="收付款日期" width="125">
+          <template #default="{ row }">{{ day(row.paid_on) }}</template>
+        </el-table-column>
+        <el-table-column label="合同号 / 客户" min-width="220">
+          <template #default="{ row }">
+            {{ row.contract_no.startsWith('#') ? '未填合同号' : row.contract_no }}
+            <small class="cell-secondary">{{ row.customer_name }}</small>
+          </template>
+        </el-table-column>
+        <el-table-column label="类型" width="100">
+          <template #default="{ row }">
+            <span :class="row.kind === 'RECEIPT' ? 'profit-text' : 'danger-text'">
+              {{ row.kind === 'RECEIPT' ? '合同回款' : '合同退款' }}
+            </span>
+          </template>
+        </el-table-column>
+        <el-table-column label="金额" align="right" width="150">
+          <template #default="{ row }">{{ money(row.amount) }}</template>
+        </el-table-column>
+        <el-table-column label="分摊门店" align="right" width="95" prop="allocations" />
+        <el-table-column label="凭证号" prop="reference" min-width="160" show-overflow-tooltip />
+        <el-table-column label="备注" prop="note" min-width="160" show-overflow-tooltip />
+      </el-table>
+      <template v-else-if="tab === 'balances'">
         <el-table :data="filteredBalances">
           <el-table-column label="项目" prop="project_name" min-width="260" show-overflow-tooltip />
           <el-table-column label="客户" prop="customer_name" min-width="115" />
@@ -136,7 +266,7 @@ onMounted(load)
           历史报价和已发货状态不自动构成应收。请先在客户报价中确认订单、金额及应收日期。
         </div>
       </template>
-      <el-table v-else :data="filteredEntries">
+      <el-table v-else-if="tab === 'entries'" :data="filteredEntries">
         <el-table-column label="收付款日期" width="125">
           <template #default="{ row }">{{ day(row.paid_on) }}</template>
         </el-table-column>
@@ -205,6 +335,67 @@ onMounted(load)
       <template #footer>
         <el-button @click="dialog = false">取消</el-button>
         <el-button type="primary" :loading="busy" @click="save">登记流水</el-button>
+      </template>
+    </el-dialog>
+    <el-dialog v-model="confirmDialog" title="确认合同应收" width="520px">
+      <template v-if="active">
+        <p class="dialog-lead">
+          {{ active.contract_no || '未填合同号' }} · {{ active.customer_name }}：
+          {{ active.projects - active.confirmed_projects }} 个门店订单待确认，合计
+          {{ money(Number(active.amount) - Number(active.confirmed_amount)) }}。
+        </p>
+        <el-form label-position="top">
+          <el-form-item label="应收截止日期" required>
+            <el-date-picker v-model="dueDate" type="date" value-format="YYYY-MM-DD" />
+          </el-form-item>
+        </el-form>
+        <div class="inline-note">确认后这些门店订单计入应收和账龄，历史报价状态变为“已确认”。</div>
+      </template>
+      <template #footer>
+        <el-button @click="confirmDialog = false">取消</el-button>
+        <el-button type="primary" :loading="busy" @click="confirmContract">确认应收</el-button>
+      </template>
+    </el-dialog>
+    <el-dialog
+      v-model="contractDialog"
+      :title="cform.kind === 'RECEIPT' ? '登记合同回款' : '登记合同退款'"
+      width="600px"
+    >
+      <template v-if="active">
+        <p class="dialog-lead">
+          {{ active.contract_no || '未填合同号' }} · {{ active.customer_name }} · {{ active.projects }} 个门店 ·
+          剩余应收
+          {{ money(active.outstanding) }}
+        </p>
+        <el-form label-position="top">
+          <div class="form-grid">
+            <el-form-item label="金额（元）" required>
+              <el-input-number v-model="cform.amount" :min="0.01" :max="99999999999" :precision="2" :controls="false" />
+            </el-form-item>
+            <el-form-item label="收付款日期" required>
+              <el-date-picker v-model="cform.paidOn" type="date" value-format="YYYY-MM-DD" />
+            </el-form-item>
+            <el-form-item label="凭证 / 银行流水号" required>
+              <el-input v-model="cform.reference" maxlength="140" />
+            </el-form-item>
+          </div>
+          <el-form-item v-if="cform.kind === 'REFUND'" label="关联原合同收款" required>
+            <el-select v-model="cform.reversesId" filterable>
+              <el-option
+                v-for="r in contractRefundable"
+                :key="r.id"
+                :value="r.id"
+                :label="`${day(r.paid_on)} / ${r.reference} / 可退 ${money(Number(r.amount) - Number(r.refunded))}`"
+              />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="备注"><el-input v-model="cform.note" type="textarea" maxlength="1000" /></el-form-item>
+          <div class="inline-note">按各门店剩余应收比例自动分摊；已入账流水不可修改，错误收款请登记关联退款冲正。</div>
+        </el-form>
+      </template>
+      <template #footer>
+        <el-button @click="contractDialog = false">取消</el-button>
+        <el-button type="primary" :loading="busy" @click="saveContract">登记</el-button>
       </template>
     </el-dialog>
   </div>
