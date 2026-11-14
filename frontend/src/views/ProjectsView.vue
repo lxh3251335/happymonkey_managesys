@@ -5,10 +5,11 @@ import { ElMessage } from 'element-plus'
 import { Plus, Search, Refresh } from '@element-plus/icons-vue'
 import PageHeader from '../components/PageHeader.vue'
 import { api, post, canWrite } from '../api'
-import type { Project, Partner } from '../types'
+import type { Project, Partner, ProjectType } from '../types'
 import { day, today } from '../utils'
 const rows = ref<Project[]>([]),
   partners = ref<Partner[]>([]),
+  types = ref<ProjectType[]>([]),
   keyword = ref(''),
   brand = ref(''),
   dialog = ref(false),
@@ -26,18 +27,27 @@ const fresh = () => ({
   note: '',
   contractNo: '',
   shippingStatus: '',
+  city: '',
+  projectTypeId: '',
 })
+const cities = computed(() => [...new Set(rows.value.map((p) => p.city).filter((c): c is string => !!c))].sort())
 const form = ref(fresh())
 const filtered = computed(() =>
   rows.value.filter(
     (p) =>
       (!brand.value || p.brand === brand.value) &&
-      `${p.name}${p.code}${p.customer_name}${p.external_id || ''}`.toLowerCase().includes(keyword.value.toLowerCase()),
+      `${p.name}${p.code}${p.customer_name}${p.external_id || ''}${p.city || ''}`
+        .toLowerCase()
+        .includes(keyword.value.toLowerCase()),
   ),
 )
 async function load() {
   try {
-    ;[rows.value, partners.value] = await Promise.all([api<Project[]>('/projects'), api<Partner[]>('/partners')])
+    ;[rows.value, partners.value, types.value] = await Promise.all([
+      api<Project[]>('/projects'),
+      api<Partner[]>('/partners'),
+      api<ProjectType[]>('/project-types'),
+    ])
     error.value = ''
   } catch (e) {
     error.value = (e as Error).message
@@ -55,6 +65,8 @@ function open(p?: Project) {
         note: p.note || '',
         contractNo: p.contract_no || '',
         shippingStatus: p.shipping_status || '',
+        city: p.city || '',
+        projectTypeId: p.project_type_id || '',
       }
     : fresh()
   dialog.value = true
@@ -63,7 +75,12 @@ async function save() {
   if (!form.value.name.trim() || !form.value.customerId) return ElMessage.warning('请填写项目名称并选择客户')
   busy.value = true
   try {
-    const payload = { ...form.value, orderDate: form.value.orderDate || null }
+    const payload = {
+      ...form.value,
+      orderDate: form.value.orderDate || null,
+      city: form.value.city || null,
+      projectTypeId: form.value.projectTypeId || null,
+    }
     if (editing.value) await api(`/projects/${editing.value}`, { method: 'PUT', body: JSON.stringify(payload) })
     else await post('/projects', payload)
     dialog.value = false
@@ -108,7 +125,17 @@ onMounted(load)
       <el-table :data="filtered.slice((page - 1) * 12, page * 12)">
         <el-table-column label="项目 / 门店" prop="name" min-width="290" show-overflow-tooltip />
         <el-table-column label="客户" prop="customer_name" min-width="120" />
-        <el-table-column label="品牌" prop="brand" width="95" />
+        <el-table-column label="品牌 / 类型" width="120">
+          <template #default="{ row }">
+            {{ row.brand }}
+            <small class="cell-secondary">{{ row.project_type_name || '未设类型' }}</small>
+          </template>
+        </el-table-column>
+        <el-table-column label="城市" width="90">
+          <template #default="{ row }">
+            <span :class="row.city ? '' : 'muted'">{{ row.city || '未填' }}</span>
+          </template>
+        </el-table-column>
         <el-table-column label="接单日期" width="120">
           <template #default="{ row }">{{ day(row.order_date) }}</template>
         </el-table-column>
@@ -159,6 +186,23 @@ onMounted(load)
                 :value="c.id"
                 :label="c.name"
               />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="城市">
+            <el-select
+              v-model="form.city"
+              filterable
+              allow-create
+              clearable
+              default-first-option
+              placeholder="留空按名称识别"
+            >
+              <el-option v-for="c in cities" :key="c" :value="c" :label="c" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="项目类型">
+            <el-select v-model="form.projectTypeId" clearable placeholder="如：小象前置仓">
+              <el-option v-for="t in types" :key="t.id" :value="t.id" :label="t.name" />
             </el-select>
           </el-form-item>
           <el-form-item label="接单日期">

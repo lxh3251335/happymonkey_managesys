@@ -25,7 +25,8 @@ public class QuoteTemplateService {
         "bank_name",
         "bank_account",
         "terms",
-        "footer"
+        "footer",
+        "contract_terms"
     );
 
     private final Database db;
@@ -56,6 +57,7 @@ public class QuoteTemplateService {
         @Size(max = 60) String bankAccount,
         @Size(max = 4000) String terms,
         @Size(max = 500) String footer,
+        @Size(max = 6000) String contractTerms,
         boolean active
     ) {}
 
@@ -65,8 +67,8 @@ public class QuoteTemplateService {
         String id = db.id();
         db.jdbc.update(
             """
-            INSERT INTO quote_template(id,name,company_name,title,address,contact,phone,email,tax_no,bank_name,bank_account,terms,footer,active)
-            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            INSERT INTO quote_template(id,name,company_name,title,address,contact,phone,email,tax_no,bank_name,bank_account,terms,footer,contract_terms,active)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """,
             values(id, t)
         );
@@ -88,7 +90,7 @@ public class QuoteTemplateService {
         db.jdbc.update(
             """
             UPDATE quote_template SET name=?,company_name=?,title=?,address=?,contact=?,phone=?,email=?,tax_no=?,
-            bank_name=?,bank_account=?,terms=?,footer=?,active=?,updated_at=CURRENT_TIMESTAMP WHERE id=?
+            bank_name=?,bank_account=?,terms=?,footer=?,contract_terms=?,active=?,updated_at=CURRENT_TIMESTAMP WHERE id=?
             """,
             args.toArray()
         );
@@ -144,6 +146,7 @@ public class QuoteTemplateService {
             blank(t.bankAccount()),
             blank(t.terms()),
             blank(t.footer()),
+            blank(t.contractTerms()),
             t.active(),
         };
     }

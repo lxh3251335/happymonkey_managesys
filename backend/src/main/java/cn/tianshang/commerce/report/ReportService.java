@@ -16,6 +16,8 @@ import org.springframework.stereotype.Service;
 /**
  * 经营总览。合同额按项目下单日期归月，到账额按收款日期归月（收款减退款）。
  * 毛利只统计报价和成本都完整的明细行，并给出覆盖率。
+ *
+ * <p>可按品牌（业务）筛选：筛选后整页指标、趋势、客户、产品线均只含该品牌；品牌 × 产品线对比始终基于全部业务。
  */
 @Service
 public class ReportService {
@@ -80,19 +82,33 @@ public class ReportService {
     }
 
     public Map<String, Object> dashboard() {
-        var facts = ledger.contracted();
+        return dashboard(null);
+    }
+
+    public Map<String, Object> dashboard(String brandFilter) {
+        String brand = Contracts.blankToNull(brandFilter);
+        var all = ledger.contracted();
+        var facts =
+            brand == null
+                ? all
+                : all
+                      .stream()
+                      .filter(f -> f.brand().equals(brand))
+                      .toList();
         var today = LocalDate.now();
-        var cash = db.jdbc.queryForList(
-            """
-            SELECT e.quotation_id,e.kind,e.amount,e.paid_on,p.brand,c.name AS customer_name
+        String cashSql = """
+            SELECT e.quotation_id,e.kind,e.amount,e.paid_on,p.brand,p.city,c.name AS customer_name
             FROM cash_entry e JOIN quotation q ON q.id=e.quotation_id JOIN project p ON p.id=q.project_id
             JOIN partner c ON c.id=p.customer_id
-            """
-        );
+            """;
+        var cash =
+            brand == null ? db.jdbc.queryForList(cashSql) : db.jdbc.queryForList(cashSql + " WHERE p.brand=?", brand);
+        var monthLines = new HashMap<String, Map<String, Acc>>();
 
         var months = new TreeMap<String, Acc>();
         var customers = new HashMap<String, Acc>();
         var brands = new HashMap<String, Acc>();
+        var cities = new HashMap<String, Acc>();
         var lines = new HashMap<String, Acc>();
         var total = new Acc("合计");
         BigDecimal backlog = BigDecimal.ZERO;
@@ -108,7 +124,8 @@ public class ReportService {
                 total,
                 at(months, f.month() == null ? "未知" : f.month()),
                 at(customers, f.customerName()),
-                at(brands, f.brand())
+                at(brands, f.brand()),
+                at(cities, f.city() == null ? "未填城市" : f.city())
             )) {
                 acc.contract = acc.contract.add(f.amount());
                 acc.outstanding = acc.outstanding.add(f.outstanding());
@@ -123,24 +140,12 @@ public class ReportService {
                     .stream()
                     .anyMatch(i -> i.amount() != null && i.cost() == null)
             ) incompleteCost++;
-            // 产品线：合同额与毛利按明细行归集，到账额按明细金额比例分摊。
-            for (var i : f.items()) {
-                if (i.amount() == null) continue;
-                var acc = at(lines, i.line());
-                acc.contract = acc.contract.add(i.amount());
-                acc.projects.add(f.projectId());
-                acc.contracts.add(contract);
-                acc.quantity = acc.quantity.add(i.quantity());
-                addMargin(acc, List.of(i));
-                if (f.amount().signum() > 0) {
-                    acc.received = acc.received.add(
-                        f.received().multiply(i.amount()).divide(f.amount(), 2, RoundingMode.HALF_UP)
-                    );
-                    acc.outstanding = acc.outstanding.add(
-                        f.outstanding().multiply(i.amount()).divide(f.amount(), 2, RoundingMode.HALF_UP)
-                    );
-                }
-            }
+            addLines(lines, f, contract);
+            addLines(
+                monthLines.computeIfAbsent(f.month() == null ? "未知" : f.month(), k -> new HashMap<>()),
+                f,
+                contract
+            );
             if (!f.shipped()) {
                 backlog = backlog.add(f.amount());
                 var acc = at(backlogStatus, f.shippingStatus() == null ? "未登记发货状态" : f.shippingStatus());
@@ -174,7 +179,8 @@ public class ReportService {
                 total,
                 at(months, month),
                 at(customers, e.get("customer_name").toString()),
-                at(brands, e.get("brand").toString())
+                at(brands, e.get("brand").toString()),
+                at(cities, e.get("city") == null ? "未填城市" : e.get("city").toString())
             ))
                 acc.received = acc.received.add(amount);
         }
@@ -222,13 +228,25 @@ public class ReportService {
             months
                 .values()
                 .stream()
-                .map(a -> a.row(total.contract))
+                .map(a -> {
+                    var row = a.row(total.contract);
+                    var ml = monthLines.getOrDefault(a.name, Map.of());
+                    var byLine = new LinkedHashMap<String, Object>();
+                    for (String line : Contracts.LINES)
+                        if (ml.containsKey(line)) byLine.put(line, ml.get(line).row(a.contract));
+                    row.put("lines", byLine);
+                    return row;
+                })
                 .toList()
         );
         var byCustomer = ranked(customers, total.contract);
         out.put("by_customer", byCustomer);
         out.put("by_brand", ranked(brands, total.contract));
+        out.put("by_city", ranked(cities, total.contract));
         out.put("by_line", ranked(lines, total.contract));
+        out.put("line_summary", lineSummary(lines, total.contract));
+        out.put("brand", brand);
+        out.put("brand_lines", brandLines(all));
         out.put(
             "aging",
             aging
@@ -256,6 +274,68 @@ public class ReportService {
         out.put("recent", latest.values().stream().limit(6).toList());
         out.put("imports", db.jdbc.queryForList("SELECT * FROM import_batch ORDER BY created_at DESC"));
         return out;
+    }
+
+    /** 产品线：合同额与毛利按明细行归集，到账额与应收按明细金额比例分摊。 */
+    private static void addLines(Map<String, Acc> lines, Fact f, String contract) {
+        for (var i : f.items()) {
+            if (i.amount() == null) continue;
+            var acc = at(lines, i.line());
+            acc.contract = acc.contract.add(i.amount());
+            acc.projects.add(f.projectId());
+            acc.contracts.add(contract);
+            acc.quantity = acc.quantity.add(i.quantity());
+            addMargin(acc, List.of(i));
+            if (f.amount().signum() > 0) {
+                acc.received = acc.received.add(
+                    f.received().multiply(i.amount()).divide(f.amount(), 2, RoundingMode.HALF_UP)
+                );
+                acc.outstanding = acc.outstanding.add(
+                    f.outstanding().multiply(i.amount()).divide(f.amount(), 2, RoundingMode.HALF_UP)
+                );
+            }
+        }
+    }
+
+    /** 主要产品线固定输出（即使为零），其余产品线有数据才输出；按固定顺序。 */
+    private static List<Map<String, Object>> lineSummary(Map<String, Acc> lines, BigDecimal grand) {
+        var out = new ArrayList<Map<String, Object>>();
+        for (String line : Contracts.LINES) {
+            boolean main = line.equals(Contracts.CABINET) || line.equals(Contracts.IOT);
+            if (main || lines.containsKey(line)) out.add(lines.getOrDefault(line, new Acc(line)).row(grand));
+        }
+        return out;
+    }
+
+    /** 品牌 × 产品线对比：始终基于全部业务，用于比较各品牌两条产品线的规模与毛利。 */
+    private static List<Map<String, Object>> brandLines(List<Fact> facts) {
+        var byBrand = new LinkedHashMap<String, Map<String, Acc>>();
+        var totals = new HashMap<String, Acc>();
+        for (var f : facts) {
+            String contract = f.customerId() + "::" + f.contractKey();
+            addLines(byBrand.computeIfAbsent(f.brand(), k -> new HashMap<>()), f, contract);
+            var t = at(totals, f.brand());
+            t.contract = t.contract.add(f.amount());
+            addMargin(t, f.items());
+        }
+        return byBrand
+            .entrySet()
+            .stream()
+            .sorted(
+                Comparator.comparing((Map.Entry<String, Map<String, Acc>> e) -> totals.get(e.getKey()).contract)
+                    .reversed()
+                    .thenComparing(Map.Entry::getKey)
+            )
+            .map(e -> {
+                var t = totals.get(e.getKey());
+                Map<String, Object> row = new LinkedHashMap<>();
+                row.put("brand", e.getKey());
+                row.put("contract_amount", t.contract);
+                row.put("gross_margin", ratio(t.profit, t.base));
+                row.put("lines", lineSummary(e.getValue(), t.contract));
+                return row;
+            })
+            .toList();
     }
 
     private static Acc at(Map<String, Acc> map, String key) {

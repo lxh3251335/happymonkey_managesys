@@ -3,6 +3,8 @@ import { ref, computed, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Plus, Search } from '@element-plus/icons-vue'
 import PageHeader from '../components/PageHeader.vue'
+import ProjectTypeManager from '../components/ProjectTypeManager.vue'
+import SupplierTemplateManager from '../components/SupplierTemplateManager.vue'
 import { api, post, put, canWrite } from '../api'
 import type { Partner, Product } from '../types'
 import { money } from '../utils'
@@ -54,6 +56,7 @@ function edit(row: Partner | Product) {
   }
   dialog.value = true
 }
+const isConfig = computed(() => tab.value === 'TYPES' || tab.value === 'COSTS')
 const kindName = computed(() => (tab.value === 'PRODUCT' ? '标准产品' : tab.value === 'CUSTOMER' ? '客户' : '供应商'))
 async function save() {
   if (
@@ -86,7 +89,7 @@ onMounted(load)
       title="基础资料"
       description="统一维护客户、供应商和标准产品，建立可以复用的报价基础。"
     >
-      <el-button v-if="canWrite()" type="primary" @click="open">
+      <el-button v-if="canWrite() && !isConfig" type="primary" @click="open">
         <el-icon><Plus /></el-icon>
         {{ tab === 'PRODUCT' ? '新增标准产品' : tab === 'CUSTOMER' ? '新增客户' : '新增供应商' }}
       </el-button>
@@ -98,8 +101,11 @@ onMounted(load)
           <el-tab-pane label="客户资料" name="CUSTOMER" />
           <el-tab-pane label="供应商资料" name="SUPPLIER" />
           <el-tab-pane label="标准产品库" name="PRODUCT" />
+          <el-tab-pane label="项目类型" name="TYPES" />
+          <el-tab-pane label="供应商成本模板" name="COSTS" />
         </el-tabs>
         <el-input
+          v-if="!isConfig"
           v-model="keyword"
           :prefix-icon="Search"
           placeholder="搜索名称、规格或联系人"
@@ -107,7 +113,9 @@ onMounted(load)
           @input="page = 1"
         />
       </div>
-      <el-table v-if="tab !== 'PRODUCT'" :data="filteredPartners.slice((page - 1) * 12, page * 12)">
+      <ProjectTypeManager v-if="tab === 'TYPES'" :products="products" />
+      <SupplierTemplateManager v-else-if="tab === 'COSTS'" />
+      <el-table v-else-if="tab !== 'PRODUCT'" :data="filteredPartners.slice((page - 1) * 12, page * 12)">
         <el-table-column :label="tab === 'CUSTOMER' ? '客户名称' : '供应商名称'" prop="name" min-width="220" />
         <el-table-column label="联系人" prop="contact" min-width="130" />
         <el-table-column label="联系电话" prop="phone" min-width="160" />
@@ -137,7 +145,7 @@ onMounted(load)
           参考价格取最近一笔有记录的报价 / 成本，不代表供应商当前有效报价。报价时请核对配置、时间和税口径。
         </div>
       </template>
-      <div class="pagination">
+      <div v-if="!isConfig" class="pagination">
         <el-pagination
           v-model:current-page="page"
           :total="tab === 'PRODUCT' ? filteredProducts.length : filteredPartners.length"

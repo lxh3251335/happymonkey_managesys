@@ -59,6 +59,14 @@ public class QuoteController {
         return Map.of("id", service.create(input));
     }
 
+    @PutMapping("/{id}/costs")
+    public Map<String, Integer> correctCosts(
+        @PathVariable String id,
+        @Valid @RequestBody QuoteService.CostCorrection input
+    ) {
+        return Map.of("changed", service.correctCosts(id, input));
+    }
+
     public record Transition(LocalDate dueDate) {}
 
     @PostMapping("/{id}/{action:issue|accept}")

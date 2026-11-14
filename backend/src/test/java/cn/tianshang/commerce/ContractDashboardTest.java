@@ -186,7 +186,7 @@ class ContractDashboardTest extends ApiTestSupport {
         assertThat(brands.get("小象")).isEqualByComparingTo("100.00");
         assertThat(brands.get("快乐猴")).isEqualByComparingTo("200.00");
         assertThat(d.path("aging").get(2).path("contract_amount").decimalValue()).isEqualByComparingTo("210.00");
-        assertThat(d.path("by_line").get(0).path("name").asText()).isEqualTo("配电箱");
+        assertThat(d.path("by_line").get(0).path("name").asText()).isEqualTo("电控柜");
     }
 
     @Test
@@ -211,7 +211,7 @@ class ContractDashboardTest extends ApiTestSupport {
         assertThat(d.path("totals").path("pending_amount").decimalValue()).isEqualByComparingTo("7000");
         assertThat(d.path("totals").path("receivable").decimalValue()).isEqualByComparingTo("0");
         assertThat(d.path("totals").path("backlog_amount").decimalValue()).isEqualByComparingTo("7000");
-        assertThat(d.path("by_line").get(0).path("name").asText()).isEqualTo("物联网电控箱");
+        assertThat(d.path("by_line").get(0).path("name").asText()).isEqualTo("物联网电箱");
 
         // 早期导入只在备注中保存合同号：启动补写后计入合同额
         jdbc.update(

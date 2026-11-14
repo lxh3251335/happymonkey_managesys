@@ -1,35 +1,79 @@
 <script setup lang="ts">
-import { onMounted, ref, computed } from 'vue'
-import { useRouter } from 'vue-router'
+import { onMounted, ref, computed, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { Plus, ArrowRight, Document, Wallet, TrendCharts, Coin, Box, FolderOpened } from '@element-plus/icons-vue'
 import PageHeader from '../components/PageHeader.vue'
 import StatusTag from '../components/StatusTag.vue'
 import GroupedBarChart from '../components/GroupedBarChart.vue'
 import ContractTable from '../components/ContractTable.vue'
 import { api, canWrite, session } from '../api'
-import type { BizRow, Contract, Dashboard, Quote } from '../types'
+import type { BizRow, BrandLines, Contract, Dashboard, Quote } from '../types'
 import { money, percent, wan, axisWan } from '../utils'
 
 /** 两个系列颜色已通过色觉差异校验（合同额 / 到账额）。 */
 const CONTRACT = '#14805e',
   RECEIVED = '#c27c0e'
+/** 产品线身份色（已校验色觉差异）：电控柜蓝、物联网电箱橙。 */
+const CABINET = '电控柜',
+  IOT = '物联网电箱'
+const LINE_COLOR: Record<string, string> = { [CABINET]: '#2a78d6', [IOT]: '#eb6834' }
 
 const data = ref<Dashboard>(),
   contracts = ref<Contract[]>([]),
   error = ref(''),
-  router = useRouter()
-const trendView = ref<'amount' | 'margin' | 'table'>('amount')
-const dim = ref<'customer' | 'brand' | 'line'>('customer')
+  loading = ref(false),
+  router = useRouter(),
+  route = useRoute()
+const trendView = ref<'amount' | 'line' | 'margin' | 'table'>('amount')
+const dim = ref<'customer' | 'brand' | 'city' | 'line'>('customer')
+const showAllDims = ref(false)
+const DIM_LIMIT = 10
+/** 业务（品牌）筛选，空字符串为全部业务；写入地址栏便于分享。 */
+const brand = ref(String(route.query.brand || ''))
 
 async function load() {
+  loading.value = true
   try {
-    ;[data.value, contracts.value] = await Promise.all([api<Dashboard>('/dashboard'), api<Contract[]>('/contracts')])
+    const q = brand.value ? `?brand=${encodeURIComponent(brand.value)}` : ''
+    ;[data.value, contracts.value] = await Promise.all([
+      api<Dashboard>(`/dashboard${q}`),
+      api<Contract[]>('/contracts'),
+    ])
     error.value = ''
   } catch (e) {
     error.value = (e as Error).message
+  } finally {
+    loading.value = false
   }
 }
 onMounted(load)
+watch(brand, (b) => {
+  if (b && dim.value === 'brand') dim.value = 'customer'
+  router.replace({ query: { ...route.query, brand: b || undefined } })
+  load()
+})
+const brandRowClass = ({ row }: { row: BrandLines }) => (row.brand === brand.value ? 'current-brand' : '')
+const brandOptions = computed(() => data.value?.brand_lines.map((b) => b.brand) ?? [])
+const scopedContracts = computed(() =>
+  brand.value ? contracts.value.filter((c) => c.brands.includes(brand.value)) : contracts.value,
+)
+const scopeName = computed(() => (brand.value ? brandName(brand.value) : '全部业务'))
+const mainLines = computed(() => (data.value?.line_summary ?? []).filter((l) => l.name in LINE_COLOR))
+const minorLines = computed(() => (data.value?.line_summary ?? []).filter((l) => !(l.name in LINE_COLOR)))
+const minorNote = computed(
+  () =>
+    `另有${minorLines.value
+      .map((l) => `${l.name} ${money(l.contract_amount)}（毛利率 ${percent(l.gross_margin)}）`)
+      .join('、')}，未计入以上两条产品线。毛利率只统计报价与成本都完整的明细行。`,
+)
+const lineOf = (row: { lines: BizRow[] }, name: string) => row.lines.find((l) => l.name === name)
+const lineAmountSeries = computed(() =>
+  [CABINET, IOT].map((n) => ({
+    name: n,
+    color: LINE_COLOR[n],
+    values: months.value.map((m) => m.lines[n]?.contract_amount ?? 0),
+  })),
+)
 
 const t = computed(() => data.value!.totals)
 const months = computed(() => data.value?.monthly ?? [])
@@ -51,25 +95,35 @@ const amountSeries = computed(() => [
   { name: '合同额', color: CONTRACT, values: months.value.map((m) => m.contract_amount) },
   { name: '到账额', color: RECEIVED, values: months.value.map((m) => m.received) },
 ])
-const marginSeries = computed(() => [
-  {
-    name: '毛利率',
-    color: CONTRACT,
-    values: months.value.map((m) => (m.gross_margin == null ? null : m.gross_margin * 100)),
-  },
-])
+const marginSeries = computed(() =>
+  [CABINET, IOT].map((n) => ({
+    name: `${n}毛利率`,
+    color: LINE_COLOR[n],
+    values: months.value.map((m) => {
+      const g = m.lines[n]?.gross_margin
+      return g == null ? null : g * 100
+    }),
+  })),
+)
 
-const dimRows = computed<BizRow[]>(() =>
+const allDimRows = computed<BizRow[]>(() =>
   !data.value
     ? []
     : dim.value === 'customer'
       ? data.value.by_customer
       : dim.value === 'brand'
         ? data.value.by_brand
-        : data.value.by_line,
+        : dim.value === 'city'
+          ? data.value.by_city
+          : data.value.by_line,
 )
+const dimRows = computed(() => (showAllDims.value ? allDimRows.value : allDimRows.value.slice(0, DIM_LIMIT)))
+const dimName = computed(() => ({ customer: '客户', brand: '品牌', city: '城市', line: '产品线' })[dim.value])
+watch(dim, () => (showAllDims.value = false))
 const dimMax = computed(() => Math.max(1, ...dimRows.value.map((r) => r.contract_amount)))
-const brandName = (n: string) => (n === '小象' ? '美团小象' : n === '快乐猴' ? '美团快乐猴' : n)
+function brandName(n: string) {
+  return n === '小象' ? '美团小象' : n === '快乐猴' ? '美团快乐猴' : n
+}
 const agingMax = computed(() => Math.max(1, ...(data.value?.aging.map((a) => a.contract_amount) ?? [1])))
 const agingColor = ['#9fb3a6', '#e0a458', '#d9773c', '#c4512e', '#9e2f22']
 const openQuote = (q: Quote) => router.push(`/quotes?detail=${q.id}`)
@@ -106,7 +160,13 @@ const openQuote = (q: Quote) => router.push(`/quotes?detail=${q.id}`)
             家客户
           </span>
         </div>
-        <span class="muted">合同额按下单月份，到账额按收款日期统计</span>
+        <div class="biz-switch" role="group" aria-label="按业务筛选">
+          <span class="muted">业务</span>
+          <el-radio-group v-model="brand" size="small" :disabled="loading">
+            <el-radio-button value="">全部业务</el-radio-button>
+            <el-radio-button v-for="b in brandOptions" :key="b" :value="b">{{ brandName(b) }}</el-radio-button>
+          </el-radio-group>
+        </div>
       </div>
 
       <section class="metric-grid biz-metrics">
@@ -163,6 +223,95 @@ const openQuote = (q: Quote) => router.push(`/quotes?detail=${q.id}`)
         </article>
       </section>
 
+      <div class="dash-row two">
+        <section class="panel biz-panel">
+          <div class="panel-heading">
+            <div>
+              <h2>产品线经营 · {{ scopeName }}</h2>
+              <p>电控柜与物联网电箱分别统计合同额、毛利与回款；同一门店订单按明细行拆分</p>
+            </div>
+          </div>
+          <div class="line-cards panel-body">
+            <article v-for="l in mainLines" :key="l.name" class="line-card">
+              <header>
+                <i :style="{ background: LINE_COLOR[l.name] }"></i>
+                <strong>{{ l.name }}</strong>
+                <span class="muted">占合同额 {{ percent(l.share) }}</span>
+              </header>
+              <div class="line-figures">
+                <div>
+                  <span>合同额</span>
+                  <strong>{{ wan(l.contract_amount) }}</strong>
+                </div>
+                <div>
+                  <span>毛利率</span>
+                  <strong :class="l.gross_margin != null && l.gross_margin < 0 ? 'danger-text' : ''">
+                    {{ percent(l.gross_margin) }}
+                  </strong>
+                </div>
+                <div>
+                  <span>毛利</span>
+                  <strong>{{ wan(l.profit) }}</strong>
+                </div>
+              </div>
+              <div class="share-track" :title="`占合同额 ${percent(l.share)}`">
+                <i :style="{ width: `${Math.min(100, (l.share || 0) * 100)}%`, background: LINE_COLOR[l.name] }"></i>
+              </div>
+              <footer>
+                <span>到账 {{ wan(l.received) }} · 回款率 {{ percent(l.collection_rate) }}</span>
+                <span>
+                  {{ Number(l.quantity) }} 台 · {{ l.projects }} 店 · 成本覆盖 {{ percent(l.margin_coverage) }}
+                </span>
+              </footer>
+            </article>
+          </div>
+          <p v-if="minorLines.length" class="panel-bottom-note">
+            {{ minorNote }}
+          </p>
+        </section>
+
+        <section v-if="data.brand_lines.length > 1" class="panel biz-panel">
+          <div class="panel-heading">
+            <div>
+              <h2>业务 × 产品线</h2>
+              <p>各品牌的电控柜与物联网电箱合同额、毛利率对比（全部业务，不随上方筛选变化）</p>
+            </div>
+          </div>
+          <el-table class="brand-matrix" :data="data.brand_lines" size="small" :row-class-name="brandRowClass">
+            <el-table-column label="业务" min-width="88">
+              <template #default="{ row }">
+                <el-button link @click="brand = row.brand === brand ? '' : row.brand">
+                  {{ brandName(row.brand) }}
+                </el-button>
+              </template>
+            </el-table-column>
+            <el-table-column v-for="n in [CABINET, IOT]" :key="n" align="center">
+              <template #header>
+                <span class="line-head">
+                  <i :style="{ background: LINE_COLOR[n] }"></i>
+                  {{ n }}
+                </span>
+              </template>
+              <el-table-column label="合同额" align="right" min-width="84">
+                <template #default="{ row }">{{ wan(lineOf(row, n)?.contract_amount ?? 0) }}</template>
+              </el-table-column>
+              <el-table-column label="毛利率" align="right" min-width="70">
+                <template #default="{ row }">{{ percent(lineOf(row, n)?.gross_margin) }}</template>
+              </el-table-column>
+            </el-table-column>
+            <el-table-column label="合计" align="center">
+              <el-table-column label="合同额" align="right" min-width="84">
+                <template #default="{ row }">{{ wan(row.contract_amount) }}</template>
+              </el-table-column>
+              <el-table-column label="综合毛利率" align="right" min-width="80">
+                <template #default="{ row }">{{ percent(row.gross_margin) }}</template>
+              </el-table-column>
+            </el-table-column>
+          </el-table>
+          <p class="panel-bottom-note">点击业务名称可切换整页为该业务的经营分析。</p>
+        </section>
+      </div>
+
       <div v-if="t.pending_amount > 0" class="data-note">
         <span class="note-dot"></span>
         <strong>{{ wan(t.pending_amount) }} 合同额尚未确认应收</strong>
@@ -177,10 +326,20 @@ const openQuote = (q: Quote) => router.push(`/quotes?detail=${q.id}`)
         <div class="panel-heading">
           <div>
             <h2>月度经营趋势</h2>
-            <p>{{ yearSpan }} · 每月合同额与到账额</p>
+            <p>
+              {{ yearSpan }} · {{ scopeName }} ·
+              {{
+                trendView === 'line'
+                  ? '电控柜与物联网电箱每月合同额'
+                  : trendView === 'margin'
+                    ? '两条产品线每月毛利率'
+                    : '每月合同额与到账额'
+              }}
+            </p>
           </div>
           <el-radio-group v-model="trendView" size="small">
             <el-radio-button value="amount">金额</el-radio-button>
+            <el-radio-button value="line">产品线</el-radio-button>
             <el-radio-button value="margin">毛利率</el-radio-button>
             <el-radio-button value="table">表格</el-radio-button>
           </el-radio-group>
@@ -201,16 +360,31 @@ const openQuote = (q: Quote) => router.push(`/quotes?detail=${q.id}`)
             </template>
           </GroupedBarChart>
           <GroupedBarChart
+            v-else-if="trendView === 'line'"
+            :categories="monthCats"
+            :series="lineAmountSeries"
+            :format="(n) => money(n)"
+            :axis-format="axisWan"
+            label="按月电控柜与物联网电箱合同额柱状图"
+          >
+            <template #tip="{ index }">
+              <div class="tip-extra">
+                电控柜毛利率 {{ percent(months[index].lines[CABINET]?.gross_margin) }} · 物联网电箱毛利率
+                {{ percent(months[index].lines[IOT]?.gross_margin) }}
+              </div>
+            </template>
+          </GroupedBarChart>
+          <GroupedBarChart
             v-else-if="trendView === 'margin'"
             :categories="monthCats"
             :series="marginSeries"
             :format="(n) => (n == null ? '无完整成本' : `${n.toFixed(1)}%`)"
             :axis-format="(n) => `${n}%`"
-            label="按月毛利率柱状图"
+            label="按月电控柜与物联网电箱毛利率柱状图"
           >
             <template #tip="{ index }">
               <div class="tip-extra">
-                毛利 {{ money(months[index].profit) }} · 成本覆盖 {{ percent(months[index].margin_coverage) }}
+                综合毛利率 {{ percent(months[index].gross_margin) }} · 毛利 {{ money(months[index].profit) }}
               </div>
             </template>
           </GroupedBarChart>
@@ -228,141 +402,161 @@ const openQuote = (q: Quote) => router.push(`/quotes?detail=${q.id}`)
             <el-table-column label="毛利率" align="right" width="100">
               <template #default="{ row }">{{ percent(row.gross_margin) }}</template>
             </el-table-column>
+            <el-table-column v-for="n in [CABINET, IOT]" :key="n" :label="n" align="center">
+              <el-table-column label="合同额" align="right" min-width="84">
+                <template #default="{ row }">{{ money(row.lines[n]?.contract_amount ?? 0) }}</template>
+              </el-table-column>
+              <el-table-column label="毛利率" align="right" width="90">
+                <template #default="{ row }">{{ percent(row.lines[n]?.gross_margin) }}</template>
+              </el-table-column>
+            </el-table-column>
             <el-table-column label="门店" align="right" width="80" prop="projects" />
             <el-table-column label="合同" align="right" width="80" prop="contracts" />
           </el-table>
         </div>
       </section>
 
-      <section class="panel biz-panel">
-        <div class="panel-heading">
-          <div>
-            <h2>经营分布</h2>
-            <p>
-              合同额、到账额、回款率与毛利，按{{
-                dim === 'customer' ? '客户' : dim === 'brand' ? '品牌' : '产品线'
-              }}汇总
-            </p>
-          </div>
-          <el-radio-group v-model="dim" size="small">
-            <el-radio-button value="customer">客户</el-radio-button>
-            <el-radio-button value="brand">品牌</el-radio-button>
-            <el-radio-button value="line">产品线</el-radio-button>
-          </el-radio-group>
-        </div>
-        <div class="panel-body">
-          <div class="dist-legend">
-            <span>
-              <i :style="{ background: CONTRACT }"></i>
-              合同额
-            </span>
-            <span>
-              <i :style="{ background: RECEIVED }"></i>
-              到账额
-            </span>
-          </div>
-          <div class="dist-table">
-            <div class="dist-row dist-head">
-              <span>{{ dim === 'customer' ? '客户' : dim === 'brand' ? '品牌' : '产品线' }}</span>
-              <span></span>
-              <span>合同额</span>
-              <span>到账额</span>
-              <span>回款率</span>
-              <span>毛利率</span>
-              <span>占比</span>
-              <span>{{ dim === 'line' ? '数量' : dim === 'brand' ? '单店均额' : '门店' }}</span>
-            </div>
-            <div v-for="r in dimRows" :key="r.name" class="dist-row">
-              <strong>{{ dim === 'brand' ? brandName(r.name) : r.name }}</strong>
-              <div class="dist-bars" :title="`合同额 ${money(r.contract_amount)} · 到账额 ${money(r.received)}`">
-                <i
-                  :style="{ width: `${Math.max(0.5, (r.contract_amount / dimMax) * 100)}%`, background: CONTRACT }"
-                ></i>
-                <i
-                  :style="{
-                    width: `${r.received > 0 ? Math.max(0.5, (r.received / dimMax) * 100) : 0}%`,
-                    background: RECEIVED,
-                  }"
-                ></i>
-              </div>
-              <span class="num">{{ wan(r.contract_amount) }}</span>
-              <span class="num">{{ wan(r.received) }}</span>
-              <span class="num">{{ percent(r.collection_rate) }}</span>
-              <span :class="['num', r.gross_margin != null && r.gross_margin < 0 ? 'danger-text' : '']">
-                {{ percent(r.gross_margin) }}
-              </span>
-              <span class="num">{{ percent(r.share) }}</span>
-              <span class="num">
-                {{
-                  dim === 'line'
-                    ? `${Number(r.quantity)} 台`
-                    : dim === 'brand'
-                      ? wan(r.avg_per_project)
-                      : `${r.projects} 店`
-                }}
-              </span>
-            </div>
-          </div>
-        </div>
-        <p v-if="dim === 'line'" class="panel-bottom-note">产品线按品名归类；到账额按门店订单内明细金额比例分摊。</p>
-      </section>
-
-      <div class="dashboard-grid biz-grid">
-        <section class="panel">
+      <div class="dash-row split">
+        <section class="panel biz-panel">
           <div class="panel-heading">
             <div>
-              <h2>应收账龄</h2>
-              <p>已确认应收的未收余额，按应收截止日计算</p>
+              <h2>经营分布</h2>
+              <p>
+                合同额、到账额、回款率与毛利，按{{
+                  dim === 'customer' ? '客户' : dim === 'brand' ? '品牌' : '产品线'
+                }}汇总
+              </p>
             </div>
-            <strong class="panel-figure">{{ wan(t.receivable) }}</strong>
-          </div>
-          <div v-if="t.receivable > 0" class="aging-list panel-body">
-            <div v-for="(a, i) in data.aging" :key="a.name" class="aging-row">
-              <span>{{ a.name }}</span>
-              <div class="aging-track">
-                <i
-                  :style="{
-                    width: `${a.contract_amount > 0 ? Math.max(1, (a.contract_amount / agingMax) * 100) : 0}%`,
-                    background: agingColor[i],
-                  }"
-                ></i>
-              </div>
-              <span class="num">{{ money(a.contract_amount) }}</span>
-              <small>{{ a.projects }} 店</small>
-            </div>
-          </div>
-          <el-empty v-else :image-size="60" description="暂无已确认应收。确认合同并登记回款后显示账龄。" />
-        </section>
-        <section class="panel">
-          <div class="panel-heading">
-            <div>
-              <h2>在手订单与客户集中度</h2>
-              <p>已签合同未发货金额；前几大客户合同额占比</p>
-            </div>
+            <el-radio-group v-model="dim" size="small">
+              <el-radio-button value="customer">客户</el-radio-button>
+              <el-radio-button v-if="!brand" value="brand">品牌</el-radio-button>
+              <el-radio-button value="city">城市</el-radio-button>
+              <el-radio-button value="line">产品线</el-radio-button>
+            </el-radio-group>
           </div>
           <div class="panel-body">
-            <div class="backlog-list">
-              <div v-for="b in data.backlog" :key="b.name" class="backlog-row">
-                <span>{{ b.name }}</span>
-                <strong class="num">{{ money(b.contract_amount) }}</strong>
-                <small>{{ b.projects }} 店 · {{ b.contracts }} 份合同</small>
-              </div>
-              <div v-if="!data.backlog.length" class="muted">全部合同均已发货</div>
+            <div class="dist-legend">
+              <span>
+                <i :style="{ background: CONTRACT }"></i>
+                合同额
+              </span>
+              <span>
+                <i :style="{ background: RECEIVED }"></i>
+                到账额
+              </span>
             </div>
-            <div class="concentration">
-              <div>
-                <span>第一大客户</span>
-                <strong>{{ data.concentration.top_customer ?? '—' }}</strong>
-                <em>{{ percent(data.concentration.top1_share) }}</em>
+            <div class="dist-table">
+              <div class="dist-row dist-head">
+                <span>{{ dimName }}</span>
+                <span></span>
+                <span>合同额</span>
+                <span>到账额</span>
+                <span>回款率</span>
+                <span>毛利率</span>
+                <span>占比</span>
+                <span>{{ dim === 'line' ? '数量' : dim === 'brand' ? '单店均额' : '门店' }}</span>
               </div>
-              <div>
-                <span>前三大客户</span>
-                <strong>合计占比</strong>
-                <em>{{ percent(data.concentration.top3_share) }}</em>
+              <div v-for="r in dimRows" :key="r.name" class="dist-row">
+                <strong>{{ dim === 'brand' ? brandName(r.name) : r.name }}</strong>
+                <div class="dist-bars" :title="`合同额 ${money(r.contract_amount)} · 到账额 ${money(r.received)}`">
+                  <i
+                    :style="{ width: `${Math.max(0.5, (r.contract_amount / dimMax) * 100)}%`, background: CONTRACT }"
+                  ></i>
+                  <i
+                    :style="{
+                      width: `${r.received > 0 ? Math.max(0.5, (r.received / dimMax) * 100) : 0}%`,
+                      background: RECEIVED,
+                    }"
+                  ></i>
+                </div>
+                <span class="num">{{ wan(r.contract_amount) }}</span>
+                <span class="num">{{ wan(r.received) }}</span>
+                <span class="num">{{ percent(r.collection_rate) }}</span>
+                <span :class="['num', r.gross_margin != null && r.gross_margin < 0 ? 'danger-text' : '']">
+                  {{ percent(r.gross_margin) }}
+                </span>
+                <span class="num">{{ percent(r.share) }}</span>
+                <span class="num">
+                  {{
+                    dim === 'line'
+                      ? `${Number(r.quantity)} 台`
+                      : dim === 'brand'
+                        ? wan(r.avg_per_project)
+                        : `${r.projects} 店`
+                  }}
+                </span>
               </div>
             </div>
+            <el-button
+              v-if="allDimRows.length > DIM_LIMIT"
+              link
+              type="primary"
+              size="small"
+              class="dim-more"
+              @click="showAllDims = !showAllDims"
+            >
+              {{ showAllDims ? '收起' : `展开其余 ${allDimRows.length - DIM_LIMIT} 个${dimName}` }}
+            </el-button>
           </div>
+          <p v-if="dim === 'line'" class="panel-bottom-note">产品线按品名归类；到账额按门店订单内明细金额比例分摊。</p>
         </section>
+        <div class="dash-col">
+          <section class="panel">
+            <div class="panel-heading">
+              <div>
+                <h2>应收账龄</h2>
+                <p>已确认应收的未收余额，按应收截止日计算</p>
+              </div>
+              <strong class="panel-figure">{{ wan(t.receivable) }}</strong>
+            </div>
+            <div v-if="t.receivable > 0" class="aging-list panel-body">
+              <div v-for="(a, i) in data.aging" :key="a.name" class="aging-row">
+                <span>{{ a.name }}</span>
+                <div class="aging-track">
+                  <i
+                    :style="{
+                      width: `${a.contract_amount > 0 ? Math.max(1, (a.contract_amount / agingMax) * 100) : 0}%`,
+                      background: agingColor[i],
+                    }"
+                  ></i>
+                </div>
+                <span class="num">{{ money(a.contract_amount) }}</span>
+                <small>{{ a.projects }} 店</small>
+              </div>
+            </div>
+            <el-empty v-else :image-size="60" description="暂无已确认应收。确认合同并登记回款后显示账龄。" />
+          </section>
+          <section class="panel">
+            <div class="panel-heading">
+              <div>
+                <h2>在手订单与客户集中度</h2>
+                <p>已签合同未发货金额；前几大客户合同额占比</p>
+              </div>
+            </div>
+            <div class="panel-body">
+              <div class="backlog-list">
+                <div v-for="b in data.backlog" :key="b.name" class="backlog-row">
+                  <span>{{ b.name }}</span>
+                  <strong class="num">{{ money(b.contract_amount) }}</strong>
+                  <small>{{ b.projects }} 店 · {{ b.contracts }} 份合同</small>
+                </div>
+                <div v-if="!data.backlog.length" class="muted">全部合同均已发货</div>
+              </div>
+              <div class="concentration">
+                <div>
+                  <span>第一大客户</span>
+                  <strong>{{ data.concentration.top_customer ?? '—' }}</strong>
+                  <em>{{ percent(data.concentration.top1_share) }}</em>
+                </div>
+                <div>
+                  <span>前三大客户</span>
+                  <strong>合计占比</strong>
+                  <em>{{ percent(data.concentration.top3_share) }}</em>
+                </div>
+              </div>
+            </div>
+          </section>
+        </div>
       </div>
 
       <section class="panel biz-panel">
@@ -376,7 +570,7 @@ const openQuote = (q: Quote) => router.push(`/quotes?detail=${q.id}`)
             <el-icon><ArrowRight /></el-icon>
           </el-button>
         </div>
-        <ContractTable :contracts="contracts" />
+        <ContractTable :contracts="scopedContracts" />
       </section>
 
       <section class="panel recent-panel">
@@ -411,6 +605,87 @@ const openQuote = (q: Quote) => router.push(`/quotes?detail=${q.id}`)
   </div>
 </template>
 <style scoped>
+.biz-switch {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.line-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+}
+.line-card {
+  border: 1px solid #e4eae0;
+  border-radius: 8px;
+  padding: 12px 14px;
+}
+.line-card header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+}
+.line-card header i,
+.line-head i {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+}
+.line-card header .muted {
+  margin-left: auto;
+  font-size: 12px;
+}
+.line-figures {
+  display: grid;
+  grid-template-columns: repeat(3, auto);
+  justify-content: space-between;
+  gap: 8px;
+  margin: 10px 0 8px;
+}
+.line-figures span {
+  display: block;
+  font-size: 11px;
+  color: #6b7a72;
+}
+.line-figures strong {
+  font-size: clamp(16px, 1.3vw, 20px);
+  white-space: nowrap;
+  font-weight: 500;
+  color: #253731;
+  font-variant-numeric: tabular-nums;
+}
+.share-track {
+  height: 6px;
+  border-radius: 3px;
+  background: #eef1ec;
+  overflow: hidden;
+}
+.share-track i {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+}
+.line-card footer {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 4px 12px;
+  margin-top: 10px;
+  font-size: 11px;
+  color: #6b7a72;
+  font-variant-numeric: tabular-nums;
+}
+.line-head {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+:deep(.current-brand td) {
+  background: #f1f6ee !important;
+}
 .biz-metrics {
   grid-template-columns: repeat(5, minmax(0, 1fr));
 }
@@ -421,10 +696,71 @@ const openQuote = (q: Quote) => router.push(`/quotes?detail=${q.id}`)
   font-size: 11px;
 }
 .biz-panel {
-  margin-top: 22px;
+  margin-top: 18px;
 }
 .panel-body {
-  padding: 0 24px 22px;
+  padding: 0 20px 18px;
+}
+/* 版面：两列行，窄屏自动堆叠 */
+.dash-row {
+  display: grid;
+  gap: 18px;
+  margin-top: 18px;
+  align-items: start;
+}
+.dash-row.two {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr);
+}
+.dash-row.two > :only-child {
+  grid-column: 1 / -1;
+}
+.dash-row.two .line-cards {
+  grid-template-columns: 1fr;
+  gap: 10px;
+}
+.brand-matrix :deep(.cell) {
+  white-space: nowrap;
+  padding: 0 8px;
+}
+.dash-row.split {
+  grid-template-columns: minmax(0, 1.35fr) minmax(340px, 1fr);
+}
+.dash-col {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.dash-row .biz-panel,
+.dash-col .panel {
+  margin-top: 0;
+}
+.dash-row.split .dist-row {
+  grid-template-columns: minmax(72px, 1.1fr) minmax(50px, 1fr) repeat(4, minmax(58px, 0.75fr));
+  gap: 8px;
+  font-size: 12px;
+}
+.dash-row.split .dist-row > :nth-child(n + 7) {
+  display: none;
+}
+.dim-more {
+  margin-top: 8px;
+}
+.biz-metrics {
+  gap: 14px;
+}
+.biz-metrics :deep(.metric-card),
+.biz-metrics .metric-card {
+  padding: 16px 18px 14px;
+}
+.biz-metrics .metric-value {
+  margin: 12px 0 10px;
+  font-size: clamp(20px, 1.7vw, 28px);
+}
+@media (max-width: 1200px) {
+  .dash-row.two,
+  .dash-row.split {
+    grid-template-columns: 1fr;
+  }
 }
 .biz-grid {
   margin-top: 22px;

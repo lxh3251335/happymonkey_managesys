@@ -39,7 +39,8 @@ public class ContractLedger {
         LocalDate dueDate,
         BigDecimal amount,
         BigDecimal received,
-        List<Item> items
+        List<Item> items,
+        String city
     ) {
         public boolean confirmed() {
             return "ACCEPTED".equals(quoteStatus);
@@ -136,7 +137,8 @@ public class ContractLedger {
                     date(q.get("due_date")),
                     amount,
                     received.getOrDefault(quoteId, BigDecimal.ZERO),
-                    lines
+                    lines,
+                    Contracts.blankToNull((String) p.get("city"))
                 )
             );
         }

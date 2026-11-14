@@ -22,6 +22,7 @@ const blank = () => ({
   bankAccount: '',
   terms: '',
   footer: '',
+  contractTerms: '',
   active: true,
 })
 const form = ref(blank())
@@ -49,6 +50,7 @@ function open(t?: QuoteTemplate) {
         bankAccount: t.bank_account || '',
         terms: t.terms || '',
         footer: t.footer || '',
+        contractTerms: t.contract_terms || '',
         active: t.active,
       }
     : blank()
@@ -139,6 +141,9 @@ onMounted(load)
         </el-form-item>
         <el-form-item label="页脚说明">
           <el-input v-model="form.footer" maxlength="500" placeholder="例如：本报价单经双方签字盖章后生效" />
+        </el-form-item>
+        <el-form-item label="合同条款（一键输出合同时使用，每条一行）">
+          <el-input v-model="form.contractTerms" type="textarea" :rows="6" maxlength="6000" show-word-limit />
         </el-form-item>
         <el-form-item label="状态">
           <el-switch v-model="form.active" active-text="启用" inactive-text="停用" />

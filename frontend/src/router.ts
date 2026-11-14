@@ -7,6 +7,11 @@ export const router = createRouter({
     { path: '/login', component: () => import('./views/LoginView.vue') },
     { path: '/print/:id', component: () => import('./views/PrintView.vue'), meta: { title: '客户报价单' } },
     {
+      path: '/print/:id/contract',
+      component: () => import('./views/ContractPrintView.vue'),
+      meta: { title: '购销合同' },
+    },
+    {
       path: '/',
       component: AppLayout,
       children: [

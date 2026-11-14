@@ -46,7 +46,7 @@ public class SourceImporter {
                 String note =
                     "历史发货状态：" + r.path("shipping").asText() + "；原合同号：" + r.path("contract").asText();
                 db.jdbc.update(
-                    "INSERT INTO project(id,code,name,brand,customer_id,order_date,note,contract_no,shipping_status) VALUES(?,?,?,?,?,?,?,?,?)",
+                    "INSERT INTO project(id,code,name,brand,customer_id,order_date,note,contract_no,shipping_status,city) VALUES(?,?,?,?,?,?,?,?,?,?)",
                     projectId,
                     code,
                     r.path("project").asText(),
@@ -55,7 +55,8 @@ public class SourceImporter {
                     date,
                     note,
                     Contracts.blankToNull(r.path("contract").asText()),
-                    Contracts.shipping(r.path("shipping").asText())
+                    Contracts.shipping(r.path("shipping").asText()),
+                    cn.tianshang.commerce.master.Cities.detect(r.path("project").asText())
                 );
                 db.jdbc.update(
                     "INSERT INTO quotation(id,code,project_id,version,status,tax_basis,note,created_at) VALUES(?,?,?,1,'HISTORICAL','UNKNOWN',?,?)",

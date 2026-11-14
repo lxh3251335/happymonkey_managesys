@@ -51,9 +51,10 @@ public class MasterService {
     public List<Map<String, Object>> projects() {
         return db.jdbc.queryForList(
             """
-            SELECT p.*, c.name AS customer_name,
+            SELECT p.*, c.name AS customer_name, t.name AS project_type_name,
               (SELECT COUNT(*) FROM quotation q WHERE q.project_id=p.id) AS quote_count
-            FROM project p JOIN partner c ON c.id=p.customer_id ORDER BY p.created_at DESC,p.code
+            FROM project p JOIN partner c ON c.id=p.customer_id LEFT JOIN project_type t ON t.id=p.project_type_id
+            ORDER BY p.created_at DESC,p.code
             """
         );
     }
@@ -66,8 +67,22 @@ public class MasterService {
         LocalDate orderDate,
         @Size(max = 2000) String note,
         @Size(max = 100) String contractNo,
-        @Pattern(regexp = "^$|制作中|已发货") String shippingStatus
+        @Pattern(regexp = "^$|制作中|已发货") String shippingStatus,
+        @Size(max = 50) String city,
+        @Size(max = 36) String projectTypeId
     ) {}
+
+    /** 城市未填时按门店名称识别。 */
+    String city(ProjectInput p) {
+        String c = blankToNull(p.city());
+        return c != null ? c : Cities.detect(p.name());
+    }
+
+    private String projectType(String id) {
+        String v = blankToNull(id);
+        if (v != null) db.one("SELECT id FROM project_type WHERE id=?", v);
+        return v;
+    }
 
     @PreAuthorize("hasAnyRole('ADMIN','SALES')")
     @Transactional
@@ -76,7 +91,7 @@ public class MasterService {
         String id = db.id(),
             code = "XM-" + LocalDate.now().getYear() + "-" + id.substring(0, 8).toUpperCase();
         db.jdbc.update(
-            "INSERT INTO project(id,code,name,brand,customer_id,external_id,order_date,note,contract_no,shipping_status) VALUES(?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO project(id,code,name,brand,customer_id,external_id,order_date,note,contract_no,shipping_status,city,project_type_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
             id,
             code,
             p.name().trim(),
@@ -86,7 +101,9 @@ public class MasterService {
             p.orderDate(),
             p.note(),
             Contracts.blankToNull(p.contractNo()),
-            Contracts.shipping(p.shippingStatus())
+            Contracts.shipping(p.shippingStatus()),
+            city(p),
+            projectType(p.projectTypeId())
         );
         db.audit("PROJECT_CREATED", id, p.name());
         return Map.of("id", id);
@@ -101,7 +118,7 @@ public class MasterService {
             "已登记项目不允许更换客户，请新建项目"
         );
         db.jdbc.update(
-            "UPDATE project SET name=?,brand=?,external_id=?,order_date=?,note=?,contract_no=?,shipping_status=? WHERE id=?",
+            "UPDATE project SET name=?,brand=?,external_id=?,order_date=?,note=?,contract_no=?,shipping_status=?,city=?,project_type_id=? WHERE id=?",
             p.name().trim(),
             p.brand(),
             blankToNull(p.externalId()),
@@ -109,6 +126,8 @@ public class MasterService {
             p.note(),
             Contracts.blankToNull(p.contractNo()),
             Contracts.shipping(p.shippingStatus()),
+            city(p),
+            projectType(p.projectTypeId()),
             id
         );
         db.audit("PROJECT_UPDATED", id, "更新项目信息及云智冷关联ID");

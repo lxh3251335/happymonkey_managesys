@@ -51,3 +51,40 @@ export const attachmentCategory: Record<string, string> = {
 }
 export const fileSize = (n: number) =>
   n < 1024 ? `${n} B` : n < 1048576 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1048576).toFixed(1)} MB`
+/** 人民币金额大写，用于合同。 */
+export function rmbUpper(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(Number(value))) return ''
+  const digits = '零壹贰叁肆伍陆柒捌玖'
+  const units = ['', '拾', '佰', '仟']
+  const groups = ['', '万', '亿', '万亿']
+  const fen = Math.round(Math.abs(Number(value)) * 100)
+  const yuan = Math.floor(fen / 100),
+    jiao = Math.floor(fen / 10) % 10,
+    cent = fen % 10
+  let out = ''
+  if (yuan === 0) out = '零'
+  else {
+    const s = String(yuan)
+    let zero = false
+    for (let i = 0; i < s.length; i++) {
+      const d = Number(s[i]),
+        pos = s.length - 1 - i,
+        unit = units[pos % 4]
+      if (d === 0) zero = true
+      else {
+        if (zero && out) out += '零'
+        out += digits[d] + unit
+        zero = false
+      }
+      if (pos % 4 === 0 && pos > 0) {
+        const groupDigits = s.slice(Math.max(0, i - 3), i + 1)
+        if (Number(groupDigits) > 0) out += groups[pos / 4]
+      }
+    }
+  }
+  out += '元'
+  if (jiao === 0 && cent === 0) return `${Number(value) < 0 ? '负' : ''}${out}整`
+  out += jiao ? digits[jiao] + '角' : '零'
+  if (cent) out += digits[cent] + '分'
+  return `${Number(value) < 0 ? '负' : ''}${out}`
+}

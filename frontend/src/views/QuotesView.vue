@@ -1,13 +1,14 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Search } from '@element-plus/icons-vue'
 import PageHeader from '../components/PageHeader.vue'
 import StatusTag from '../components/StatusTag.vue'
 import QuoteEditor from '../components/QuoteEditor.vue'
 import QuoteDetail from '../components/QuoteDetail.vue'
-import { api, post, canWrite } from '../api'
+import CostCorrection from '../components/CostCorrection.vue'
+import { api, post, canWrite, canFinance } from '../api'
 import type { Quote, Product, Project } from '../types'
 import { money, percent, statusName, afterDays } from '../utils'
 const route = useRoute(),
@@ -25,7 +26,8 @@ const route = useRoute(),
   error = ref(''),
   accepting = ref(false),
   dueDate = ref(afterDays(30)),
-  busy = ref(false)
+  busy = ref(false),
+  fixing = ref(false)
 const projectId = computed(() => String(route.query.project || ''))
 const filtered = computed(() =>
   rows.value.filter(
@@ -78,8 +80,40 @@ async function transition(action: string) {
     busy.value = false
   }
 }
-function printQuote() {
-  if (detail.value) window.open(`/print/${detail.value.id}`, '_blank', 'noopener,noreferrer')
+/** 一键输出：草稿先确认出具（固定模板内容），再打开报价单或合同打印页。 */
+async function output(kind: 'quote' | 'contract') {
+  const q = detail.value
+  if (!q) return
+  if (q.status === 'DRAFT') {
+    if (!canWrite()) return ElMessage.warning('草稿需由商务或管理员出具后才能输出')
+    try {
+      await ElMessageBox.confirm('输出前需要先出具此报价（出具后不能再修改，只能复制为新版本）。继续？', '出具报价', {
+        confirmButtonText: '出具并输出',
+        cancelButtonText: '取消',
+        type: 'warning',
+      })
+    } catch {
+      return
+    }
+    // 先同步打开窗口，避免出具请求返回后被浏览器拦截弹窗
+    const win = window.open('about:blank', '_blank')
+    busy.value = true
+    try {
+      await post(`/quotes/${q.id}/issue`, {})
+      await saved(q.id)
+      const url = kind === 'quote' ? `/print/${q.id}` : `/print/${q.id}/contract`
+      // 浏览器拦截新窗口时，在当前页打开
+      if (win) win.location.href = url
+      else window.location.assign(url)
+    } catch (e) {
+      win?.close()
+      ElMessage.error((e as Error).message)
+    } finally {
+      busy.value = false
+    }
+    return
+  }
+  window.open(kind === 'quote' ? `/print/${q.id}` : `/print/${q.id}/contract`, '_blank', 'noopener,noreferrer')
 }
 onMounted(async () => {
   await load()
@@ -164,7 +198,9 @@ onMounted(async () => {
       <template #footer>
         <el-button @click="detailOpen = false">关闭</el-button>
         <el-button v-if="canWrite()" @click="create(true)">复制为新版本</el-button>
-        <el-button v-if="detail && detail.status !== 'DRAFT'" @click="printQuote">生成对客报价单</el-button>
+        <el-button v-if="canFinance() && detail" @click="fixing = true">修正成本</el-button>
+        <el-button v-if="detail" :loading="busy" @click="output('quote')">输出报价单</el-button>
+        <el-button v-if="detail" :loading="busy" @click="output('contract')">输出合同</el-button>
         <el-button
           v-if="canWrite() && detail?.status === 'DRAFT'"
           type="primary"
@@ -182,6 +218,7 @@ onMounted(async () => {
         </el-button>
       </template>
     </el-dialog>
+    <CostCorrection v-model="fixing" :quote="detail" @saved="detail && saved(detail.id)" />
     <el-dialog v-model="accepting" title="确认客户订单" width="480px">
       <p>确认后，该版本金额将建立应收。每个项目只允许一份已确认订单，请核实客户确认凭据及金额。</p>
       <el-form label-position="top">

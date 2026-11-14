@@ -3,6 +3,7 @@ import type { Quote } from '../types'
 import { money, unitMoney, percent, day, taxName } from '../utils'
 import StatusTag from './StatusTag.vue'
 defineProps<{ quote: Quote }>()
+const split = (n: number | null) => (n == null ? '—' : Number(n).toLocaleString('zh-CN', { maximumFractionDigits: 2 }))
 </script>
 <template>
   <div>
@@ -19,6 +20,10 @@ defineProps<{ quote: Quote }>()
     </div>
     <div class="detail-meta">
       <span>品牌：{{ quote.brand }}</span>
+      <span v-if="quote.city">城市：{{ quote.city }}</span>
+      <span v-if="quote.project_type_name">项目类型：{{ quote.project_type_name }}</span>
+      <span v-if="quote.supplier_name">供应商：{{ quote.supplier_name }}</span>
+      <span v-if="quote.contract_no">合同号：{{ quote.contract_no }}</span>
       <span>
         税口径：{{ taxName[quote.tax_basis] }}{{ quote.tax_rate == null ? '' : ` · ${percent(quote.tax_rate)}` }}
       </span>
@@ -37,10 +42,26 @@ defineProps<{ quote: Quote }>()
       <el-table-column label="销售金额" width="125" align="right">
         <template #default="{ row }">{{ money(row.amount) }}</template>
       </el-table-column>
-      <el-table-column label="成本金额" width="125" align="right">
+      <el-table-column label="单台成本（材料 / 人工 / 财务）" min-width="210" align="right">
+        <template #default="{ row }">
+          {{ unitMoney(row.unit_cost) }}
+          <small
+            v-if="row.material_cost != null || row.labor_cost != null || row.finance_cost != null"
+            class="cell-sub"
+          >
+            {{ split(row.material_cost) }} / {{ split(row.labor_cost) }} / {{ split(row.finance_cost) }}
+          </small>
+        </template>
+      </el-table-column>
+      <el-table-column label="成本金额" width="115" align="right">
         <template #default="{ row }">{{ money(row.cost) }}</template>
       </el-table-column>
-      <el-table-column label="数据来源" min-width="200" prop="source" show-overflow-tooltip />
+      <el-table-column label="毛利率" width="88" align="right">
+        <template #default="{ row }">
+          {{ row.amount && row.cost != null ? percent((row.amount - row.cost) / row.amount) : '—' }}
+        </template>
+      </el-table-column>
+      <el-table-column label="数据来源" min-width="140" prop="source" show-overflow-tooltip />
     </el-table>
     <div class="quote-summary">
       <div>
@@ -67,3 +88,10 @@ defineProps<{ quote: Quote }>()
     <p v-if="quote.note" class="detail-note">{{ quote.note }}</p>
   </div>
 </template>
+<style scoped>
+.cell-sub {
+  display: block;
+  color: #8a978f;
+  font-size: 11px;
+}
+</style>

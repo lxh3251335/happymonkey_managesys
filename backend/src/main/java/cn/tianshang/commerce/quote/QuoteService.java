@@ -1,11 +1,17 @@
 package cn.tianshang.commerce.quote;
 
 import cn.tianshang.commerce.common.*;
+import cn.tianshang.commerce.master.MasterService;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import jakarta.validation.Valid;
+import jakarta.validation.constraints.*;
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.*;
+import org.springframework.context.annotation.Lazy;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -15,11 +21,13 @@ public class QuoteService {
     private final Database db;
     private final QuoteTemplateService templates;
     private final ObjectMapper json;
+    private final MasterService masters;
 
-    public QuoteService(Database db, QuoteTemplateService templates, ObjectMapper json) {
+    public QuoteService(Database db, QuoteTemplateService templates, ObjectMapper json, @Lazy MasterService masters) {
         this.db = db;
         this.templates = templates;
         this.json = json;
+        this.masters = masters;
     }
 
     public List<Map<String, Object>> list() {
@@ -41,8 +49,11 @@ public class QuoteService {
         var q = db.one(
             """
             SELECT q.*,p.name AS project_name,p.brand,p.code AS project_code,p.external_id,
-            c.name AS customer_name,t.name AS template_name FROM quotation q JOIN project p ON p.id=q.project_id
-            JOIN partner c ON c.id=p.customer_id LEFT JOIN quote_template t ON t.id=q.template_id WHERE q.id=?
+            p.city,p.contract_no,c.name AS customer_name,c.contact AS customer_contact,c.phone AS customer_phone,
+            t.name AS template_name,s.name AS supplier_name,pt.name AS project_type_name
+            FROM quotation q JOIN project p ON p.id=q.project_id
+            JOIN partner c ON c.id=p.customer_id LEFT JOIN quote_template t ON t.id=q.template_id
+            LEFT JOIN partner s ON s.id=q.supplier_id LEFT JOIN project_type pt ON pt.id=q.project_type_id WHERE q.id=?
             """,
             id
         );
@@ -54,36 +65,75 @@ public class QuoteService {
 
     @Transactional
     public String create(QuoteInput input) {
-        db.one("SELECT id FROM project WHERE id=? FOR UPDATE", input.projectId());
+        String projectId = input.projectId() == null || input.projectId().isBlank() ? null : input.projectId();
+        String projectTypeId = blank(input.projectTypeId());
+        if (projectId == null && input.newProject() == null) throw new ApiException("请选择项目或登记新门店");
+        if (projectId != null && input.newProject() != null) throw new ApiException("已选择项目时不能同时登记新门店");
+        if (input.validUntil().isBefore(LocalDate.now())) throw new ApiException("报价有效期不能早于今天");
+        if (!input.taxBasis().equals("UNKNOWN") && input.taxRate() == null) throw new ApiException("请填写税率");
+        if (input.newProject() != null) {
+            var n = input.newProject();
+            var type = db.one("SELECT * FROM project_type WHERE id=?", n.projectTypeId());
+            projectId = masters
+                .project(
+                    new MasterService.ProjectInput(
+                        n.name(),
+                        type.get("brand").toString(),
+                        n.customerId(),
+                        null,
+                        n.orderDate(),
+                        null,
+                        n.contractNo(),
+                        null,
+                        n.city(),
+                        n.projectTypeId()
+                    )
+                )
+                .get("id");
+            if (projectTypeId == null) projectTypeId = n.projectTypeId();
+        }
+        var project = db.one("SELECT * FROM project WHERE id=? FOR UPDATE", projectId);
+        if (projectTypeId == null && project.get("project_type_id") != null) projectTypeId = project
+            .get("project_type_id")
+            .toString();
+        if (projectTypeId != null) db.one("SELECT id FROM project_type WHERE id=?", projectTypeId);
+        String supplierId = blank(input.supplierId());
+        if (
+            supplierId != null &&
+            !"SUPPLIER".equals(db.one("SELECT kind FROM partner WHERE id=?", supplierId).get("kind"))
+        ) throw new ApiException("请选择供应商");
         if (input.validUntil().isBefore(LocalDate.now())) throw new ApiException("报价有效期不能早于今天");
         if (!input.taxBasis().equals("UNKNOWN") && input.taxRate() == null) throw new ApiException("请填写税率");
         String templateId = templates.resolveForNewQuote(input.templateId());
         int version = db.jdbc.queryForObject(
             "SELECT COALESCE(MAX(version),0)+1 FROM quotation WHERE project_id=?",
             Integer.class,
-            input.projectId()
+            projectId
         );
         String id = db.id(),
             code = "BJ-" + LocalDate.now().getYear() + "-" + id.substring(0, 8).toUpperCase();
         db.jdbc.update(
-            "INSERT INTO quotation(id,code,project_id,version,status,tax_basis,tax_rate,valid_until,note,template_id) VALUES(?,?,?,?,'DRAFT',?,?,?,?,?)",
+            "INSERT INTO quotation(id,code,project_id,version,status,tax_basis,tax_rate,valid_until,note,template_id,supplier_id,project_type_id) VALUES(?,?,?,?,'DRAFT',?,?,?,?,?,?,?)",
             id,
             code,
-            input.projectId(),
+            projectId,
             version,
             input.taxBasis(),
             input.taxRate(),
             input.validUntil(),
             input.note(),
-            templateId
+            templateId,
+            supplierId,
+            projectTypeId
         );
         int pos = 0;
         for (var line : input.items()) {
             var product = db.one("SELECT * FROM product WHERE id=?", line.productId());
             db.jdbc.update(
                 """
-                INSERT INTO quotation_item(id,quotation_id,product_id,position,name,specification,unit,quantity,unit_price,unit_cost,amount,cost)
-                VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
+                INSERT INTO quotation_item(id,quotation_id,product_id,position,name,specification,unit,quantity,unit_price,unit_cost,amount,cost,
+                  material_cost,labor_cost,finance_cost)
+                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 """,
                 db.id(),
                 id,
@@ -94,9 +144,12 @@ public class QuoteService {
                 product.get("unit"),
                 line.quantity(),
                 line.unitPrice(),
-                line.unitCost(),
+                line.effectiveCost(),
                 QuoteMath.line(line.quantity(), line.unitPrice()),
-                QuoteMath.line(line.quantity(), line.unitCost())
+                QuoteMath.line(line.quantity(), line.effectiveCost()),
+                line.materialCost(),
+                line.laborCost(),
+                line.financeCost()
             );
         }
         db.audit("QUOTE_CREATED", id, "新建报价版本 V" + version);
@@ -146,7 +199,13 @@ public class QuoteService {
             "valid_until",
             "amount",
             "note",
-            "status"
+            "status",
+            "city",
+            "contract_no",
+            "project_code",
+            "customer_contact",
+            "customer_phone",
+            "created_at"
         ))
             out.put(key, original.get(key));
         @SuppressWarnings("unchecked")
@@ -172,7 +231,16 @@ public class QuoteService {
         Object snap = quote.get("template_snapshot");
         if (snap != null) {
             try {
-                return json.readValue(snap.toString(), new TypeReference<LinkedHashMap<String, Object>>() {});
+                Map<String, Object> t = json.readValue(
+                    snap.toString(),
+                    new TypeReference<LinkedHashMap<String, Object>>() {}
+                );
+                // V4 前出具的快照没有合同条款：用当前模板补齐
+                if (!t.containsKey("contract_terms")) {
+                    var current = templates.printable((String) quote.get("template_id"));
+                    t.put("contract_terms", current == null ? null : current.get("contract_terms"));
+                }
+                return t;
             } catch (JsonProcessingException e) {
                 throw new IllegalStateException("报价模板快照损坏：" + quote.get("id"), e);
             }
@@ -187,5 +255,79 @@ public class QuoteService {
         } catch (JsonProcessingException e) {
             throw new IllegalStateException(e);
         }
+    }
+
+    public record CostFix(
+        @NotBlank String itemId,
+        @DecimalMin("0") @DecimalMax("999999999") @Digits(integer = 9, fraction = 6) BigDecimal materialCost,
+        @DecimalMin("0") @DecimalMax("999999999") @Digits(integer = 9, fraction = 6) BigDecimal laborCost,
+        @DecimalMin("0") @DecimalMax("999999999") @Digits(integer = 9, fraction = 6) BigDecimal financeCost,
+        @DecimalMin("0") @DecimalMax("999999999") @Digits(integer = 9, fraction = 6) BigDecimal unitCost
+    ) {
+        BigDecimal effective() {
+            return new QuoteInput.Line(
+                "x",
+                BigDecimal.ONE,
+                BigDecimal.ZERO,
+                unitCost,
+                materialCost,
+                laborCost,
+                financeCost
+            ).effectiveCost();
+        }
+    }
+
+    public record CostCorrection(@NotBlank @Size(max = 300) String reason, @NotEmpty List<@Valid CostFix> items) {}
+
+    /**
+     * 会计修正成本：可改任意状态报价的内部成本（材料/人工/财务），售价与对客报价单不变。每行变更记审计。
+     */
+    @PreAuthorize("hasAnyRole('ADMIN','FINANCE')")
+    @Transactional
+    public int correctCosts(String quoteId, @Valid CostCorrection c) {
+        db.one("SELECT id FROM quotation WHERE id=? FOR UPDATE", quoteId);
+        int changed = 0;
+        for (var fix : c.items()) {
+            var item = db.one("SELECT * FROM quotation_item WHERE id=? AND quotation_id=?", fix.itemId(), quoteId);
+            var qty = new BigDecimal(item.get("quantity").toString());
+            BigDecimal before = item.get("unit_cost") == null ? null : new BigDecimal(item.get("unit_cost").toString());
+            BigDecimal after = fix.effective();
+            boolean same =
+                Objects.equals(num(item.get("material_cost")), num(fix.materialCost())) &&
+                Objects.equals(num(item.get("labor_cost")), num(fix.laborCost())) &&
+                Objects.equals(num(item.get("finance_cost")), num(fix.financeCost())) &&
+                Objects.equals(num(before), num(after));
+            if (same) continue;
+            db.jdbc.update(
+                "UPDATE quotation_item SET unit_cost=?,cost=?,material_cost=?,labor_cost=?,finance_cost=? WHERE id=?",
+                after,
+                QuoteMath.line(qty, after),
+                fix.materialCost(),
+                fix.laborCost(),
+                fix.financeCost(),
+                fix.itemId()
+            );
+            db.audit(
+                "QUOTE_COST_CORRECTED",
+                quoteId,
+                item.get("name") +
+                    " 单台成本 " +
+                    (before == null ? "空" : before.stripTrailingZeros().toPlainString()) +
+                    " → " +
+                    (after == null ? "空" : after.stripTrailingZeros().toPlainString()) +
+                    "；原因：" +
+                    c.reason().trim()
+            );
+            changed++;
+        }
+        return changed;
+    }
+
+    private static String num(Object v) {
+        return v == null ? null : new BigDecimal(v.toString()).stripTrailingZeros().toPlainString();
+    }
+
+    private static String blank(String v) {
+        return v == null || v.isBlank() ? null : v.trim();
     }
 }

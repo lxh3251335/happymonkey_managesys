@@ -26,6 +26,9 @@ export interface Project {
   quote_count: number
   contract_no: string | null
   shipping_status: string | null
+  city: string | null
+  project_type_id: string | null
+  project_type_name: string | null
 }
 export interface Product {
   id: string
@@ -50,6 +53,9 @@ export interface QuoteItem {
   cost: number | null
   source: string
   note: string
+  material_cost: number | null
+  labor_cost: number | null
+  finance_cost: number | null
 }
 export interface Quote {
   id: string
@@ -79,6 +85,14 @@ export interface Quote {
   outstanding: number
   overdue: boolean
   template_name?: string | null
+  supplier_id?: string | null
+  supplier_name?: string | null
+  project_type_id?: string | null
+  project_type_name?: string | null
+  city?: string | null
+  contract_no?: string | null
+  customer_contact?: string | null
+  customer_phone?: string | null
   /** 仅对客版本：出具时固定的模板快照 */
   template?: PrintTemplate | null
 }
@@ -150,11 +164,27 @@ export interface DashboardTotals extends BizRow {
   current_month_contract: number
   current_month_received: number
 }
+/** 月度行附带各产品线的合同额与毛利 */
+export interface MonthRow extends BizRow {
+  lines: Record<string, BizRow>
+}
+/** 品牌（业务）× 产品线对比，始终基于全部业务 */
+export interface BrandLines {
+  brand: string
+  contract_amount: number
+  gross_margin: number | null
+  lines: BizRow[]
+}
 export interface Dashboard {
   totals: DashboardTotals
-  monthly: BizRow[]
+  monthly: MonthRow[]
+  /** 当前筛选下的产品线汇总，固定顺序：电控柜、物联网电箱，其余有数据才出现 */
+  line_summary: BizRow[]
+  brand: string | null
+  brand_lines: BrandLines[]
   by_customer: BizRow[]
   by_brand: BizRow[]
+  by_city: BizRow[]
   by_line: BizRow[]
   /** contract_amount 为该账龄段的未收余额 */
   aging: BizRow[]
@@ -242,6 +272,7 @@ export interface PrintTemplate {
   bank_account: string | null
   terms: string | null
   footer: string | null
+  contract_terms: string | null
 }
 export interface QuoteTemplate extends PrintTemplate {
   id: string
@@ -262,4 +293,58 @@ export interface ContractAttachment {
   note: string | null
   uploaded_by: string
   created_at: string
+}
+export interface ProjectTypeItem {
+  id: string
+  product_id: string
+  position: number
+  quantity: number
+  unit_price: number | null
+  name: string
+  specification: string
+  model: string
+  unit: string
+}
+export interface ProjectType {
+  id: string
+  name: string
+  brand: string
+  note: string | null
+  active: boolean
+  supplier_templates: number
+  projects: number
+  items: ProjectTypeItem[]
+}
+export interface SupplierTemplateItem {
+  product_id: string
+  name: string
+  specification: string
+  unit: string
+  material_cost: number | null
+  labor_cost: number | null
+  finance_cost: number | null
+  unit_cost: number | null
+}
+export interface SupplierTemplate {
+  id: string
+  supplier_id: string
+  supplier_name: string
+  project_type_id: string
+  project_type_name: string
+  note: string | null
+  active: boolean
+  updated_at: string
+  items: SupplierTemplateItem[]
+}
+export interface PrefillLine {
+  product_id: string
+  name: string
+  specification: string
+  unit: string
+  quantity: number
+  unit_price: number | null
+  material_cost: number | null
+  labor_cost: number | null
+  finance_cost: number | null
+  unit_cost: number | null
 }
