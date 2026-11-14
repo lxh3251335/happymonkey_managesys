@@ -2,6 +2,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import ContractTable from '../components/ContractTable.vue'
+import ContractAttachments from '../components/ContractAttachments.vue'
 import { ElMessage } from 'element-plus'
 import { Plus, Search } from '@element-plus/icons-vue'
 import PageHeader from '../components/PageHeader.vue'
@@ -16,6 +17,8 @@ const entries = ref<CashEntry[]>([]),
   contracts = ref<Contract[]>([]),
   receipts = ref<ContractReceipt[]>([]),
   dialog = ref(false),
+  attachDialog = ref(false),
+  attachContract = ref<Contract>(),
   busy = ref(false),
   error = ref('')
 const fresh = () => ({
@@ -198,6 +201,8 @@ onMounted(load)
         <ContractTable
           :contracts="contracts"
           :actions="canFinance() || canWrite()"
+          attachments
+          @attachments="(c) => ((attachContract = c), (attachDialog = true))"
           @confirm="openConfirm"
           @receipt="
             (c) => (canFinance() ? openContract(c, 'RECEIPT') : ElMessage.warning('登记回款需要财务或管理员权限'))
@@ -398,5 +403,6 @@ onMounted(load)
         <el-button type="primary" :loading="busy" @click="saveContract">登记</el-button>
       </template>
     </el-dialog>
+    <ContractAttachments v-model="attachDialog" :contract="attachContract" @changed="load" />
   </div>
 </template>

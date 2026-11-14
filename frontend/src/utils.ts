@@ -42,3 +42,12 @@ export const wan = (n: number | null | undefined, digits = 2) =>
 export const axisWan = (n: number) =>
   n === 0 ? '0' : `${(n / 10000).toLocaleString('zh-CN', { maximumFractionDigits: 1 })}万`
 export const monthLabel = (m: string) => (/^\d{4}-\d{2}$/.test(m) ? `${Number(m.slice(5))}月` : m)
+export const attachmentCategory: Record<string, string> = {
+  CONTRACT: '合同',
+  STAMPED_QUOTE: '盖章报价单',
+  DELIVERY: '送货签收',
+  INVOICE: '发票',
+  OTHER: '其他',
+}
+export const fileSize = (n: number) =>
+  n < 1024 ? `${n} B` : n < 1048576 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1048576).toFixed(1)} MB`

@@ -5,11 +5,15 @@ import StatusTag from './StatusTag.vue'
 import type { Contract } from '../types'
 import { money, percent, day } from '../utils'
 
-const props = withDefaults(defineProps<{ contracts: Contract[]; actions?: boolean; pageSize?: number }>(), {
-  actions: false,
-  pageSize: 10,
-})
-const emit = defineEmits<{ confirm: [Contract]; receipt: [Contract]; refund: [Contract] }>()
+const props = withDefaults(
+  defineProps<{ contracts: Contract[]; actions?: boolean; attachments?: boolean; pageSize?: number }>(),
+  {
+    actions: false,
+    attachments: false,
+    pageSize: 10,
+  },
+)
+const emit = defineEmits<{ confirm: [Contract]; receipt: [Contract]; refund: [Contract]; attachments: [Contract] }>()
 
 const keyword = ref(''),
   status = ref(''),
@@ -129,14 +133,26 @@ const confirmClass = { PENDING: 'tag-pending', PARTIAL: 'tag-partial', CONFIRMED
           </span>
         </template>
       </el-table-column>
-      <el-table-column v-if="actions" label="操作" width="150" fixed="right">
+      <el-table-column v-if="actions || attachments" label="操作" width="200" fixed="right">
         <template #default="{ row }">
-          <el-button v-if="row.confirmation !== 'CONFIRMED'" link type="primary" @click="emit('confirm', row)">
-            确认应收
+          <el-button
+            v-if="attachments"
+            link
+            :type="row.attachments ? 'primary' : 'info'"
+            @click="emit('attachments', row)"
+          >
+            附件{{ row.attachments ? ` ${row.attachments}` : '' }}
           </el-button>
-          <template v-else>
-            <el-button v-if="row.outstanding > 0" link type="primary" @click="emit('receipt', row)">登记回款</el-button>
-            <el-button v-if="row.received > 0" link @click="emit('refund', row)">退款</el-button>
+          <template v-if="actions">
+            <el-button v-if="row.confirmation !== 'CONFIRMED'" link type="primary" @click="emit('confirm', row)">
+              确认应收
+            </el-button>
+            <template v-else>
+              <el-button v-if="row.outstanding > 0" link type="primary" @click="emit('receipt', row)">
+                登记回款
+              </el-button>
+              <el-button v-if="row.received > 0" link @click="emit('refund', row)">退款</el-button>
+            </template>
           </template>
         </template>
       </el-table-column>

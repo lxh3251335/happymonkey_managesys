@@ -3,6 +3,7 @@ export interface User {
   username: string
   display_name: string
   role: 'ADMIN' | 'SALES' | 'FINANCE' | 'VIEWER'
+  enabled?: boolean
 }
 export interface Partner {
   id: string
@@ -77,6 +78,9 @@ export interface Quote {
   received: number
   outstanding: number
   overdue: boolean
+  template_name?: string | null
+  /** 仅对客版本：出具时固定的模板快照 */
+  template?: PrintTemplate | null
 }
 export interface Offer {
   id: string
@@ -201,6 +205,7 @@ export interface Contract {
   order_date: string | null
   due_date: string | null
   items: ContractItem[]
+  attachments: number
 }
 export interface ContractReceipt {
   id: string
@@ -222,5 +227,39 @@ export interface Audit {
   action: string
   entity_id: string
   detail: string
+  created_at: string
+}
+export interface PrintTemplate {
+  name: string
+  company_name: string
+  title: string
+  address: string | null
+  contact: string | null
+  phone: string | null
+  email: string | null
+  tax_no: string | null
+  bank_name: string | null
+  bank_account: string | null
+  terms: string | null
+  footer: string | null
+}
+export interface QuoteTemplate extends PrintTemplate {
+  id: string
+  is_default: boolean
+  active: boolean
+  used: number
+  updated_at: string
+}
+export interface ContractAttachment {
+  id: string
+  customer_id: string
+  contract_no: string
+  category: 'CONTRACT' | 'STAMPED_QUOTE' | 'DELIVERY' | 'INVOICE' | 'OTHER'
+  file_name: string
+  extension: string
+  size_bytes: number
+  sha256: string
+  note: string | null
+  uploaded_by: string
   created_at: string
 }

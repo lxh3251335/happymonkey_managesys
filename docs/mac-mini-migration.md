@@ -13,6 +13,7 @@ C:\Users\liuxi\Documents\ChatGPT\快乐猴_小象项目登记系统开发
 | backend/（除 target） | Java 源码、配置、SQL 迁移、测试；其中 data 为业务库 | 复制 |
 | frontend/（除 node_modules、dist） | Vue / TypeScript 源码和依赖锁文件 | 复制 |
 | backend/data/commerce.mv.db | 当前本机业务库：项目、报价、账号、回款等 | 停止 Windows 服务后复制，保留同一路径 |
+| backend/data/attachments/ | 合同附件文件（数据库只存元数据） | 与业务库一起复制，保留同一路径 |
 | docs/source-seed.json | 已复核历史导入包 | 单独保留 |
 | docs/source-workbooks.json、docs/import-review.json | 原表提取结果、隔离及待核对资料 | 单独保留 |
 | scripts/、tools/、deploy/、docs/ | 启动脚本、辅助工具、部署、架构文档 | 复制 |

@@ -18,11 +18,18 @@ public class ContractService {
     private final Database db;
     private final ContractLedger ledger;
     private final QuoteService quotes;
+    private final ContractAttachmentService attachments;
 
-    public ContractService(Database db, ContractLedger ledger, QuoteService quotes) {
+    public ContractService(
+        Database db,
+        ContractLedger ledger,
+        QuoteService quotes,
+        ContractAttachmentService attachments
+    ) {
         this.db = db;
         this.ledger = ledger;
         this.quotes = quotes;
+        this.attachments = attachments;
     }
 
     public List<Map<String, Object>> contracts() {
@@ -30,6 +37,7 @@ public class ContractService {
         for (var f : ledger.contracted())
             groups.computeIfAbsent(f.customerId() + "::" + f.contractKey(), k -> new ArrayList<>()).add(f);
         var today = LocalDate.now();
+        var attachmentCounts = attachments.counts();
         var out = new ArrayList<Map<String, Object>>();
         for (var g : groups.values()) {
             var first = g.get(0);
@@ -64,6 +72,7 @@ public class ContractService {
             row.put("outstanding", outstanding);
             row.put("overdue", overdue);
             row.put("collection_rate", ratio(received, amount));
+            row.put("attachments", attachmentCounts.getOrDefault(first.customerId() + "::" + first.contractKey(), 0));
             row.put(
                 "order_date",
                 g

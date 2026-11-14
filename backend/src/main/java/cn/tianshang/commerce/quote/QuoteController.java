@@ -11,9 +11,31 @@ import org.springframework.web.bind.annotation.*;
 public class QuoteController {
 
     private final QuoteService service;
+    private final QuoteTemplateService templates;
 
-    public QuoteController(QuoteService service) {
+    public QuoteController(QuoteService service, QuoteTemplateService templates) {
         this.service = service;
+        this.templates = templates;
+    }
+
+    @GetMapping("/templates")
+    public List<Map<String, Object>> templates() {
+        return templates.list();
+    }
+
+    @PostMapping("/templates")
+    public Map<String, String> createTemplate(@Valid @RequestBody QuoteTemplateService.TemplateInput input) {
+        return Map.of("id", templates.create(input));
+    }
+
+    @PutMapping("/templates/{id}")
+    public void updateTemplate(@PathVariable String id, @Valid @RequestBody QuoteTemplateService.TemplateInput input) {
+        templates.update(id, input);
+    }
+
+    @PostMapping("/templates/{id}/default")
+    public void defaultTemplate(@PathVariable String id) {
+        templates.makeDefault(id);
     }
 
     @GetMapping

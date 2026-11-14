@@ -2,8 +2,8 @@
 import { ref, computed, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Plus, Delete } from '@element-plus/icons-vue'
-import { post } from '../api'
-import type { Project, Product, Quote } from '../types'
+import { api, post } from '../api'
+import type { Project, Product, Quote, QuoteTemplate } from '../types'
 import { afterDays, money, percent } from '../utils'
 const props = defineProps<{
   modelValue: boolean
@@ -19,7 +19,15 @@ interface LineDraft {
   unitPrice: number | undefined
   unitCost: number | undefined
 }
-const form = ref({ projectId: '', taxBasis: 'UNKNOWN', taxPercent: 0, validUntil: afterDays(30), note: '' })
+const form = ref({
+  projectId: '',
+  taxBasis: 'UNKNOWN',
+  taxPercent: 0,
+  validUntil: afterDays(30),
+  note: '',
+  templateId: '',
+})
+const templates = ref<QuoteTemplate[]>([])
 const lines = ref<LineDraft[]>([]),
   busy = ref(false)
 function add() {
@@ -27,14 +35,20 @@ function add() {
 }
 watch(
   () => props.modelValue,
-  (open) => {
+  async (open) => {
     if (!open) return
+    try {
+      templates.value = (await api<QuoteTemplate[]>('/quotes/templates')).filter((t) => t.active)
+    } catch {
+      templates.value = []
+    }
     form.value = {
       projectId: props.seed?.project_id || props.projectId || '',
       taxBasis: props.seed?.tax_basis || 'UNKNOWN',
       taxPercent: (props.seed?.tax_rate || 0) * 100,
       validUntil: afterDays(30),
       note: props.seed?.note || '',
+      templateId: templates.value.find((t) => t.is_default)?.id || '',
     }
     lines.value = props.seed
       ? props.seed.items.map((i) => ({
@@ -73,6 +87,7 @@ async function save() {
     const result = await post<{ id: string }>('/quotes', {
       ...form.value,
       taxRate: form.value.taxBasis === 'UNKNOWN' ? null : form.value.taxPercent / 100,
+      templateId: form.value.templateId || null,
       items: lines.value.map((l) => ({ ...l, unitCost: l.unitCost ?? null })),
     })
     emit('update:modelValue', false)
@@ -112,6 +127,16 @@ async function save() {
         </el-form-item>
         <el-form-item v-if="form.taxBasis !== 'UNKNOWN'" label="税率（%）">
           <el-input-number v-model="form.taxPercent" :min="0" :max="100" :precision="2" />
+        </el-form-item>
+        <el-form-item label="报价模板（抬头与条款）">
+          <el-select v-model="form.templateId" placeholder="默认模板">
+            <el-option
+              v-for="t in templates"
+              :key="t.id"
+              :value="t.id"
+              :label="`${t.name} · ${t.company_name}${t.is_default ? '（默认）' : ''}`"
+            />
+          </el-select>
         </el-form-item>
       </div>
       <div class="inline-note">
@@ -189,13 +214,13 @@ async function save() {
           <strong>{{ cost == null || total === 0 ? '待补充' : percent((total - cost) / total) }}</strong>
         </div>
       </div>
-      <el-form-item label="对客备注 / 报价条款">
+      <el-form-item label="对客备注（本单）">
         <el-input
           v-model="form.note"
           type="textarea"
           :rows="2"
           maxlength="2000"
-          placeholder="例如：交货周期、运输范围、付款条件。请勿填写内部成本。"
+          placeholder="本单特别说明，例如交货周期、运输范围。通用条款请维护在报价模板中。请勿填写内部成本。"
         />
       </el-form-item>
     </el-form>

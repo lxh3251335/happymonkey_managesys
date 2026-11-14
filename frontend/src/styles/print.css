@@ -107,6 +107,38 @@
   font-size: 11px;
   border-top: 1px solid #dce5d5;
 }
+.print-company {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.print-company small {
+  font-size: 11px;
+  color: #6e7b62;
+  letter-spacing: 0;
+}
+.print-sheet > header .print-company strong {
+  font-size: 22px;
+  letter-spacing: 2px;
+}
+.print-terms {
+  margin: 10px 0 0 18px;
+  padding: 0;
+}
+.print-bank {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px 24px;
+  margin-top: 16px;
+  padding: 14px 20px;
+  font-size: 11px;
+  border: 1px solid #e1e8da;
+}
+.print-footnote {
+  text-align: center;
+  font-size: 10px;
+  color: #778671;
+}
 @media print {
   @page {
     size: A4;
@@ -136,6 +168,7 @@
   }
   .print-total,
   .print-notes,
+  .print-bank,
   .print-sheet > footer {
     break-inside: avoid;
   }

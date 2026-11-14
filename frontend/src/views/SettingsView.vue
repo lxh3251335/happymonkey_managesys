@@ -2,7 +2,8 @@
 import { ref, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import PageHeader from '../components/PageHeader.vue'
-import { api, post, session } from '../api'
+import TemplateManager from '../components/TemplateManager.vue'
+import { api, post, put, session } from '../api'
 import type { User, Audit, ImportBatch } from '../types'
 import { roleName, day } from '../utils'
 const tab = ref('account'),
@@ -14,6 +15,36 @@ const tab = ref('account'),
   error = ref('')
 const password = ref({ oldPassword: '', newPassword: '' })
 const user = ref({ username: '', displayName: '', role: 'SALES', password: '' })
+const editDialog = ref(false),
+  editing = ref<User>(),
+  edit = ref({ displayName: '', role: 'SALES', enabled: true, password: '' })
+function openEdit(u: User) {
+  editing.value = u
+  edit.value = { displayName: u.display_name, role: u.role, enabled: u.enabled !== false, password: '' }
+  editDialog.value = true
+}
+async function saveUser() {
+  if (!editing.value) return
+  if (!edit.value.displayName.trim()) return ElMessage.warning('请填写显示名称')
+  if (edit.value.password && edit.value.password.length < 12) return ElMessage.warning('重置密码至少12位')
+  busy.value = true
+  try {
+    const id = editing.value.id
+    await put(`/admin/users/${id}`, {
+      displayName: edit.value.displayName,
+      role: edit.value.role,
+      enabled: edit.value.enabled,
+    })
+    if (edit.value.password) await post(`/admin/users/${id}/password`, { password: edit.value.password })
+    editDialog.value = false
+    await load()
+    ElMessage.success(edit.value.password ? '用户已更新，密码已重置' : '用户已更新')
+  } catch (e) {
+    ElMessage.error((e as Error).message)
+  } finally {
+    busy.value = false
+  }
+}
 async function load() {
   if (session.user?.role !== 'ADMIN') return
   try {
@@ -77,6 +108,7 @@ onMounted(load)
         <el-tab-pane label="账户安全" name="account" />
         <template v-if="session.user?.role === 'ADMIN'">
           <el-tab-pane label="用户与角色" name="users" />
+          <el-tab-pane label="报价模板" name="templates" />
           <el-tab-pane label="操作审计" name="audit" />
           <el-tab-pane label="历史数据导入" name="imports" />
         </template>
@@ -105,8 +137,19 @@ onMounted(load)
           <el-table-column label="角色">
             <template #default="{ row }">{{ roleName[row.role] }}</template>
           </el-table-column>
+          <el-table-column label="状态" width="90">
+            <template #default="{ row }">
+              <el-tag :type="row.enabled ? 'success' : 'info'" size="small">{{ row.enabled ? '启用' : '停用' }}</el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="操作" width="90">
+            <template #default="{ row }">
+              <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
+            </template>
+          </el-table-column>
         </el-table>
       </div>
+      <TemplateManager v-if="tab === 'templates'" />
       <el-table v-if="tab === 'audit'" :data="audits" max-height="600">
         <el-table-column label="日期" width="120">
           <template #default="{ row }">{{ day(row.created_at) }}</template>
@@ -147,6 +190,27 @@ onMounted(load)
       <template #footer>
         <el-button @click="dialog = false">取消</el-button>
         <el-button type="primary" :loading="busy" @click="createUser">创建用户</el-button>
+      </template>
+    </el-dialog>
+    <el-dialog v-model="editDialog" :title="`编辑用户 ${editing?.username || ''}`" width="520px">
+      <el-form label-position="top">
+        <el-form-item label="显示名称"><el-input v-model="edit.displayName" maxlength="100" /></el-form-item>
+        <el-form-item label="角色">
+          <el-select v-model="edit.role">
+            <el-option v-for="(name, key) in roleName" :key="key" :label="name" :value="key" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="账户状态">
+          <el-switch v-model="edit.enabled" active-text="启用" inactive-text="停用" />
+        </el-form-item>
+        <el-form-item label="重置密码（留空则不修改，至少12位）">
+          <el-input v-model="edit.password" type="password" show-password autocomplete="new-password" />
+        </el-form-item>
+        <div class="inline-note">停用账户或修改角色后，该用户已登录的会话会立即失效，需要重新登录。</div>
+      </el-form>
+      <template #footer>
+        <el-button @click="editDialog = false">取消</el-button>
+        <el-button type="primary" :loading="busy" @click="saveUser">保存</el-button>
       </template>
     </el-dialog>
   </div>

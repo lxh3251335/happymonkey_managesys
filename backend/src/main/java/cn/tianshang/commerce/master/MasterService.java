@@ -159,4 +159,48 @@ public class MasterService {
     private String blankToNull(String s) {
         return s == null || s.isBlank() ? null : s.trim();
     }
+
+    /** 修改客户/供应商资料。类别不可更改，避免已有项目或报价关联错位。 */
+    @PreAuthorize("hasAnyRole('ADMIN','SALES')")
+    @Transactional
+    public void updatePartner(String id, @Valid PartnerInput p) {
+        var original = db.one("SELECT * FROM partner WHERE id=? FOR UPDATE", id);
+        if (!original.get("kind").equals(p.kind())) throw new ApiException("不能更改客户/供应商类别，请新建资料");
+        db.jdbc.update(
+            "UPDATE partner SET name=?,contact=?,phone=?,note=? WHERE id=?",
+            p.name().trim(),
+            p.contact(),
+            p.phone(),
+            p.note(),
+            id
+        );
+        db.audit("PARTNER_UPDATED", id, db.text(original, "name") + " → " + p.name().trim());
+    }
+
+    /** 修改标准产品。已保存的报价明细保留当时的品名规格快照，不受影响。 */
+    @PreAuthorize("hasAnyRole('ADMIN','SALES')")
+    @Transactional
+    public void updateProduct(String id, @Valid ProductInput p) {
+        var original = db.one("SELECT * FROM product WHERE id=? FOR UPDATE", id);
+        db.jdbc.update(
+            "UPDATE product SET brand=?,name=?,specification=?,model=?,unit=? WHERE id=?",
+            p.brand(),
+            p.name(),
+            p.specification(),
+            Objects.toString(p.model(), ""),
+            p.unit(),
+            id
+        );
+        db.audit(
+            "PRODUCT_UPDATED",
+            id,
+            db.text(original, "name") +
+                "/" +
+                db.text(original, "specification") +
+                " → " +
+                p.name() +
+                "/" +
+                p.specification()
+        );
+    }
 }

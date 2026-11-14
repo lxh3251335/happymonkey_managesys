@@ -20,6 +20,7 @@ import org.springframework.transaction.annotation.Transactional;
         "spring.datasource.password=${TEST_DB_PASSWORD:}",
         "app.admin-password=TestAdminPassword!",
         "app.import-source=false",
+        "app.attachment-dir=target/test-attachments",
     }
 )
 @AutoConfigureMockMvc
@@ -31,6 +32,30 @@ public abstract class ApiTestSupport {
 
     @Autowired
     protected ObjectMapper mapper;
+
+    @Autowired
+    protected org.springframework.jdbc.core.JdbcTemplate jdbcTemplate;
+
+    /** 会话校验要求账户在库中启用且角色一致，为测试中的模拟账户建档（随测试事务回滚）。 */
+    @org.junit.jupiter.api.BeforeEach
+    void seedMockUsers() {
+        for (String[] u : new String[][] {
+            { "reader", "VIEWER" },
+            { "viewer1", "VIEWER" },
+            { "finance", "FINANCE" },
+            { "finance1", "FINANCE" },
+            { "sales1", "SALES" },
+        })
+            if (
+                jdbcTemplate.queryForObject("SELECT COUNT(*) FROM app_user WHERE username=?", Integer.class, u[0]) == 0
+            ) jdbcTemplate.update(
+                "INSERT INTO app_user(id,username,password_hash,display_name,role) VALUES(?,?,'x',?,?)",
+                UUID.randomUUID().toString(),
+                u[0],
+                u[0],
+                u[1]
+            );
+    }
 
     protected JsonNode postJson(String path, Object body) throws Exception {
         return read(

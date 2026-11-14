@@ -3,7 +3,7 @@ import { ref, computed, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Plus, Search } from '@element-plus/icons-vue'
 import PageHeader from '../components/PageHeader.vue'
-import { api, post, canWrite } from '../api'
+import { api, post, put, canWrite } from '../api'
 import type { Partner, Product } from '../types'
 import { money } from '../utils'
 const partners = ref<Partner[]>([]),
@@ -13,7 +13,8 @@ const partners = ref<Partner[]>([]),
   dialog = ref(false),
   busy = ref(false),
   error = ref(''),
-  page = ref(1)
+  page = ref(1),
+  editingId = ref('')
 const partner = ref({ name: '', kind: 'CUSTOMER', contact: '', phone: '', note: '' })
 const product = ref({ brand: '小象', name: '', specification: '', model: '', unit: '台' })
 const filteredPartners = computed(() =>
@@ -37,10 +38,23 @@ async function load() {
   }
 }
 function open() {
+  editingId.value = ''
   partner.value = { name: '', kind: tab.value, contact: '', phone: '', note: '' }
   product.value = { brand: '小象', name: '', specification: '', model: '', unit: '台' }
   dialog.value = true
 }
+function edit(row: Partner | Product) {
+  editingId.value = row.id
+  if (tab.value === 'PRODUCT') {
+    const p = row as Product
+    product.value = { brand: p.brand, name: p.name, specification: p.specification, model: p.model || '', unit: p.unit }
+  } else {
+    const p = row as Partner
+    partner.value = { name: p.name, kind: p.kind, contact: p.contact || '', phone: p.phone || '', note: p.note || '' }
+  }
+  dialog.value = true
+}
+const kindName = computed(() => (tab.value === 'PRODUCT' ? '标准产品' : tab.value === 'CUSTOMER' ? '客户' : '供应商'))
 async function save() {
   if (
     tab.value === 'PRODUCT'
@@ -50,10 +64,10 @@ async function save() {
     return ElMessage.warning('请填写必填资料')
   busy.value = true
   try {
-    await post(
-      tab.value === 'PRODUCT' ? '/products' : '/partners',
-      tab.value === 'PRODUCT' ? product.value : partner.value,
-    )
+    const path = tab.value === 'PRODUCT' ? '/products' : '/partners'
+    const body = tab.value === 'PRODUCT' ? product.value : partner.value
+    if (editingId.value) await put(`${path}/${editingId.value}`, body)
+    else await post(path, body)
     dialog.value = false
     await load()
     ElMessage.success('基础资料已保存')
@@ -98,6 +112,9 @@ onMounted(load)
         <el-table-column label="联系人" prop="contact" min-width="130" />
         <el-table-column label="联系电话" prop="phone" min-width="160" />
         <el-table-column label="备注" prop="note" min-width="300" show-overflow-tooltip />
+        <el-table-column v-if="canWrite()" label="操作" width="80" fixed="right">
+          <template #default="{ row }"><el-button link type="primary" @click="edit(row)">编辑</el-button></template>
+        </el-table-column>
       </el-table>
       <template v-else>
         <el-table :data="filteredProducts.slice((page - 1) * 12, page * 12)">
@@ -111,6 +128,9 @@ onMounted(load)
           </el-table-column>
           <el-table-column label="历史单台成本参考" align="right" min-width="170">
             <template #default="{ row }">{{ money(row.reference_cost) }}</template>
+          </el-table-column>
+          <el-table-column v-if="canWrite()" label="操作" width="80" fixed="right">
+            <template #default="{ row }"><el-button link type="primary" @click="edit(row)">编辑</el-button></template>
           </el-table-column>
         </el-table>
         <div class="panel-bottom-note">
@@ -126,11 +146,10 @@ onMounted(load)
         />
       </div>
     </section>
-    <el-dialog
-      v-model="dialog"
-      :title="tab === 'PRODUCT' ? '新增标准产品' : tab === 'CUSTOMER' ? '新增客户' : '新增供应商'"
-      width="580px"
-    >
+    <el-dialog v-model="dialog" :title="`${editingId ? '编辑' : '新增'}${kindName}`" width="580px">
+      <div v-if="editingId && tab === 'PRODUCT'" class="inline-note">
+        修改只影响之后新建的报价；已保存的报价明细保留当时的品名、规格和单位。
+      </div>
       <el-form label-position="top">
         <template v-if="tab !== 'PRODUCT'">
           <el-form-item label="名称" required><el-input v-model="partner.name" maxlength="200" /></el-form-item>

@@ -24,6 +24,16 @@ public class AdminController {
         service.createUser(input);
     }
 
+    @PutMapping("/users/{id}")
+    public void update(@PathVariable String id, @Valid @RequestBody AdminService.UserUpdate input) {
+        service.updateUser(id, input);
+    }
+
+    @PostMapping("/users/{id}/password")
+    public void reset(@PathVariable String id, @Valid @RequestBody AdminService.PasswordReset input) {
+        service.resetPassword(id, input);
+    }
+
     @GetMapping("/audit")
     public List<Map<String, Object>> audit() {
         return service.audit();

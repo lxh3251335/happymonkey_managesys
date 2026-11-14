@@ -12,6 +12,7 @@ public record QuoteInput(
     @DecimalMin("0") @DecimalMax("1") BigDecimal taxRate,
     @NotNull LocalDate validUntil,
     @Size(max = 2000) String note,
+    @Size(max = 36) String templateId,
     @NotEmpty @Size(max = 200) List<@Valid Line> items
 ) {
     public record Line(
