@@ -89,7 +89,7 @@ public class ContractLedger {
               )
             : db.jdbc.queryForList(sql + " ORDER BY p.order_date,p.code");
         var quotes = new HashMap<String, Map<String, Object>>();
-        for (var q : db.jdbc.queryForList("SELECT * FROM quotation ORDER BY version")) {
+        for (var q : db.jdbc.queryForList("SELECT * FROM quotation WHERE status<>'LOST' ORDER BY version")) {
             String key = q.get("project_id").toString();
             var current = quotes.get(key);
             boolean accepted = "ACCEPTED".equals(q.get("status"));

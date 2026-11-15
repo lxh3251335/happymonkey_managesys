@@ -11,7 +11,6 @@ import jakarta.validation.Valid;
 import jakarta.validation.constraints.*;
 import java.math.BigDecimal;
 import java.time.LocalDate;
-import java.time.format.DateTimeFormatter;
 import java.util.*;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -57,6 +56,7 @@ public class ContractRecordService {
     private final DictionaryService dictionary;
     private final Ownership ownership;
     private final ObjectMapper json;
+    private final ContractNumbers numbers;
 
     public ContractRecordService(
         Database db,
@@ -65,7 +65,8 @@ public class ContractRecordService {
         ProjectService projects,
         DictionaryService dictionary,
         Ownership ownership,
-        ObjectMapper json
+        ObjectMapper json,
+        ContractNumbers numbers
     ) {
         this.db = db;
         this.contracts = contracts;
@@ -74,6 +75,7 @@ public class ContractRecordService {
         this.dictionary = dictionary;
         this.ownership = ownership;
         this.json = json;
+        this.numbers = numbers;
     }
 
     /** 合同要素。字段为空表示清空（null）；未提交的字段在 Excel 导入时由调用方填入原值。 */
@@ -107,12 +109,12 @@ public class ContractRecordService {
     ) {}
 
     /** 手工登记合同（如先签框架合同、后补门店订单）。合同号留空时自动编号。 */
-    @PreAuthorize("hasAnyRole('ADMIN','SALES')")
+    @PreAuthorize("hasAnyRole('ADMIN','MANAGER','SALES')")
     @Transactional
     public Map<String, Object> create(@Valid CreateInput c) {
         db.one("SELECT id FROM partner WHERE id=? AND kind='CUSTOMER'", c.customerId());
         String no = Contracts.blankToNull(c.contractNo());
-        if (no == null) no = nextNumber();
+        if (no == null) no = numbers.next(c.customerId());
         if (no.startsWith("#")) throw new ApiException("合同号不能以 # 开头");
         if (
             exists(c.customerId(), no) ||
@@ -145,7 +147,7 @@ public class ContractRecordService {
      * 客户确认报价后生成正式合同：确认该门店订单的应收，门店写入合同号，并建立合同记录。
      * 填了签订日期即为“已签订”，否则为“拟定中”，签订后再补填。
      */
-    @PreAuthorize("hasAnyRole('ADMIN','SALES')")
+    @PreAuthorize("hasAnyRole('ADMIN','MANAGER','SALES')")
     @Transactional
     public Map<String, Object> fromQuote(String quoteId, @Valid FromQuoteInput in) {
         var quote = quotes.detail(quoteId);
@@ -161,7 +163,7 @@ public class ContractRecordService {
         if (current != null && requested != null && !current.equals(requested)) throw new ApiException(
             "该门店已属于合同 " + current + "，如需调整请联系管理员"
         );
-        String no = current != null ? current : requested != null ? requested : nextNumber();
+        String no = current != null ? current : requested != null ? requested : numbers.next(customerId);
         if (no.startsWith("#")) throw new ApiException("合同号不能以 # 开头");
         var existing = row(customerId, no);
         if (
@@ -483,19 +485,6 @@ public class ContractRecordService {
             args.toArray()
         );
         return id;
-    }
-
-    /** 自动合同号：HT + 日期 + 两位序号，如 HT20261115-01。 */
-    String nextNumber() {
-        String prefix = "HT" + LocalDate.now().format(DateTimeFormatter.BASIC_ISO_DATE) + "-";
-        for (int i = 1; i < 1000; i++) {
-            String no = prefix + (i < 10 ? "0" + i : String.valueOf(i));
-            int used =
-                db.jdbc.queryForObject("SELECT COUNT(*) FROM contract WHERE contract_no=?", Integer.class, no) +
-                db.jdbc.queryForObject("SELECT COUNT(*) FROM project WHERE contract_no=?", Integer.class, no);
-            if (used == 0) return no;
-        }
-        throw new ApiException("今日合同号已用完，请手工填写合同号");
     }
 
     /** 录入值规范化为数据库值；校验签约主体、负责人、日期先后。 */

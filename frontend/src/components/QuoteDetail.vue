@@ -31,7 +31,7 @@ const split = (n: number | null) => (n == null ? '—' : Number(n).toLocaleStrin
         税口径：{{ taxName[quote.tax_basis] }}{{ quote.tax_rate == null ? '' : ` · ${percent(quote.tax_rate)}` }}
       </span>
       <span>有效期：{{ day(quote.valid_until) }}</span>
-      <span v-if="quote.template_name">报价模板：{{ quote.template_name }}</span>
+      <span v-if="quote.template_name">报价单版式：{{ quote.template_name }}</span>
       <span>应收截止：{{ day(quote.due_date) }}</span>
     </div>
     <div v-if="seeCost && !quote.complete" class="inline-note warning">

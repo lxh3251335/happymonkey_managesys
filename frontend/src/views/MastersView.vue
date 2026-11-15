@@ -31,6 +31,7 @@ const freshPartner = () => ({
   bankName: '',
   bankAccount: '',
   invoiceType: '',
+  contractCode: '',
 })
 const partner = ref(freshPartner())
 const freshProduct = () => ({
@@ -141,6 +142,7 @@ function edit(row: Partner | Product) {
       bankName: p.bank_name || '',
       bankAccount: p.bank_account || '',
       invoiceType: p.invoice_type || '',
+      contractCode: p.contract_code || '',
     }
   }
   dialog.value = true
@@ -185,7 +187,7 @@ onMounted(load)
   <div>
     <PageHeader
       title="基础资料"
-      description="客户、供应商与标准产品库。项目类型、供应商成本与报价模板在“报价配置”中维护。"
+      description="客户、供应商与标准产品库。项目类型、客户报价模板、供应商成本与报价单版式在“报价配置”中维护。"
     >
       <ExcelTools
         :key="excel.dataset"
@@ -348,6 +350,14 @@ onMounted(load)
               <el-input v-model="partner.bankAccount" maxlength="40" class="mono" />
             </el-form-item>
           </div>
+          <el-form-item v-if="tab === 'CUSTOMER'" label="合同代码（合同号自动编号用）">
+            <el-input
+              v-model="partner.contractCode"
+              maxlength="20"
+              placeholder="如 SHHLZY，合同号为 TJ2026-SHHLZY-109"
+            />
+            <small class="muted">留空时按该客户已有合同号识别；新客户没有历史合同时请填写，否则用通用编号。</small>
+          </el-form-item>
           <el-form-item label="备注"><el-input v-model="partner.note" type="textarea" maxlength="1000" /></el-form-item>
         </template>
         <template v-else>

@@ -38,6 +38,18 @@ const fresh = () => ({
 })
 const form = ref(fresh())
 const creating = computed(() => !props.contract)
+/** 新建合同时，按所选客户的编号规律提示下一个合同号。 */
+const suggested = ref('')
+watch(
+  () => form.value.customerId,
+  async (id) => {
+    suggested.value = ''
+    if (!creating.value || !id) return
+    suggested.value = await api<{ number: string }>(`/contracts/next-number?customerId=${encodeURIComponent(id)}`)
+      .then((r) => r.number)
+      .catch(() => '')
+  },
+)
 const established = computed(() => !!props.contract && props.contract.status !== 'DRAFT')
 /** 非管理员修改已建立的合同 → 提交审批。 */
 const needsApproval = computed(() => established.value && !canApprove())
@@ -162,7 +174,11 @@ async function save() {
           </el-select>
         </el-form-item>
         <el-form-item v-if="creating" label="合同号">
-          <el-input v-model="form.contractNo" maxlength="100" placeholder="留空自动编号" />
+          <el-input
+            v-model="form.contractNo"
+            maxlength="100"
+            :placeholder="suggested ? `留空自动编号：${suggested}` : '留空自动编号'"
+          />
         </el-form-item>
         <el-form-item label="合同状态">
           <div class="status-row">

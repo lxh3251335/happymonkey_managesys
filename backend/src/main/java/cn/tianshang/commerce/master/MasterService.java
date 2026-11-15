@@ -37,12 +37,49 @@ public class MasterService {
         @Size(max = 300) String address,
         @Size(max = 60) String invoicePhone,
         @Size(max = 200) String bankName,
-        @Size(max = 40) @Pattern(
-            regexp = "^$|[0-9\\- ]{6,40}",
-            message = "银行账号只能包含数字、空格和短横线"
-        ) String bankAccount,
-        @Pattern(regexp = "^$|SPECIAL|NORMAL") String invoiceType
-    ) {}
+        @Size(max = 40)
+        @Pattern(regexp = "^$|[0-9\\- ]{6,40}", message = "银行账号只能包含数字、空格和短横线")
+        String bankAccount,
+        @Pattern(regexp = "^$|SPECIAL|NORMAL") String invoiceType,
+        /** 客户合同代码：合同号自动编号用，如 SHHLZY（TJ2026-SHHLZY-109）。 */
+        @Pattern(regexp = "^$|[A-Za-z0-9]{1,20}", message = "合同代码只能包含字母和数字，最多 20 位")
+        String contractCode
+    ) {
+        public PartnerInput(
+            String name,
+            String kind,
+            String contact,
+            String phone,
+            String note,
+            String invoiceTitle,
+            String taxNo,
+            String address,
+            String invoicePhone,
+            String bankName,
+            String bankAccount,
+            String invoiceType
+        ) {
+            this(
+                name,
+                kind,
+                contact,
+                phone,
+                note,
+                invoiceTitle,
+                taxNo,
+                address,
+                invoicePhone,
+                bankName,
+                bankAccount,
+                invoiceType,
+                null
+            );
+        }
+
+        String code() {
+            return contractCode == null || contractCode.isBlank() ? null : contractCode.trim().toUpperCase();
+        }
+    }
 
     /** 开票相关字段按插入/更新顺序排列：抬头、税号、地址、电话、开户行、账号、发票类型。 */
     private Object[] invoiceValues(PartnerInput p) {
@@ -63,16 +100,22 @@ public class MasterService {
         return out;
     }
 
-    @PreAuthorize("hasAnyRole('ADMIN','SALES')")
+    @PreAuthorize("hasAnyRole('ADMIN','MANAGER','SALES')")
     @Transactional
     public Map<String, String> partner(@Valid PartnerInput p) {
         String id = db.id();
         db.jdbc.update(
             """
-            INSERT INTO partner(id,name,kind,contact,phone,note,invoice_title,tax_no,address,invoice_phone,bank_name,bank_account,invoice_type)
-            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
+            INSERT INTO partner(id,name,kind,contact,phone,note,invoice_title,tax_no,address,invoice_phone,bank_name,bank_account,invoice_type,contract_code)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """,
-            concat(new Object[] { id, p.name().trim(), p.kind(), p.contact(), p.phone(), p.note() }, invoiceValues(p))
+            concat(
+                concat(
+                    new Object[] { id, p.name().trim(), p.kind(), p.contact(), p.phone(), p.note() },
+                    invoiceValues(p)
+                ),
+                p.code()
+            )
         );
         db.audit("PARTNER_CREATED", id, p.name());
         return Map.of("id", id);
@@ -110,7 +153,7 @@ public class MasterService {
         return v;
     }
 
-    @PreAuthorize("hasAnyRole('ADMIN','SALES')")
+    @PreAuthorize("hasAnyRole('ADMIN','MANAGER','SALES')")
     @Transactional
     public Map<String, String> product(@Valid ProductInput p) {
         String id = db.id();
@@ -134,7 +177,7 @@ public class MasterService {
     }
 
     /** 修改客户/供应商资料。类别不可更改，避免已有项目或报价关联错位。 */
-    @PreAuthorize("hasAnyRole('ADMIN','SALES')")
+    @PreAuthorize("hasAnyRole('ADMIN','MANAGER','SALES')")
     @Transactional
     public void updatePartner(String id, @Valid PartnerInput p) {
         var original = db.one("SELECT * FROM partner WHERE id=? FOR UPDATE", id);
@@ -143,9 +186,9 @@ public class MasterService {
         db.jdbc.update(
             """
             UPDATE partner SET name=?,contact=?,phone=?,note=?,invoice_title=?,tax_no=?,address=?,invoice_phone=?,
-            bank_name=?,bank_account=?,invoice_type=? WHERE id=?
+            bank_name=?,bank_account=?,invoice_type=?,contract_code=? WHERE id=?
             """,
-            concat(concat(new Object[] { p.name().trim(), p.contact(), p.phone(), p.note() }, invoice), id)
+            concat(concat(new Object[] { p.name().trim(), p.contact(), p.phone(), p.note() }, invoice), p.code(), id)
         );
         // 审计记录开票信息中改动的字段
         String[] cols = {
@@ -173,7 +216,7 @@ public class MasterService {
     }
 
     /** 修改标准产品。已保存的报价明细保留当时的品名规格快照，不受影响。 */
-    @PreAuthorize("hasAnyRole('ADMIN','SALES')")
+    @PreAuthorize("hasAnyRole('ADMIN','MANAGER','SALES')")
     @Transactional
     public void updateProduct(String id, @Valid ProductInput p) {
         var original = db.one("SELECT * FROM product WHERE id=? FOR UPDATE", id);
@@ -202,7 +245,7 @@ public class MasterService {
     }
 
     /** 列表中直接切换主流配置标签。 */
-    @PreAuthorize("hasAnyRole('ADMIN','SALES')")
+    @PreAuthorize("hasAnyRole('ADMIN','MANAGER','SALES')")
     @Transactional
     public void setMainstream(String id, boolean mainstream) {
         var p = db.one("SELECT name,specification FROM product WHERE id=? FOR UPDATE", id);

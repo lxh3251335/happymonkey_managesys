@@ -21,10 +21,11 @@ const route = useRoute(),
 /** 菜单；报价配置中的成本相关标签页按角色显示。 */
 const menu = [
   { path: '/', name: '经营总览', icon: DataAnalysis },
+  // 日常使用：项目台账、合同台账；其次是报价与配置类页面
   { path: '/projects', name: '项目台账', icon: FolderOpened },
+  { path: '/cash', name: '合同台账', icon: Wallet },
   { path: '/quotes', name: '客户报价', icon: Document },
   { path: '/quote-setup', name: '报价配置', icon: Connection },
-  { path: '/cash', name: '合同台账', icon: Wallet },
   { path: '/masters', name: '基础资料', icon: Grid },
   { path: '/settings', name: '系统管理', icon: Setting },
 ]

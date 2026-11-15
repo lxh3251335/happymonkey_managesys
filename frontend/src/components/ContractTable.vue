@@ -321,37 +321,6 @@ defineExpose({ filtered })
   </div>
 </template>
 <style scoped>
-.quick-row {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
-  padding: 12px 24px 0;
-}
-.quick {
-  border: 1px solid #dfe6dc;
-  background: #fff;
-  color: #4b5a52;
-  border-radius: 14px;
-  padding: 3px 10px;
-  font-size: 12px;
-  cursor: pointer;
-  line-height: 18px;
-}
-.quick em {
-  font-style: normal;
-  color: #8a958e;
-  margin-left: 2px;
-  font-variant-numeric: tabular-nums;
-}
-.quick.on {
-  background: #24634f;
-  border-color: #24634f;
-  color: #fff;
-}
-.quick.on em {
-  color: #d5e7de;
-}
 .contract-filters {
   flex-wrap: wrap;
   gap: 8px;

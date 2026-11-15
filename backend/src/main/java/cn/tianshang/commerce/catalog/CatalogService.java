@@ -20,10 +20,12 @@ public class CatalogService {
 
     private final Database db;
     private final BusinessService business;
+    private final CustomerTemplateService customerTemplates;
 
-    public CatalogService(Database db, BusinessService business) {
+    public CatalogService(Database db, BusinessService business, CustomerTemplateService customerTemplates) {
         this.db = db;
         this.business = business;
+        this.customerTemplates = customerTemplates;
     }
 
     // ---------- 项目类型 ----------
@@ -63,7 +65,7 @@ public class CatalogService {
         @NotNull @Size(max = 100) List<@Valid TypeLine> items
     ) {}
 
-    @PreAuthorize("hasAnyRole('ADMIN','SALES')")
+    @PreAuthorize("hasAnyRole('ADMIN','MANAGER','SALES')")
     @Transactional
     public String saveType(String id, @Valid TypeInput t) {
         requireDistinct(t.items().stream().map(TypeLine::productId).toList());
@@ -217,7 +219,7 @@ public class CatalogService {
               i.product_id,i.quantity,i.unit_price,pr.name,pr.specification,pr.model
             FROM project p JOIN quotation q ON q.project_id=p.id JOIN quotation_item i ON i.quotation_id=q.id
             JOIN product pr ON pr.id=i.product_id
-            WHERE p.brand=? ORDER BY q.created_at
+            WHERE p.brand=? AND q.status<>'LOST' ORDER BY q.created_at
             """,
             line
         );
@@ -316,10 +318,10 @@ public class CatalogService {
     }
 
     /**
-     * 新建报价的预填明细：项目类型的产品、数量、标准售价；有供应商时带出该供应商模板中的成本拆分。
-     * 供应商模板缺某产品时成本留空（待补充）。
+     * 新建报价的预填明细：客户有报价模板时用模板的产品、数量、协议售价，否则用项目类型的标准配置；
+     * 有供应商时带出该供应商模板中的成本拆分。供应商模板缺某产品时成本留空（待补充）。
      */
-    public Map<String, Object> prefill(String typeId, String supplierId) {
+    public Map<String, Object> prefill(String typeId, String supplierId, String customerId) {
         var type = db.one("SELECT * FROM project_type WHERE id=?", typeId);
         var costs = new HashMap<String, Map<String, Object>>();
         Map<String, Object> template = null;
@@ -338,13 +340,18 @@ public class CatalogService {
                 costs.put(c.get("product_id").toString(), c);
         }
         var lines = new ArrayList<Map<String, Object>>();
-        for (var i : db.jdbc.queryForList(
-            """
-            SELECT i.product_id,i.quantity,i.unit_price,p.name,p.specification,p.unit
-            FROM project_type_item i JOIN product p ON p.id=i.product_id WHERE i.project_type_id=? ORDER BY i.position
-            """,
-            typeId
-        )) {
+        var customerTemplate = customerTemplates.active(customerId, typeId);
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> source = customerTemplate.isPresent()
+            ? (List<Map<String, Object>>) customerTemplate.get().get("items")
+            : db.jdbc.queryForList(
+                  """
+                  SELECT i.product_id,i.quantity,i.unit_price,p.name,p.specification,p.unit
+                  FROM project_type_item i JOIN product p ON p.id=i.product_id WHERE i.project_type_id=? ORDER BY i.position
+                  """,
+                  typeId
+              );
+        for (var i : source) {
             var c = costs.get(i.get("product_id").toString());
             i.put("material_cost", c == null ? null : c.get("material_cost"));
             i.put("labor_cost", c == null ? null : c.get("labor_cost"));
@@ -355,6 +362,9 @@ public class CatalogService {
         var out = new LinkedHashMap<String, Object>();
         out.put("project_type", type);
         out.put("supplier_template_id", template == null ? null : template.get("id"));
+        // 明细来源：CUSTOMER 客户报价模板；TYPE 项目类型标准配置
+        out.put("source", customerTemplate.isPresent() ? "CUSTOMER" : "TYPE");
+        out.put("customer_template_id", customerTemplate.map(t -> t.get("id")).orElse(null));
         out.put("items", lines);
         return out;
     }

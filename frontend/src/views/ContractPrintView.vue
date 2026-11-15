@@ -131,7 +131,7 @@ const blank = (v: string | null | undefined) => v || '＿＿＿＿＿＿＿＿�
       <h3 class="clause">第{{ quoteTerms.length ? '三' : '二' }}条　其他约定</h3>
       <div class="contract-terms">
         <p v-for="(x, i) in terms" :key="i">{{ x }}</p>
-        <p v-if="!terms.length" class="muted">（请在“系统管理 → 报价模板 → 合同条款”中维护）</p>
+        <p v-if="!terms.length" class="muted">（请在“报价配置 → 报价单版式 → 合同条款”中维护）</p>
       </div>
 
       <div v-if="t?.bank_name || t?.bank_account" class="print-bank">

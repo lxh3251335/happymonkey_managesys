@@ -562,6 +562,70 @@ class ContractLedgerTest extends ApiTestSupport {
         assertThat(dash.path("execution").path("terminated").asInt()).isGreaterThanOrEqualTo(1);
     }
 
+    @Test
+    void contractNumbersFollowCustomerRuleAndSignedStoresAreLocked() throws Exception {
+        int year = LocalDate.now().getYear();
+        var s = salesQuote("sales1");
+        // 该客户已有合同号 TJ{year}-ZZTEST-07：下一个接着编 08
+        String old = ok(
+            as(
+                "admin",
+                "ADMIN",
+                "POST",
+                "/api/projects",
+                Map.of("name", "老门店", "brand", "小象", "customerId", s[0], "contractNo", "TJ" + year + "-ZZTEST-07")
+            )
+        )
+            .path("id")
+            .asText();
+        var suggestion = ok(as("sales1", "SALES", "GET", "/api/contracts/next-number?customerId=" + s[0], null));
+        assertThat(suggestion.path("number").asText()).isEqualTo("TJ" + year + "-ZZTEST-08");
+        assertThat(suggestion.path("byCustomerRule").asBoolean()).isTrue();
+        // 生成合同不填合同号：自动按规律编号
+        String key = ok(
+            as(
+                "sales1",
+                "SALES",
+                "POST",
+                "/api/contracts/from-quote/" + s[2],
+                Map.of("dueDate", LocalDate.now().plusDays(30).toString(), "signedOn", LocalDate.now().toString())
+            )
+        )
+            .path("contractKey")
+            .asText();
+        assertThat(key).isEqualTo("TJ" + year + "-ZZTEST-08");
+        // 没有历史合同的新客户：填了合同代码按代码编号，否则用通用格式
+        String fresh = postJson(
+            "/api/partners",
+            Map.of("name", "新客户" + UUID.randomUUID(), "kind", "CUSTOMER", "contractCode", "newco")
+        )
+            .path("id")
+            .asText();
+        assertThat(getJson("/api/contracts/next-number?customerId=" + fresh).path("number").asText()).matches(
+            "[A-Za-z]+" + year + "-NEWCO-01"
+        );
+        assertThat(
+            getJson("/api/contracts/next-number?customerId=" + customer()).path("byCustomerRule").asBoolean()
+        ).isFalse();
+        // 项目列表带合同状态；已签合同的门店，业务员不能再出新报价版本，管理层可以
+        JsonNode mine = null;
+        for (var p : ok(as("sales1", "SALES", "GET", "/api/projects", null)))
+            if (p.path("id").asText().equals(s[1])) mine = p;
+        assertThat(mine.path("contract_state").asText()).isEqualTo("SIGNED");
+        String product = product();
+        as("sales1", "SALES", "POST", "/api/quotes", quoteInput(s[1], product, null)).andExpect(
+            status().isBadRequest()
+        );
+        ok(as("manager1", "MANAGER", "POST", "/api/quotes", quoteInput(s[1], product, "10")));
+        // 参考已签约项目：带出已确认报价的产品与售价；业务员不返回成本，也不能参考别人的门店
+        var ref = ok(as("sales1", "SALES", "GET", "/api/quotes/reference?projectId=" + s[1], null));
+        assertThat(ref.path("id").asText()).isEqualTo(s[2]);
+        assertThat(ref.path("items").get(0).path("unit_price").decimalValue()).isEqualByComparingTo("500");
+        assertThat(ref.path("items").get(0).has("unit_cost")).isFalse();
+        as("sales2", "SALES", "GET", "/api/quotes/reference?projectId=" + s[1], null).andExpect(status().isForbidden());
+        assertThat(old).isNotBlank();
+    }
+
     private JsonNode upload(String dataset, String action, byte[] body, String user, String role) throws Exception {
         return ok(
             mvc.perform(

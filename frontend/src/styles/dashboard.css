@@ -276,6 +276,15 @@
   color: #a48a54;
   background: #faf4e8;
 }
+.status-tag.contracted {
+  color: #437e59;
+  background: #edf5ee;
+}
+.status-tag.lost,
+.status-tag.archived {
+  color: #8a918c;
+  background: #f1f2f0;
+}
 .cash-metrics {
   display: grid;
   grid-template-columns: repeat(3, 1fr);

@@ -1,24 +1,27 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, Search } from '@element-plus/icons-vue'
+import { ArrowDown, Plus, Search } from '@element-plus/icons-vue'
 import PageHeader from '../components/PageHeader.vue'
 import StatusTag from '../components/StatusTag.vue'
 import QuoteEditor from '../components/QuoteEditor.vue'
 import QuoteDetail from '../components/QuoteDetail.vue'
 import CostCorrection from '../components/CostCorrection.vue'
+import CustomerTemplateDialog, { type TemplateSeed } from '../components/CustomerTemplateDialog.vue'
 import { api, post, canWrite, canFinance, canSeeCost, session } from '../api'
 import { activeCompanies, companyLabel, defaultCompany, loadDictionaries } from '../dictionaries'
 import type { Quote, Product, Project } from '../types'
-import { money, percent, statusName, afterDays } from '../utils'
+import { money, percent, afterDays, day, today } from '../utils'
 const route = useRoute(),
   router = useRouter(),
   rows = ref<Quote[]>([]),
   projects = ref<Project[]>([]),
   products = ref<Product[]>([]),
   keyword = ref(''),
-  status = ref(''),
+  customer = ref(''),
+  // 默认只看跟进中的报价；从门店或“待补充”入口进来时看全部，避免已转合同的被筛掉
+  quick = ref(route.query.project || route.query.incomplete === '1' ? 'ALL' : 'ACTIVE'),
   incomplete = ref(route.query.incomplete === '1'),
   page = ref(1),
   editor = ref(false),
@@ -30,7 +33,8 @@ const route = useRoute(),
   dueDate = ref(afterDays(30)),
   busy = ref(false),
   fixing = ref(false),
-  contractForm = ref({ contractNo: '', companyId: '', signedOn: '', paymentTerms: '' })
+  contractForm = ref({ contractNo: '', companyId: '', signedOn: '', paymentTerms: '' }),
+  numberByRule = ref(true)
 const showOwner = computed(() => session.user?.role !== 'SALES')
 /** 客户确认后生成正式合同：确认应收、门店写入合同号、建立合同记录。 */
 function openContract() {
@@ -45,6 +49,16 @@ function openContract() {
   dueDate.value = afterDays(30)
   loadDictionaries().catch(() => {})
   accepting.value = true
+  // 门店还没有合同号：按该客户的编号规律预填下一个合同号（可改）
+  if (!q.contract_no && q.customer_id)
+    api<{ number: string; byCustomerRule: boolean }>(
+      `/contracts/next-number?customerId=${encodeURIComponent(q.customer_id)}`,
+    )
+      .then((r) => {
+        if (accepting.value && !contractForm.value.contractNo) contractForm.value.contractNo = r.number
+        numberByRule.value = r.byCustomerRule
+      })
+      .catch(() => {})
 }
 async function makeContract() {
   const q = detail.value
@@ -70,15 +84,96 @@ async function makeContract() {
   }
 }
 const projectId = computed(() => String(route.query.project || ''))
-const filtered = computed(() =>
-  rows.value.filter(
+/**
+ * 跟进阶段筛选：报价转成合同前都留在这里跟进；转合同后到合同台账、项目台账办理，这里仍可查。
+ * “跟进中”= 草稿 + 待客户确认 + 客户已确认待生成合同。
+ */
+const STAGES: { key: string; label: string; test: (q: Quote) => boolean }[] = [
+  { key: 'ACTIVE', label: '跟进中', test: (q) => ['DRAFT', 'ISSUED', 'ACCEPTED'].includes(q.stage) },
+  { key: 'DRAFT', label: '草稿', test: (q) => q.stage === 'DRAFT' },
+  { key: 'ISSUED', label: '待客户确认', test: (q) => q.stage === 'ISSUED' },
+  { key: 'ACCEPTED', label: '待生成合同', test: (q) => q.stage === 'ACCEPTED' },
+  { key: 'CONTRACTED', label: '已转合同', test: (q) => q.stage === 'CONTRACTED' },
+  { key: 'LOST', label: '未成交', test: (q) => q.stage === 'LOST' },
+  { key: 'ALL', label: '全部', test: () => true },
+]
+const customers = computed(() =>
+  [...new Map(rows.value.map((q) => [q.customer_id || '', q.customer_name])).entries()]
+    .filter(([id]) => id)
+    .sort((a, b) => a[1].localeCompare(b[1], 'zh-CN')),
+)
+const base = computed(() => {
+  const k = keyword.value.trim().toLowerCase()
+  return rows.value.filter(
     (q) =>
       (!projectId.value || q.project_id === projectId.value) &&
-      (!status.value || q.status === status.value) &&
+      (!customer.value || q.customer_id === customer.value) &&
       (!incomplete.value || !q.complete) &&
-      `${q.project_name}${q.customer_name}${q.code}`.toLowerCase().includes(keyword.value.toLowerCase()),
-  ),
-)
+      `${q.project_name}${q.customer_name}${q.code}`.toLowerCase().includes(k),
+  )
+})
+const counts = computed(() => Object.fromEntries(STAGES.map((s) => [s.key, base.value.filter(s.test).length])))
+const filtered = computed(() => base.value.filter((STAGES.find((s) => s.key === quick.value) || STAGES[0]).test))
+watch([keyword, customer, quick, incomplete], () => (page.value = 1))
+/** 待客户确认的报价过了有效期：需要重新报价或标记未成交。 */
+const expired = (q: Quote) => q.stage === 'ISSUED' && !!q.valid_until && day(q.valid_until) < today()
+
+// ---------- 未成交 / 恢复跟进 ----------
+const LOST_REASONS = ['价格未谈拢', '客户选择了其他供应商', '项目取消或延期', '重复报价 / 录入有误']
+const losing = ref(false),
+  lostReason = ref('')
+function openLost() {
+  lostReason.value = ''
+  losing.value = true
+}
+async function markLost() {
+  if (!detail.value) return
+  if (!lostReason.value.trim()) return ElMessage.warning('请选择或填写未成交原因')
+  busy.value = true
+  try {
+    await post(`/quotes/${detail.value.id}/lose`, { reason: lostReason.value.trim() })
+    losing.value = false
+    await saved(detail.value.id)
+    ElMessage.success('已标记为未成交，可在“未成交”中查看或恢复跟进')
+  } catch (e) {
+    ElMessage.error((e as Error).message)
+  } finally {
+    busy.value = false
+  }
+}
+async function reopen() {
+  if (!detail.value) return
+  busy.value = true
+  try {
+    await post(`/quotes/${detail.value.id}/reopen`, {})
+    await saved(detail.value.id)
+    ElMessage.success('已恢复跟进')
+  } catch (e) {
+    ElMessage.error((e as Error).message)
+  } finally {
+    busy.value = false
+  }
+}
+
+// ---------- 存为客户报价模板 ----------
+const templateDialog = ref(false),
+  templateSeed = ref<TemplateSeed>()
+function saveAsTemplate() {
+  const q = detail.value
+  if (!q) return
+  templateSeed.value = {
+    customerId: q.customer_id,
+    projectTypeId: q.project_type_id || '',
+    items: q.items.map((i) => ({ product_id: i.product_id, quantity: i.quantity, unit_price: i.unit_price })),
+    from: `明细来自报价 ${q.code}（${q.project_name}），保存后该客户此项目类型的新报价按它带出。`,
+  }
+  templateDialog.value = true
+}
+function more(command: string) {
+  if (command === 'template') saveAsTemplate()
+  else if (command === 'lost') openLost()
+  else if (command === 'reopen') reopen()
+}
 async function load() {
   try {
     ;[rows.value, projects.value, products.value] = await Promise.all([
@@ -169,8 +264,8 @@ onMounted(async () => {
       title="客户报价"
       :description="
         canSeeCost()
-          ? '保留每一版报价，让销售价格、内部成本和利润清晰可查。'
-          : '保留每一版报价；成本由系统按供应商成本模板核算，财务复核。'
+          ? '合同签订前的报价都在这里跟进；客户确认并生成合同后，转入合同台账和项目台账办理。'
+          : '合同签订前的报价都在这里跟进；生成合同后转入合同台账和项目台账。成本由系统核算，财务复核。'
       "
     >
       <el-button v-if="canWrite()" type="primary" @click="create()">
@@ -180,23 +275,46 @@ onMounted(async () => {
     </PageHeader>
     <el-alert v-if="error" :title="error" type="error" :closable="false" />
     <div class="panel">
-      <div class="filter-bar">
-        <el-input
-          v-model="keyword"
-          clearable
-          :prefix-icon="Search"
-          placeholder="搜索项目、客户或报价编号"
-          @input="page = 1"
-        />
-        <el-select v-model="status" clearable placeholder="全部状态" @change="page = 1">
-          <el-option v-for="(label, key) in statusName" :key="key" :label="label" :value="key" />
+      <div class="quick-row">
+        <template v-for="s in STAGES" :key="s.key">
+          <span v-if="s.key === 'CONTRACTED'" class="quick-sep"></span>
+          <button type="button" :class="['quick', { on: quick === s.key }]" @click="quick = s.key">
+            {{ s.label }}
+            <em>{{ counts[s.key] }}</em>
+          </button>
+        </template>
+      </div>
+      <div class="filter-bar quote-filters">
+        <el-input v-model="keyword" clearable :prefix-icon="Search" placeholder="搜索项目、客户或报价编号" />
+        <el-select v-model="customer" clearable filterable placeholder="全部客户">
+          <el-option v-for="[id, name] in customers" :key="id" :label="name" :value="id" />
         </el-select>
-        <el-checkbox v-if="canSeeCost()" v-model="incomplete" @change="page = 1">仅看待补充</el-checkbox>
+        <el-checkbox v-if="canSeeCost()" v-model="incomplete">仅看待补充</el-checkbox>
         <span class="filter-count">{{ filtered.length }} 份报价</span>
       </div>
-      <el-table :data="filtered.slice((page - 1) * 12, page * 12)">
-        <el-table-column label="项目 / 门店" prop="project_name" min-width="260" show-overflow-tooltip />
+      <el-table
+        :data="filtered.slice((page - 1) * 12, page * 12)"
+        :empty-text="quick === 'ACTIVE' ? '没有跟进中的报价' : '没有符合条件的报价'"
+      >
+        <el-table-column label="项目 / 门店" prop="project_name" min-width="230" show-overflow-tooltip />
         <el-table-column label="客户" prop="customer_name" min-width="115" />
+        <el-table-column label="阶段" width="150">
+          <template #default="{ row }">
+            <StatusTag :status="row.stage" kind="stage" />
+            <small v-if="row.stage === 'LOST' && row.lost_reason" class="cell-secondary" :title="row.lost_reason">
+              {{ row.lost_reason }}
+            </small>
+            <small
+              v-else-if="row.stage === 'ISSUED' && row.valid_until"
+              :class="['cell-secondary', { 'danger-text': expired(row) }]"
+            >
+              有效期至 {{ day(row.valid_until) }}{{ expired(row) ? ' 已过期' : '' }}
+            </small>
+            <small v-else-if="row.stage === 'CONTRACTED' && row.contract_no" class="cell-secondary">
+              {{ row.contract_no }}
+            </small>
+          </template>
+        </el-table-column>
         <el-table-column v-if="showOwner" label="负责人" width="90">
           <template #default="{ row }">
             <span :class="row.owner_name ? '' : 'muted'">{{ row.owner_name || '未分配' }}</span>
@@ -218,9 +336,6 @@ onMounted(async () => {
         </el-table-column>
         <el-table-column v-if="canSeeCost()" label="销售毛利率" align="right" width="120">
           <template #default="{ row }">{{ percent(row.gross_margin) }}</template>
-        </el-table-column>
-        <el-table-column label="状态" width="120">
-          <template #default="{ row }"><StatusTag :status="row.status" /></template>
         </el-table-column>
         <el-table-column label="操作" fixed="right" width="85">
           <template #default="{ row }"><el-button link type="primary" @click="show(row.id)">查看</el-button></template>
@@ -244,9 +359,27 @@ onMounted(async () => {
       @saved="saved"
     />
     <el-dialog v-model="detailOpen" title="报价详情" width="1100px">
+      <div v-if="detail?.stage === 'LOST'" class="inline-note warning">
+        该报价已标记为未成交{{ detail.lost_at ? `（${day(detail.lost_at)}）` : '' }}：{{ detail.lost_reason }}
+      </div>
       <QuoteDetail v-if="detail" :quote="detail" />
       <template #footer>
         <el-button @click="detailOpen = false">关闭</el-button>
+        <el-dropdown v-if="canWrite() && detail" class="more-menu" trigger="click" @command="more">
+          <el-button>
+            更多
+            <el-icon class="el-icon--right"><ArrowDown /></el-icon>
+          </el-button>
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item command="template">存为客户报价模板</el-dropdown-item>
+              <el-dropdown-item v-if="['DRAFT', 'ISSUED', 'ACCEPTED'].includes(detail.stage)" command="lost">
+                标记未成交
+              </el-dropdown-item>
+              <el-dropdown-item v-if="detail.stage === 'LOST'" command="reopen">恢复跟进</el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
         <el-button
           v-if="detail?.contract_no && detail.customer_id"
           @click="
@@ -287,6 +420,33 @@ onMounted(async () => {
       </template>
     </el-dialog>
     <CostCorrection v-model="fixing" :quote="detail" @saved="detail && saved(detail.id)" />
+    <CustomerTemplateDialog v-model="templateDialog" :seed="templateSeed" />
+    <el-dialog v-model="losing" title="标记未成交" width="480px">
+      <p v-if="detail" class="dialog-lead">
+        {{ detail.project_name }} · V{{ detail.version }} ·
+        {{ money(detail.amount) }}。标记后退出“跟进中”，不计入待确认金额；之后可以恢复跟进。
+      </p>
+      <el-form label-position="top">
+        <el-form-item label="未成交原因" required>
+          <el-select
+            v-model="lostReason"
+            filterable
+            allow-create
+            default-first-option
+            placeholder="选择常见原因，或直接输入"
+          >
+            <el-option v-for="r in LOST_REASONS" :key="r" :label="r" :value="r" />
+          </el-select>
+        </el-form-item>
+      </el-form>
+      <div v-if="detail?.stage === 'ACCEPTED'" class="inline-note warning">
+        该报价客户已确认并建立了应收；标记未成交会撤销这笔应收。
+      </div>
+      <template #footer>
+        <el-button @click="losing = false">取消</el-button>
+        <el-button type="primary" :loading="busy" @click="markLost">确认未成交</el-button>
+      </template>
+    </el-dialog>
     <el-dialog v-model="accepting" title="客户确认 · 生成正式合同" width="560px">
       <p class="dialog-lead" v-if="detail">
         {{ detail.project_name }} ·
@@ -299,8 +459,15 @@ onMounted(async () => {
               v-model="contractForm.contractNo"
               maxlength="100"
               :disabled="!!detail?.contract_no"
-              placeholder="留空自动编号，如 HT20261115-01"
+              placeholder="自动编号"
             />
+            <small v-if="!detail?.contract_no" class="muted">
+              {{
+                numberByRule
+                  ? '已按该客户的合同号规律自动编号，可修改。'
+                  : '该客户还没有合同代码，暂用通用编号；可在 基础资料 → 客户 中填写合同代码。'
+              }}
+            </small>
           </el-form-item>
           <el-form-item label="我方签约主体">
             <el-select v-model="contractForm.companyId">
@@ -337,3 +504,15 @@ onMounted(async () => {
     </el-dialog>
   </div>
 </template>
+<style scoped>
+.quote-filters > .el-input {
+  max-width: 300px;
+}
+.quote-filters > .el-select {
+  width: 200px;
+}
+.more-menu {
+  margin: 0 12px;
+  vertical-align: middle;
+}
+</style>

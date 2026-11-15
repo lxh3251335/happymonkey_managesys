@@ -70,8 +70,9 @@ export async function login(username: string, password: string) {
   await refreshCsrf()
   await loadSession()
 }
-export const canWrite = () => ['ADMIN', 'SALES'].includes(session.user?.role || '')
-export const canAttach = () => ['ADMIN', 'SALES', 'FINANCE'].includes(session.user?.role || '')
+/** 业务操作（门店、报价、合同、基础资料）：系统管理员、管理层、业务员。 */
+export const canWrite = () => ['ADMIN', 'MANAGER', 'SALES'].includes(session.user?.role || '')
+export const canAttach = () => ['ADMIN', 'MANAGER', 'SALES', 'FINANCE'].includes(session.user?.role || '')
 export const canFinance = () => ['ADMIN', 'FINANCE'].includes(session.user?.role || '')
 export const isAdmin = () => session.user?.role === 'ADMIN'
 /** 审批合同变更、直接修改已签订合同、分配负责人：系统管理员或管理层。 */

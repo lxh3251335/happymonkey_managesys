@@ -55,15 +55,35 @@ public class ProjectService {
     public List<Map<String, Object>> list() {
         String sql = """
             SELECT p.*, c.name AS customer_name, t.name AS project_type_name, u.display_name AS owner_name,
-              (SELECT COUNT(*) FROM quotation q WHERE q.project_id=p.id) AS quote_count
+              (SELECT COUNT(*) FROM quotation q WHERE q.project_id=p.id) AS quote_count,
+              (SELECT COUNT(*) FROM quotation q WHERE q.project_id=p.id AND q.status='ACCEPTED') AS confirmed_quotes,
+              CASE WHEN p.contract_no IS NULL OR p.contract_no='' THEN 'NONE' ELSE COALESCE(k.status,'SIGNED') END AS contract_state
             FROM project p JOIN partner c ON c.id=p.customer_id LEFT JOIN project_type t ON t.id=p.project_type_id
             LEFT JOIN app_user u ON u.id=p.owner_id
+            LEFT JOIN contract k ON k.customer_id=p.customer_id AND k.contract_no=p.contract_no
             """;
         if (ownership.restricted()) return db.jdbc.queryForList(
             sql + " WHERE p.owner_id=? ORDER BY p.created_at DESC,p.code",
             Objects.toString(ownership.userId(), "-")
         );
         return db.jdbc.queryForList(sql + " ORDER BY p.created_at DESC,p.code");
+    }
+
+    /**
+     * 门店的合同状态：NONE 未签合同；DRAFT 合同拟定中；其余为已建立的合同（有合同号但没有合同记录的历史门店视为 SIGNED）。
+     */
+    public String contractState(String projectId) {
+        var rows = db.jdbc.queryForList(
+            """
+            SELECT CASE WHEN p.contract_no IS NULL OR p.contract_no='' THEN 'NONE' ELSE COALESCE(k.status,'SIGNED') END AS state
+            FROM project p LEFT JOIN contract k ON k.customer_id=p.customer_id AND k.contract_no=p.contract_no
+            WHERE p.id=?
+            """,
+            String.class,
+            projectId
+        );
+        if (rows.isEmpty()) throw new ApiException("记录不存在");
+        return rows.get(0);
     }
 
     /** 可选负责人（启用的商务与管理员），所有登录用户可读，用于下拉选择与筛选。 */
@@ -108,7 +128,7 @@ public class ProjectService {
         @Valid DeliveryInput delivery
     ) {}
 
-    @PreAuthorize("hasAnyRole('ADMIN','SALES')")
+    @PreAuthorize("hasAnyRole('ADMIN','MANAGER','SALES')")
     @Transactional
     public String create(@Valid ProjectInput p) {
         requireCustomer(p.customerId());
@@ -138,7 +158,7 @@ public class ProjectService {
         return id;
     }
 
-    @PreAuthorize("hasAnyRole('ADMIN','SALES')")
+    @PreAuthorize("hasAnyRole('ADMIN','MANAGER','SALES')")
     @Transactional
     public void update(String id, @Valid ProjectInput p) {
         var original = db.one("SELECT * FROM project WHERE id=? FOR UPDATE", id);
@@ -182,7 +202,7 @@ public class ProjectService {
     }
 
     /** 登记发货与物流：项目执行事项，负责人直接办理（不属于合同变更），记审计。 */
-    @PreAuthorize("hasAnyRole('ADMIN','SALES')")
+    @PreAuthorize("hasAnyRole('ADMIN','MANAGER','SALES')")
     @Transactional
     public void delivery(String id, @Valid DeliveryInput d) {
         db.one("SELECT id FROM project WHERE id=? FOR UPDATE", id);

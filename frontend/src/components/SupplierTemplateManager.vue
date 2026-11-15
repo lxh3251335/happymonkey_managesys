@@ -365,14 +365,6 @@ async function save() {
   </div>
 </template>
 <style scoped>
-.manager-bar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 12px 24px;
-  font-size: 12px;
-}
 .pick-grid {
   display: grid;
   grid-template-columns: 1fr 1fr 160px;

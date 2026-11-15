@@ -16,17 +16,26 @@ public class ContractController {
     private final ContractAttachmentService attachments;
     private final ContractRecordService records;
     private final ContractExecutionService execution;
+    private final ContractNumbers numbers;
 
     public ContractController(
         ContractService service,
         ContractAttachmentService attachments,
         ContractRecordService records,
-        ContractExecutionService execution
+        ContractExecutionService execution,
+        ContractNumbers numbers
     ) {
         this.service = service;
         this.attachments = attachments;
         this.records = records;
         this.execution = execution;
+        this.numbers = numbers;
+    }
+
+    /** 建议的下一个合同号（按该客户的编号规律）。 */
+    @GetMapping("/next-number")
+    public ContractNumbers.Suggestion nextNumber(@RequestParam(required = false) String customerId) {
+        return numbers.suggest(customerId);
     }
 
     @GetMapping("/detail")

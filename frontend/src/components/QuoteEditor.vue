@@ -2,7 +2,7 @@
 import { ref, computed, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Plus, Delete } from '@element-plus/icons-vue'
-import { api, canSeeCost, post } from '../api'
+import { api, canApprove, canSeeCost, post } from '../api'
 import CitySelect from './CitySelect.vue'
 import { activeCompanies, companyLabel, defaultCompany, loadDictionaries } from '../dictionaries'
 import type {
@@ -44,7 +44,7 @@ const blankLine = (): LineDraft => ({
 })
 
 const mode = ref<'new' | 'existing'>('new')
-const store = ref({ customerId: '', name: '', city: '', contractNo: '' })
+const store = ref({ customerId: '', name: '', city: '' })
 const form = ref({
   projectId: '',
   projectTypeId: '',
@@ -74,6 +74,67 @@ const suppliers = computed(() =>
   supplierTemplates.value.filter((s) => s.active && s.project_type_id === form.value.projectTypeId),
 )
 const currentProject = computed(() => props.projects.find((p) => p.id === form.value.projectId))
+/** 本次报价的客户：新门店取所选客户，已登记项目取门店的客户；用于匹配客户报价模板。 */
+const customerId = computed(() =>
+  mode.value === 'new' ? store.value.customerId : currentProject.value?.customer_id || '',
+)
+/** 明细是否还没动过（只有空行）：此时切换客户 / 项目可以放心按模板重新带出。 */
+const untouched = () => lines.value.every((l) => !l.productId)
+/** 模板带出时的明细快照；明细与快照一致说明带出后没有手工改过，换客户时可以重新带出而不丢修改。 */
+const prefillSnapshot = ref('')
+const unchangedSincePrefill = () => !!prefillSnapshot.value && prefillSnapshot.value === JSON.stringify(lines.value)
+
+/** 合同已签订的门店：新报价等于改合同，只有管理层 / 管理员可以选。 */
+const signed = (p: Project) => p.contract_state !== 'NONE' && p.contract_state !== 'DRAFT'
+const includeSigned = ref(false)
+/** “已登记项目”可选范围：尚未签合同（或合同仍在拟定）的门店；当前已选的保留。 */
+const quotableProjects = computed(() =>
+  props.projects.filter((p) => !signed(p) || (canApprove() && includeSigned.value) || p.id === form.value.projectId),
+)
+const hiddenSigned = computed(() => props.projects.filter(signed).length)
+
+// ---------- 参考已签约项目：带入产品、数量与售价 ----------
+const referenceId = ref(''),
+  referencing = ref(false)
+/** 可参考的项目：合同已签订或已完结的门店；选了项目类型时同业务线的排在前面。 */
+const referenceProjects = computed(() => {
+  const brand = types.value.find((t) => t.id === form.value.projectTypeId)?.brand
+  return props.projects
+    .filter((p) => p.contract_state === 'SIGNED' || p.contract_state === 'COMPLETED')
+    .sort((a, b) => Number(b.brand === brand) - Number(a.brand === brand) || a.name.localeCompare(b.name, 'zh-CN'))
+})
+async function applyReference() {
+  if (!referenceId.value) return
+  referencing.value = true
+  try {
+    const q = await api<Quote>(`/quotes/reference?projectId=${encodeURIComponent(referenceId.value)}`)
+    const n = (v: number | null | undefined) => (v == null ? undefined : Number(v))
+    // 已选供应商且看得到成本时，成本仍按供应商成本模板（当前有效成本），不沿用旧报价的成本
+    const keepCost = new Map(lines.value.map((l) => [l.productId, l]))
+    lines.value = q.items.map((i) => {
+      const old = keepCost.get(i.product_id)
+      return {
+        productId: i.product_id,
+        quantity: Number(i.quantity),
+        unitPrice: n(i.unit_price),
+        materialCost:
+          old?.materialCost ??
+          n(i.material_cost) ??
+          (i.labor_cost == null && i.finance_cost == null ? n(i.unit_cost) : undefined),
+        laborCost: old?.laborCost ?? n(i.labor_cost),
+        financeCost: old?.financeCost ?? n(i.finance_cost),
+      }
+    })
+    if (!lines.value.length) lines.value.push(blankLine())
+    prefillSnapshot.value = ''
+    prefillNote.value = `已参考「${q.project_name}」（${q.contract_no || '合同'}）带入 ${q.items.length} 项产品、数量和售价，可逐行修改。`
+    ElMessage.success('已带入参考项目的产品与报价')
+  } catch (e) {
+    ElMessage.error((e as Error).message)
+  } finally {
+    referencing.value = false
+  }
+}
 
 async function loadOptions() {
   const [t, s, p, q] = await Promise.all([
@@ -99,7 +160,9 @@ watch(
     }
     const fromProject = props.seed?.project_id || props.projectId || ''
     mode.value = fromProject ? 'existing' : 'new'
-    store.value = { customerId: '', name: '', city: '', contractNo: '' }
+    store.value = { customerId: '', name: '', city: '' }
+    referenceId.value = ''
+    includeSigned.value = false
     const project = props.projects.find((p) => p.id === fromProject)
     form.value = {
       projectId: fromProject,
@@ -113,6 +176,7 @@ watch(
       companyId: props.seed?.company_id || defaultCompany.value?.id || '',
     }
     prefillNote.value = ''
+    prefillSnapshot.value = ''
     lines.value = props.seed
       ? props.seed.items.map((i) => ({
           productId: i.product_id,
@@ -133,22 +197,37 @@ watch(
   },
 )
 
-/** 选已有项目时带出其项目类型。 */
+/** 选已有项目时带出其项目类型；明细还没填时直接按模板带出。 */
 watch(
   () => form.value.projectId,
   (id) => {
     const p = props.projects.find((x) => x.id === id)
-    if (p?.project_type_id && !props.seed) form.value.projectTypeId = p.project_type_id
+    if (!p || props.seed || !props.modelValue) return
+    if (p.project_type_id) form.value.projectTypeId = p.project_type_id
+    if (form.value.projectTypeId && untouched()) applyTemplate()
+  },
+)
+/** 新门店换了客户：客户报价模板可能不同，明细还没填或当前就是按模板带出的，则重新带出。 */
+watch(
+  () => store.value.customerId,
+  () => {
+    if (mode.value !== 'new' || props.seed || !props.modelValue || !form.value.projectTypeId) return
+    if (untouched() || unchangedSincePrefill()) applyTemplate()
   },
 )
 
-/** 按项目类型 + 供应商模板带出明细（会替换当前明细）。 */
+/** 按客户报价模板（没有则按项目类型标准配置）+ 供应商成本模板带出明细（会替换当前明细）。 */
 async function applyTemplate() {
   if (!form.value.projectTypeId) return
   filling.value = true
   try {
-    const q = form.value.supplierId ? `?supplierId=${encodeURIComponent(form.value.supplierId)}` : ''
-    const r = await api<{ items: PrefillLine[] }>(`/project-types/${form.value.projectTypeId}/prefill${q}`)
+    const params = new URLSearchParams()
+    if (form.value.supplierId) params.set('supplierId', form.value.supplierId)
+    if (customerId.value) params.set('customerId', customerId.value)
+    const q = params.size ? `?${params}` : ''
+    const r = await api<{ items: PrefillLine[]; source: 'CUSTOMER' | 'TYPE' }>(
+      `/project-types/${form.value.projectTypeId}/prefill${q}`,
+    )
     const n = (v: number | null) => (v == null ? undefined : Number(v))
     lines.value = r.items.map((i) => ({
       productId: i.product_id,
@@ -159,16 +238,21 @@ async function applyTemplate() {
       financeCost: n(i.finance_cost),
     }))
     if (!lines.value.length) lines.value.push(blankLine())
+    prefillSnapshot.value = JSON.stringify(lines.value)
     const missing = r.items.filter((i) => i.unit_cost == null).length
-    prefillNote.value = !seeCost
-      ? form.value.supplierId
-        ? '已按项目类型带出配置和售价；成本由系统按该供应商的成本模板核算。'
-        : '已按项目类型带出配置和售价；请选择供应商，系统按其成本模板核算成本。'
-      : !form.value.supplierId
-        ? '已按项目类型带出配置和售价；选择供应商后带出成本。'
-        : missing
-          ? `已带出配置、售价和供应商成本；${missing} 项该供应商模板未报成本，请补充。`
-          : '已带出配置、售价和供应商成本，可逐行修改。'
+    const from =
+      r.source === 'CUSTOMER' ? '已按该客户的报价模板带出配置和协议价' : '已按项目类型的标准配置带出配置和售价'
+    prefillNote.value =
+      from +
+      (!seeCost
+        ? form.value.supplierId
+          ? '；成本由系统按该供应商的成本模板核算。'
+          : '；请选择供应商，系统按其成本模板核算成本。'
+        : !form.value.supplierId
+          ? '；选择供应商后带出成本。'
+          : missing
+            ? `，并带出供应商成本；${missing} 项该供应商模板未报成本，请补充。`
+            : '，并带出供应商成本，可逐行修改。')
   } catch (e) {
     ElMessage.error((e as Error).message)
   } finally {
@@ -233,7 +317,6 @@ async function save() {
               name: store.value.name.trim(),
               city: store.value.city || null,
               projectTypeId: form.value.projectTypeId,
-              contractNo: store.value.contractNo || null,
             }
           : null,
       projectTypeId: form.value.projectTypeId || null,
@@ -302,20 +385,27 @@ async function save() {
             placeholder="例如：小象天津丰泽站（城市未选时按名称自动识别）"
           />
         </el-form-item>
-        <el-form-item label="合同号（可选）">
-          <el-input v-model="store.contractNo" maxlength="100" />
+        <el-form-item label="合同号">
+          <el-input disabled placeholder="客户确认、生成合同时自动编号" />
         </el-form-item>
       </div>
       <div v-else class="step-grid">
         <el-form-item label="报价项目" required class="span-2">
           <el-select v-model="form.projectId" filterable placeholder="选择门店 / 项目" :disabled="!!seed">
             <el-option
-              v-for="p in projects"
+              v-for="p in quotableProjects"
               :key="p.id"
               :value="p.id"
-              :label="`${p.name} · ${p.customer_name}${p.city ? ' · ' + p.city : ''}`"
+              :label="`${p.name} · ${p.customer_name}${p.city ? ' · ' + p.city : ''}${signed(p) ? ' · 已签合同' : ''}`"
             />
           </el-select>
+          <small class="muted pick-hint">
+            只列出还没有签合同的门店（{{ quotableProjects.length }} 个）。已签合同的
+            {{ hiddenSigned }} 个门店改报价属于合同变更。
+            <el-checkbox v-if="canApprove() && !seed" v-model="includeSigned" size="small">
+              显示已签合同的门店
+            </el-checkbox>
+          </small>
         </el-form-item>
         <el-form-item label="项目类型">
           <el-select v-model="form.projectTypeId" clearable placeholder="选择后可带出模板" @change="onTypeChange">
@@ -326,6 +416,25 @@ async function save() {
           {{ currentProject.customer_name }} · {{ currentProject.brand }} · {{ currentProject.city || '未填城市' }}
           {{ currentProject.contract_no ? ` · 合同号 ${currentProject.contract_no}` : '' }}
         </p>
+      </div>
+
+      <div class="reference-row">
+        <span class="reference-label">参考已签约项目（可选）</span>
+        <el-select
+          v-model="referenceId"
+          filterable
+          clearable
+          placeholder="选择一个已签合同的门店，带入它的产品、数量和售价"
+        >
+          <el-option
+            v-for="p in referenceProjects"
+            :key="p.id"
+            :value="p.id"
+            :label="`${p.name} · ${p.customer_name} · ${p.brand}${p.contract_no ? ' · ' + p.contract_no : ''}`"
+          />
+        </el-select>
+        <el-button :disabled="!referenceId" :loading="referencing" @click="applyReference">带入产品与报价</el-button>
+        <span v-if="!referenceProjects.length" class="muted">暂无已签约项目可参考</span>
       </div>
 
       <div class="step-head">
@@ -366,8 +475,8 @@ async function save() {
             />
           </div>
         </el-form-item>
-        <el-form-item label="报价单模板（抬头与条款）">
-          <el-select v-model="form.templateId" placeholder="默认模板">
+        <el-form-item label="报价单版式（抬头与条款）">
+          <el-select v-model="form.templateId" placeholder="默认版式">
             <el-option
               v-for="t in templates"
               :key="t.id"
@@ -510,7 +619,7 @@ async function save() {
           type="textarea"
           :rows="2"
           maxlength="2000"
-          placeholder="本单特别说明，例如交货周期、运输范围。通用条款请维护在报价模板中。请勿填写内部成本。"
+          placeholder="本单特别说明，例如交货周期、运输范围。通用条款请维护在报价单版式中。请勿填写内部成本。"
         />
       </el-form-item>
     </el-form>
@@ -521,6 +630,28 @@ async function save() {
   </el-dialog>
 </template>
 <style scoped>
+.reference-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 14px;
+  padding: 8px 12px;
+  border: 1px dashed #c9d3c2;
+  border-radius: 8px;
+  font-size: 13px;
+}
+.reference-label {
+  flex: none;
+  color: #33463e;
+}
+.reference-row .el-select {
+  flex: 1;
+  max-width: 560px;
+}
+.pick-hint {
+  display: block;
+  line-height: 1.6;
+}
 .quote-form :deep(.el-form-item) {
   margin-bottom: 12px;
 }

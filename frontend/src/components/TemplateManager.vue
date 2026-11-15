@@ -58,14 +58,14 @@ function open(t?: QuoteTemplate) {
 }
 async function save() {
   if (!form.value.name.trim() || !form.value.companyName.trim() || !form.value.title.trim())
-    return ElMessage.warning('请填写模板名称、公司抬头和单据标题')
+    return ElMessage.warning('请填写版式名称、公司抬头和单据标题')
   busy.value = true
   try {
     if (editingId.value) await put(`/quotes/templates/${editingId.value}`, form.value)
     else await post('/quotes/templates', form.value)
     dialog.value = false
     await load()
-    ElMessage.success('报价模板已保存')
+    ElMessage.success('报价单版式已保存')
   } catch (e) {
     ElMessage.error((e as Error).message)
   } finally {
@@ -76,7 +76,7 @@ async function makeDefault(t: QuoteTemplate) {
   try {
     await post(`/quotes/templates/${t.id}/default`, {})
     await load()
-    ElMessage.success(`已将“${t.name}”设为默认模板`)
+    ElMessage.success(`已将“${t.name}”设为默认版式`)
   } catch (e) {
     ElMessage.error((e as Error).message)
   }
@@ -86,11 +86,11 @@ onMounted(load)
 <template>
   <div>
     <div class="inline-note">
-      报价模板决定对客报价单的公司抬头、联系方式、收款账户和标准条款。报价出具时会固定当时的模板内容，之后修改模板不会改变已出具的报价单。
+      报价单版式决定对客报价单的公司抬头、联系方式、收款账户和标准条款。报价出具时会固定当时的版式内容，之后修改版式不会改变已出具的报价单。
     </div>
-    <el-button type="primary" class="section-gap" @click="open()">新增报价模板</el-button>
+    <el-button type="primary" class="section-gap" @click="open()">新增报价单版式</el-button>
     <el-table :data="templates">
-      <el-table-column label="模板名称" min-width="160">
+      <el-table-column label="版式名称" min-width="160">
         <template #default="{ row }">
           {{ row.name }}
           <el-tag v-if="row.is_default" size="small" type="success" class="tag-gap">默认</el-tag>
@@ -113,13 +113,13 @@ onMounted(load)
     </el-table>
     <el-dialog
       v-model="dialog"
-      :title="editingId ? '编辑报价模板' : '新增报价模板'"
+      :title="editingId ? '编辑报价单版式' : '新增报价单版式'"
       width="720px"
       :close-on-click-modal="false"
     >
       <el-form label-position="top">
         <div class="form-grid">
-          <el-form-item label="模板名称" required><el-input v-model="form.name" maxlength="100" /></el-form-item>
+          <el-form-item label="版式名称" required><el-input v-model="form.name" maxlength="100" /></el-form-item>
           <el-form-item label="单据标题" required>
             <el-input v-model="form.title" maxlength="100" placeholder="例如：客户报价单" />
           </el-form-item>
@@ -151,7 +151,7 @@ onMounted(load)
       </el-form>
       <template #footer>
         <el-button @click="dialog = false">取消</el-button>
-        <el-button type="primary" :loading="busy" @click="save">保存模板</el-button>
+        <el-button type="primary" :loading="busy" @click="save">保存版式</el-button>
       </template>
     </el-dialog>
   </div>

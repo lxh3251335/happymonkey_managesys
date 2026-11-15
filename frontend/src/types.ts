@@ -19,6 +19,8 @@ export interface Partner {
   bank_name: string | null
   bank_account: string | null
   invoice_type: 'SPECIAL' | 'NORMAL' | null
+  /** 客户合同代码：合同号自动编号用，如 SHHLZY */
+  contract_code: string | null
 }
 export interface Project {
   id: string
@@ -38,6 +40,8 @@ export interface Project {
   project_type_name: string | null
   owner_id: string | null
   owner_name: string | null
+  /** 合同状态：NONE 未签合同；DRAFT 合同拟定中；其余为已建立的合同 */
+  contract_state: 'NONE' | 'DRAFT' | 'SIGNED' | 'COMPLETED' | 'TERMINATED'
   shipped_on: string | null
   expected_ship_on: string | null
   consignee: string | null
@@ -45,6 +49,8 @@ export interface Project {
   ship_address: string | null
   courier: string | null
   tracking_no: string | null
+  /** 已确认报价数；大于 0 表示客户已确认（即使还没有合同号）。 */
+  confirmed_quotes?: number
 }
 export interface Product {
   id: string
@@ -78,6 +84,7 @@ export interface QuoteItem {
   labor_cost: number | null
   finance_cost: number | null
 }
+export type QuoteStage = 'DRAFT' | 'ISSUED' | 'ACCEPTED' | 'CONTRACTED' | 'LOST' | 'ARCHIVED'
 export interface Quote {
   id: string
   code: string
@@ -87,7 +94,12 @@ export interface Quote {
   brand: string
   customer_name: string
   version: number
-  status: 'DRAFT' | 'ISSUED' | 'ACCEPTED' | 'HISTORICAL'
+  status: 'DRAFT' | 'ISSUED' | 'ACCEPTED' | 'HISTORICAL' | 'LOST'
+  /** 跟进阶段：由报价状态与门店合同状态共同决定，见 utils.stageName。 */
+  stage: QuoteStage
+  contract_state?: string
+  lost_reason?: string | null
+  lost_at?: string | null
   tax_basis: string
   tax_rate: number | null
   valid_until: string | null
@@ -561,6 +573,29 @@ export interface SupplierTemplate {
   active: boolean
   updated_at: string
   items: SupplierTemplateItem[]
+}
+export interface CustomerTemplateItem {
+  product_id: string
+  position: number
+  quantity: number
+  unit_price: number | null
+  name: string
+  specification: string
+  model: string
+  unit: string
+}
+/** 客户报价模板：某客户在某项目类型下的产品、数量与协议售价。 */
+export interface CustomerTemplate {
+  id: string
+  customer_id: string
+  customer_name: string
+  project_type_id: string
+  project_type_name: string
+  brand: string
+  note: string | null
+  active: boolean
+  updated_at: string
+  items: CustomerTemplateItem[]
 }
 export interface PrefillLine {
   product_id: string

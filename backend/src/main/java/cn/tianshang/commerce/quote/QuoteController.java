@@ -1,6 +1,8 @@
 package cn.tianshang.commerce.quote;
 
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Size;
 import java.time.LocalDate;
 import java.util.*;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -43,6 +45,11 @@ public class QuoteController {
         return service.list();
     }
 
+    @GetMapping("/reference")
+    public Map<String, Object> reference(@RequestParam String projectId) {
+        return service.reference(projectId);
+    }
+
     @GetMapping("/{id}")
     public Map<String, Object> detail(@PathVariable String id) {
         return service.detail(id);
@@ -54,9 +61,23 @@ public class QuoteController {
     }
 
     @PostMapping
-    @PreAuthorize("hasAnyRole('ADMIN','SALES')")
+    @PreAuthorize("hasAnyRole('ADMIN','MANAGER','SALES')")
     public Map<String, String> create(@Valid @RequestBody QuoteInput input) {
         return Map.of("id", service.create(input));
+    }
+
+    public record LostInput(@NotBlank @Size(max = 300) String reason) {}
+
+    @PostMapping("/{id}/lose")
+    @PreAuthorize("hasAnyRole('ADMIN','MANAGER','SALES')")
+    public void lose(@PathVariable String id, @Valid @RequestBody LostInput input) {
+        service.lose(id, input.reason());
+    }
+
+    @PostMapping("/{id}/reopen")
+    @PreAuthorize("hasAnyRole('ADMIN','MANAGER','SALES')")
+    public void reopen(@PathVariable String id) {
+        service.reopen(id);
     }
 
     @PutMapping("/{id}/costs")
@@ -70,7 +91,7 @@ public class QuoteController {
     public record Transition(LocalDate dueDate) {}
 
     @PostMapping("/{id}/{action:issue|accept}")
-    @PreAuthorize("hasAnyRole('ADMIN','SALES')")
+    @PreAuthorize("hasAnyRole('ADMIN','MANAGER','SALES')")
     public void transition(@PathVariable String id, @PathVariable String action, @RequestBody Transition input) {
         service.transition(id, action, input.dueDate());
     }

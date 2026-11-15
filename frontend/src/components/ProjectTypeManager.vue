@@ -315,14 +315,6 @@ async function save() {
   flex: 1;
   color: #33463e;
 }
-.manager-bar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 12px 24px;
-  font-size: 12px;
-}
 .gap {
   margin-left: 6px;
 }

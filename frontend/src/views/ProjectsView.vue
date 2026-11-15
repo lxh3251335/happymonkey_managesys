@@ -33,13 +33,17 @@ const keyword = ref(''),
   brand = ref(''),
   city = ref(''),
   owner = ref(''),
-  quick = ref('ALL')
+  quick = ref('ALL'),
+  // 项目台账默认只看已成交（已有合同或客户已确认）的门店；还在报价的门店在“客户报价”中跟进
+  scope = ref<'DEAL' | 'QUOTING'>(route.query.scope === 'quoting' ? 'QUOTING' : 'DEAL')
 const todayStr = today()
 const inDays = (n: number) => {
   const d = new Date()
   d.setDate(d.getDate() + n)
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 }
+/** 已成交：门店有合同（含拟定中），或客户已确认报价；与合同台账的范围一致。 */
+const dealt = (p: Project) => p.contract_state !== 'NONE' || Number(p.confirmed_quotes || 0) > 0
 const shipped = (p: Project) => p.shipping_status === '已发货'
 const lateShip = (p: Project) => !shipped(p) && !!p.expected_ship_on && day(p.expected_ship_on) < todayStr
 const QUICK: { key: string; label: string; test: (p: Project) => boolean }[] = [
@@ -63,7 +67,8 @@ const QUICK: { key: string; label: string; test: (p: Project) => boolean }[] = [
 const showOwner = computed(() => session.user?.role !== 'SALES')
 const customers = computed(() => partners.value.filter((p) => p.kind === 'CUSTOMER'))
 const cities = computed(() => [...new Set(rows.value.map((p) => p.city).filter((c): c is string => !!c))].sort())
-const base = computed(() => {
+/** 除“范围”以外的筛选结果，用于统计两个范围各有多少门店。 */
+const matched = computed(() => {
   const k = keyword.value.trim().toLowerCase()
   return rows.value.filter(
     (p) =>
@@ -90,9 +95,14 @@ const base = computed(() => {
           .includes(k)),
   )
 })
+const scopeCounts = computed(() => {
+  const deal = matched.value.filter(dealt).length
+  return { DEAL: deal, QUOTING: matched.value.length - deal }
+})
+const base = computed(() => matched.value.filter((p) => dealt(p) === (scope.value === 'DEAL')))
 const counts = computed(() => Object.fromEntries(QUICK.map((q) => [q.key, base.value.filter(q.test).length])))
 const filtered = computed(() => base.value.filter((QUICK.find((q) => q.key === quick.value) || QUICK[0]).test))
-watch([keyword, customer, brand, city, owner, quick], () => (page.value = 1))
+watch([keyword, customer, brand, city, owner, quick, scope], () => (page.value = 1))
 
 async function load() {
   try {
@@ -180,8 +190,13 @@ async function save() {
     if (editing.value) await api(`/projects/${editing.value}`, { method: 'PUT', body: JSON.stringify(payload) })
     else await post('/projects', payload)
     dialog.value = false
-    ElMessage.success('项目信息已保存')
     await load()
+    // 新登记且没有合同号的门店属于“报价中”：切过去，避免登记后在默认范围里找不到
+    if (!editing.value && !f.contractNo.trim() && scope.value === 'DEAL') {
+      scope.value = 'QUOTING'
+      quick.value = 'ALL'
+      ElMessage.success('项目已登记。还没有合同，已切换到“报价中”，生成合同后进入“已成交”')
+    } else ElMessage.success('项目信息已保存')
   } catch (e) {
     ElMessage.error((e as Error).message)
   } finally {
@@ -239,7 +254,7 @@ onMounted(async () => {
     <PageHeader
       eyebrow="PROJECT REGISTER"
       title="项目台账"
-      description="门店项目执行：负责人、收货信息、预计发货与物流跟踪。"
+      description="已成交门店的项目执行：负责人、收货信息、预计发货与物流跟踪。"
     >
       <ExcelTools dataset="projects" title="项目台账" :can-import="isAdmin()" @imported="load" />
       <el-button v-if="canWrite()" type="primary" @click="open()">
@@ -250,6 +265,11 @@ onMounted(async () => {
     <el-alert v-if="error" :title="error" type="error" :closable="false" />
     <div class="panel">
       <div class="quick-row">
+        <el-radio-group v-model="scope" size="small" class="scope-switch">
+          <el-radio-button value="DEAL">已成交 {{ scopeCounts.DEAL }}</el-radio-button>
+          <el-radio-button value="QUOTING">报价中（未签合同） {{ scopeCounts.QUOTING }}</el-radio-button>
+        </el-radio-group>
+        <span class="quick-sep"></span>
         <button
           v-for="q in QUICK"
           :key="q.key"
@@ -286,8 +306,14 @@ onMounted(async () => {
         </el-button>
         <span class="filter-count">共 {{ filtered.length }} 个项目</span>
       </div>
+      <div v-if="scope === 'QUOTING'" class="scope-note muted">
+        这些门店还没有合同，报价的跟进在
+        <el-button link type="primary" @click="router.push('/quotes')">客户报价</el-button>
+        中办理；客户确认并生成合同后自动进入“已成交”。先发货后补合同的门店可以在这里登记发货。
+      </div>
       <el-table
         :data="filtered.slice((page - 1) * PAGE, page * PAGE)"
+        :empty-text="scope === 'DEAL' ? '没有符合条件的已成交项目' : '没有报价中的项目'"
         row-key="id"
         @selection-change="(v: Project[]) => (selected = v)"
       >
@@ -311,7 +337,9 @@ onMounted(async () => {
             <el-button v-if="row.contract_no" link type="primary" class="cell-link" @click="goContract(row)">
               {{ row.contract_no }}
             </el-button>
-            <small v-else class="cell-secondary muted">未签合同</small>
+            <small v-else class="cell-secondary muted">
+              {{ Number(row.confirmed_quotes || 0) > 0 ? '客户已确认，待生成合同' : '未签合同' }}
+            </small>
           </template>
         </el-table-column>
         <el-table-column label="发货" width="132">
@@ -445,39 +473,12 @@ onMounted(async () => {
   </div>
 </template>
 <style scoped>
-.quick-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  padding: 12px 24px 0;
+.scope-switch {
+  margin-right: 2px;
 }
-.quick {
-  border: 1px solid #dfe6dc;
-  background: #fff;
-  color: #4b5a52;
-  border-radius: 14px;
-  padding: 3px 10px;
+.scope-note {
+  padding: 10px 24px 0;
   font-size: 12px;
-  line-height: 18px;
-  cursor: pointer;
-}
-.quick em {
-  font-style: normal;
-  color: #8a958e;
-  margin-left: 2px;
-  font-variant-numeric: tabular-nums;
-}
-.quick.warn {
-  border-color: #e7c77d;
-  color: #8a6a1f;
-}
-.quick.on {
-  background: #24634f;
-  border-color: #24634f;
-  color: #fff;
-}
-.quick.on em {
-  color: #d5e7de;
 }
 .project-filters {
   flex-wrap: wrap;

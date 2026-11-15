@@ -48,9 +48,12 @@ public class QuoteService {
     public List<Map<String, Object>> list() {
         String sql = """
             SELECT q.*,p.name AS project_name,p.brand,p.owner_id,p.contract_no,p.customer_id,p.code AS project_code,c.name AS customer_name,
-              u.display_name AS owner_name,k.name AS company_name
+              u.display_name AS owner_name,k.name AS company_name,
+              CASE WHEN p.contract_no IS NULL OR p.contract_no='' THEN 'NONE' ELSE COALESCE(ct.status,'SIGNED') END AS contract_state,
+              (SELECT MAX(a.version) FROM quotation a WHERE a.project_id=q.project_id AND a.status='ACCEPTED') AS accepted_version
             FROM quotation q JOIN project p ON p.id=q.project_id JOIN partner c ON c.id=p.customer_id
             LEFT JOIN app_user u ON u.id=p.owner_id LEFT JOIN company k ON k.id=q.company_id
+            LEFT JOIN contract ct ON ct.customer_id=p.customer_id AND ct.contract_no=p.contract_no
             """;
         var rows = ownership.restricted()
             ? db.jdbc.queryForList(
@@ -61,7 +64,10 @@ public class QuoteService {
         var grouped = new HashMap<String, List<Map<String, Object>>>();
         for (var i : db.jdbc.queryForList("SELECT quotation_id,amount,cost FROM quotation_item"))
             grouped.computeIfAbsent(i.get("quotation_id").toString(), k -> new ArrayList<>()).add(i);
-        for (var q : rows) q.putAll(QuoteMath.totals(grouped.getOrDefault(q.get("id").toString(), List.of())));
+        for (var q : rows) {
+            q.putAll(QuoteMath.totals(grouped.getOrDefault(q.get("id").toString(), List.of())));
+            q.put("stage", stage(q));
+        }
         return rows;
     }
 
@@ -74,9 +80,12 @@ public class QuoteService {
             c.invoice_title AS customer_invoice_title,c.tax_no AS customer_tax_no,c.address AS customer_address,
             c.invoice_phone AS customer_invoice_phone,c.bank_name AS customer_bank_name,c.bank_account AS customer_bank_account,
             t.name AS template_name,s.name AS supplier_name,pt.name AS project_type_name,
-            p.owner_id,u.display_name AS owner_name,k.name AS company_name
+            p.owner_id,u.display_name AS owner_name,k.name AS company_name,
+            CASE WHEN p.contract_no IS NULL OR p.contract_no='' THEN 'NONE' ELSE COALESCE(ct.status,'SIGNED') END AS contract_state,
+            (SELECT MAX(a.version) FROM quotation a WHERE a.project_id=q.project_id AND a.status='ACCEPTED') AS accepted_version
             FROM quotation q JOIN project p ON p.id=q.project_id LEFT JOIN app_user u ON u.id=p.owner_id
             LEFT JOIN company k ON k.id=q.company_id
+            LEFT JOIN contract ct ON ct.customer_id=p.customer_id AND ct.contract_no=p.contract_no
             JOIN partner c ON c.id=p.customer_id LEFT JOIN quote_template t ON t.id=q.template_id
             LEFT JOIN partner s ON s.id=q.supplier_id LEFT JOIN project_type pt ON pt.id=q.project_type_id WHERE q.id=?
             """,
@@ -85,7 +94,37 @@ public class QuoteService {
         var items = db.jdbc.queryForList("SELECT * FROM quotation_item WHERE quotation_id=? ORDER BY position", id);
         q.put("items", items);
         q.putAll(QuoteMath.totals(items));
+        q.put("stage", stage(q));
         return q;
+    }
+
+    private static String stage(Map<String, Object> q) {
+        Object accepted = q.get("accepted_version");
+        return QuoteStage.of(
+            q.get("status").toString(),
+            q.get("contract_state").toString(),
+            ((Number) q.get("version")).intValue(),
+            accepted == null ? null : ((Number) accepted).intValue()
+        );
+    }
+
+    /**
+     * 参考项目的报价：取该门店已确认的报价，否则最新版本，用于新报价带入产品、数量与售价。
+     * 权限与成本可见性同报价详情（业务员只能参考自己负责的门店，且不返回成本）。
+     */
+    public Map<String, Object> reference(String projectId) {
+        ownership.checkProject(projectId);
+        var quotes = db.jdbc.queryForList(
+            "SELECT id,status,version FROM quotation WHERE project_id=? AND status<>'LOST' ORDER BY version DESC",
+            projectId
+        );
+        if (quotes.isEmpty()) throw new ApiException("该项目还没有报价，无法参考");
+        var chosen = quotes
+            .stream()
+            .filter(q -> "ACCEPTED".equals(q.get("status")))
+            .findFirst()
+            .orElse(quotes.get(0));
+        return detail(chosen.get("id").toString());
     }
 
     @Transactional
@@ -118,6 +157,12 @@ public class QuoteService {
         }
         var project = db.one("SELECT * FROM project WHERE id=? FOR UPDATE", projectId);
         ownership.checkProject(projectId);
+        // 合同已签订的门店：新增报价版本等于改合同，只有管理层 / 管理员可以办理
+        if (
+            input.newProject() == null &&
+            !List.of("NONE", "DRAFT").contains(projects.contractState(projectId)) &&
+            !Roles.canApprove()
+        ) throw new ApiException("该门店的合同已签订，新增报价版本属于合同变更，请联系管理层办理");
         // 只有明确选择签约主体时才覆盖报价模板的公司抬头
         String companyId = blank(input.companyId()) == null ? null : dictionary.company(input.companyId(), null);
         if (projectTypeId == null && project.get("project_type_id") != null) projectTypeId = project
@@ -218,6 +263,60 @@ public class QuoteService {
             );
         } else throw new ApiException("不支持此操作");
         db.audit("QUOTE_" + action.toUpperCase(), id, "状态变更自 " + status);
+    }
+
+    /**
+     * 标记未成交：报价没有谈成，退出跟进。必须填写原因；可随时恢复跟进。
+     * 客户已确认但还没生成合同的报价也可以标记，此时撤销已建立的应收；已有回款或已有合同的不允许。
+     */
+    @Transactional
+    public void lose(String id, String reason) {
+        ownership.checkQuote(id);
+        var quote = db.one("SELECT * FROM quotation WHERE id=? FOR UPDATE", id);
+        String status = quote.get("status").toString(),
+            projectId = quote.get("project_id").toString();
+        if ("LOST".equals(status)) throw new ApiException("该报价已标记为未成交");
+        boolean hasContract = !"NONE".equals(projects.contractState(projectId));
+        if ("ACCEPTED".equals(status)) {
+            if (hasContract) throw new ApiException("该报价已生成合同，请在合同台账中办理合同终止");
+            int cash = db.jdbc.queryForObject(
+                "SELECT COUNT(*) FROM cash_entry WHERE quotation_id=?",
+                Integer.class,
+                id
+            );
+            if (cash > 0) throw new ApiException("该报价已有回款记录，不能标记为未成交");
+        } else if (hasContract) {
+            // 门店已有合同：只有在合同依据（已确认版本）之外另出的报价可以标记未成交
+            int accepted = db.jdbc.queryForObject(
+                "SELECT COUNT(*) FROM quotation WHERE project_id=? AND status='ACCEPTED'",
+                Integer.class,
+                projectId
+            );
+            if (accepted == 0) throw new ApiException("该报价是门店现有合同的依据，不能标记为未成交");
+        }
+        // 已确认的报价恢复跟进时回到“已出具”，需要客户重新确认
+        String from = "ACCEPTED".equals(status) ? "ISSUED" : status;
+        db.jdbc.update(
+            """
+            UPDATE quotation SET status='LOST',lost_reason=?,lost_from=?,lost_at=CURRENT_TIMESTAMP,
+              accepted_project=NULL,due_date=NULL WHERE id=?
+            """,
+            reason.trim(),
+            from,
+            id
+        );
+        db.audit("QUOTE_LOST", id, "标记未成交（原状态 " + status + "）；原因：" + reason.trim());
+    }
+
+    /** 恢复跟进：未成交的报价回到关闭前的状态。 */
+    @Transactional
+    public void reopen(String id) {
+        ownership.checkQuote(id);
+        var quote = db.one("SELECT * FROM quotation WHERE id=? FOR UPDATE", id);
+        if (!"LOST".equals(quote.get("status"))) throw new ApiException("只有未成交的报价可以恢复跟进");
+        String to = Objects.toString(quote.get("lost_from"), "DRAFT");
+        db.jdbc.update("UPDATE quotation SET status=?,lost_reason=NULL,lost_from=NULL,lost_at=NULL WHERE id=?", to, id);
+        db.audit("QUOTE_REOPENED", id, "恢复跟进，状态回到 " + to);
     }
 
     public Map<String, Object> customerCopy(String id) {

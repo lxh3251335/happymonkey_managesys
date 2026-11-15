@@ -35,8 +35,12 @@ public class CatalogController {
     }
 
     @GetMapping("/project-types/{id}/prefill")
-    public Map<String, Object> prefill(@PathVariable String id, @RequestParam(required = false) String supplierId) {
-        return service.prefill(id, supplierId);
+    public Map<String, Object> prefill(
+        @PathVariable String id,
+        @RequestParam(required = false) String supplierId,
+        @RequestParam(required = false) String customerId
+    ) {
+        return service.prefill(id, supplierId, customerId);
     }
 
     @GetMapping("/supplier-templates")

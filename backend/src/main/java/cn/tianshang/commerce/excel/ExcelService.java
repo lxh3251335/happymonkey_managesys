@@ -359,7 +359,7 @@ public class ExcelService {
             case SUPPLIER_TEMPLATES -> List.of("ROLE_ADMIN", "ROLE_MANAGER", "ROLE_FINANCE");
             case CONTRACT_INVOICES -> List.of("ROLE_ADMIN", "ROLE_FINANCE");
             case CONTRACTS, PROJECTS -> List.of("ROLE_ADMIN");
-            default -> List.of("ROLE_ADMIN", "ROLE_SALES");
+            default -> List.of("ROLE_ADMIN", "ROLE_MANAGER", "ROLE_SALES");
         };
         if (allowed.stream().noneMatch(roles::contains)) throw new AccessDeniedException("当前角色不能导入" + d.title);
     }
@@ -447,7 +447,9 @@ public class ExcelService {
                 blank(v.get("invoice_phone")),
                 blank(v.get("bank_name")),
                 blank(v.get("bank_account")),
-                type
+                type,
+                // 合同代码不在 Excel 中维护，更新时保留原值
+                current == null ? null : (String) current.get("contract_code")
             );
             validate(input, errors, Map.of("bankAccount", "银行账号", "name", "名称", "taxNo", "纳税人识别号"));
             String rows = "第 " + row.number() + " 行";

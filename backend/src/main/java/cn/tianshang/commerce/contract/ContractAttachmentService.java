@@ -69,7 +69,7 @@ public class ContractAttachmentService {
         return out;
     }
 
-    @PreAuthorize("hasAnyRole('ADMIN','SALES','FINANCE')")
+    @PreAuthorize("hasAnyRole('ADMIN','MANAGER','SALES','FINANCE')")
     @Transactional
     public Map<String, Object> upload(
         String customerId,

@@ -37,7 +37,7 @@ public class DrawingService {
         );
     }
 
-    @PreAuthorize("hasAnyRole('ADMIN','SALES')")
+    @PreAuthorize("hasAnyRole('ADMIN','MANAGER','SALES')")
     @Transactional
     public Map<String, Object> upload(String productId, String note, MultipartFile file) {
         var product = db.one("SELECT name,specification FROM product WHERE id=?", productId);

@@ -320,7 +320,7 @@ public class ContractService {
 
     public record ConfirmInput(@NotBlank String customerId, @NotBlank String contractKey, @NotNull LocalDate dueDate) {}
 
-    @PreAuthorize("hasAnyRole('ADMIN','SALES','FINANCE')")
+    @PreAuthorize("hasAnyRole('ADMIN','MANAGER','SALES','FINANCE')")
     @Transactional
     public Map<String, Object> confirm(@Valid ConfirmInput input) {
         ownership.checkContract(input.customerId(), input.contractKey());

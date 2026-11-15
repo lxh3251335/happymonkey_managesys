@@ -31,6 +31,16 @@ export const statusName: Record<string, string> = {
   ISSUED: '已出具',
   ACCEPTED: '已确认',
   HISTORICAL: '历史报价',
+  LOST: '未成交',
+}
+/** 报价跟进阶段的显示名称。 */
+export const stageName: Record<string, string> = {
+  DRAFT: '草稿',
+  ISSUED: '待客户确认',
+  ACCEPTED: '待生成合同',
+  CONTRACTED: '已转合同',
+  LOST: '未成交',
+  ARCHIVED: '已被新版本取代',
 }
 export const taxName: Record<string, string> = { INCLUDED: '含税', EXCLUDED: '未税', UNKNOWN: '税口径待核实' }
 export const roleName: Record<string, string> = {

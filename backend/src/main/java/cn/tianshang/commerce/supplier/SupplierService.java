@@ -45,7 +45,7 @@ public class SupplierService {
         @Size(max = 1000) String note
     ) {}
 
-    @PreAuthorize("hasAnyRole('ADMIN','SALES')")
+    @PreAuthorize("hasAnyRole('ADMIN','MANAGER','SALES')")
     @Transactional
     public Map<String, String> create(@Valid OfferInput o) {
         db.one("SELECT id FROM partner WHERE id=? AND kind='SUPPLIER'", o.supplierId());
