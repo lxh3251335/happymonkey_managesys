@@ -39,12 +39,17 @@ public abstract class ApiTestSupport {
     /** 会话校验要求账户在库中启用且角色一致，为测试中的模拟账户建档（随测试事务回滚）。 */
     @org.junit.jupiter.api.BeforeEach
     void seedMockUsers() {
+        for (String sc : List.of("小象", "小象前置仓"))
+            if (
+                jdbcTemplate.queryForObject("SELECT COUNT(*) FROM scenario WHERE name=?", Integer.class, sc) == 0
+            ) jdbcTemplate.update("INSERT INTO scenario(id,name) VALUES(?,?)", UUID.randomUUID().toString(), sc);
         for (String[] u : new String[][] {
             { "reader", "VIEWER" },
             { "viewer1", "VIEWER" },
             { "finance", "FINANCE" },
             { "finance1", "FINANCE" },
             { "sales1", "SALES" },
+            { "sales2", "SALES" },
         })
             if (
                 jdbcTemplate.queryForObject("SELECT COUNT(*) FROM app_user WHERE username=?", Integer.class, u[0]) == 0

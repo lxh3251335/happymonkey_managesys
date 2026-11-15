@@ -34,6 +34,16 @@ public class MasterController {
         return service.projects();
     }
 
+    @GetMapping("/owners")
+    public List<Map<String, Object>> owners() {
+        return service.owners();
+    }
+
+    @PostMapping("/projects/owner")
+    public Map<String, Object> assignOwner(@Valid @RequestBody MasterService.AssignInput input) {
+        return service.assignOwner(input);
+    }
+
     @PostMapping("/projects")
     public Map<String, String> project(@Valid @RequestBody MasterService.ProjectInput input) {
         return service.project(input);

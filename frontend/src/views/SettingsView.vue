@@ -4,6 +4,8 @@ import { ElMessage } from 'element-plus'
 import PageHeader from '../components/PageHeader.vue'
 import TemplateManager from '../components/TemplateManager.vue'
 import BusinessManager from '../components/BusinessManager.vue'
+import DictionaryManager from '../components/DictionaryManager.vue'
+import CompanyManager from '../components/CompanyManager.vue'
 import { api, post, put, session } from '../api'
 import type { User, Audit, ImportBatch } from '../types'
 import { roleName, day } from '../utils'
@@ -13,7 +15,8 @@ const tab = ref('account'),
   imports = ref<ImportBatch[]>([]),
   dialog = ref(false),
   busy = ref(false),
-  error = ref('')
+  error = ref(''),
+  dictTab = ref<'business' | 'scenario' | 'city'>('business')
 const password = ref({ oldPassword: '', newPassword: '' })
 const user = ref({ username: '', displayName: '', role: 'SALES', password: '' })
 const editDialog = ref(false),
@@ -109,7 +112,8 @@ onMounted(load)
         <el-tab-pane label="账户安全" name="account" />
         <template v-if="session.user?.role === 'ADMIN'">
           <el-tab-pane label="用户与角色" name="users" />
-          <el-tab-pane label="业务字典" name="business" />
+          <el-tab-pane label="数据字典" name="business" />
+          <el-tab-pane label="签约主体" name="companies" />
           <el-tab-pane label="报价模板" name="templates" />
           <el-tab-pane label="操作审计" name="audit" />
           <el-tab-pane label="历史数据导入" name="imports" />
@@ -152,7 +156,16 @@ onMounted(load)
         </el-table>
       </div>
       <TemplateManager v-if="tab === 'templates'" />
-      <BusinessManager v-if="tab === 'business'" />
+      <template v-if="tab === 'business'">
+        <el-radio-group v-model="dictTab" size="small" class="dict-switch">
+          <el-radio-button value="business">客户集团与业务线</el-radio-button>
+          <el-radio-button value="scenario">应用场景</el-radio-button>
+          <el-radio-button value="city">城市</el-radio-button>
+        </el-radio-group>
+        <BusinessManager v-if="dictTab === 'business'" />
+        <DictionaryManager v-else :key="dictTab" :kind="dictTab" />
+      </template>
+      <CompanyManager v-if="tab === 'companies'" />
       <el-table v-if="tab === 'audit'" :data="audits" max-height="600">
         <el-table-column label="日期" width="120">
           <template #default="{ row }">{{ day(row.created_at) }}</template>
@@ -218,3 +231,8 @@ onMounted(load)
     </el-dialog>
   </div>
 </template>
+<style scoped>
+.dict-switch {
+  margin-bottom: 12px;
+}
+</style>

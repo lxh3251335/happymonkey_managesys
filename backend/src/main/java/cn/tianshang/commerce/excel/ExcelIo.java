@@ -115,7 +115,8 @@ public final class ExcelIo {
             var helper = sheet.getDataValidationHelper();
             for (int c = 0; c < columns.size(); c++) {
                 var opts = columns.get(c).options();
-                if (opts.isEmpty()) continue;
+                // Excel 下拉列表的选项文本合计不能超过 255 个字符；超过时只在填写说明中列出
+                if (opts.isEmpty() || String.join(",", opts).length() > 250) continue;
                 var v = helper.createValidation(
                     helper.createExplicitListConstraint(opts.toArray(String[]::new)),
                     new CellRangeAddressList(1, MAX_ROWS, c, c)
@@ -236,6 +237,22 @@ public final class ExcelIo {
     public static boolean yes(String v) {
         String x = v == null ? "" : v.trim().toLowerCase(Locale.ROOT);
         return List.of("是", "y", "yes", "1", "true", "√", "启用").contains(x);
+    }
+
+    /** 日期：支持 2026-01-05、2026/1/5、2026.1.5、2026年1月5日。空值返回 null。 */
+    public static java.time.LocalDate date(String v, String header) {
+        if (v == null || v.isBlank()) return null;
+        var m = java.util.regex.Pattern.compile(
+            "(\\d{4})\\s*[-/.年]\\s*(\\d{1,2})\\s*[-/.月]\\s*(\\d{1,2})\\s*日?"
+        ).matcher(v.trim());
+        if (m.matches()) try {
+            return java.time.LocalDate.of(
+                Integer.parseInt(m.group(1)),
+                Integer.parseInt(m.group(2)),
+                Integer.parseInt(m.group(3))
+            );
+        } catch (java.time.DateTimeException ignored) {}
+        throw new ApiException("“" + header + "”不是有效日期：" + v);
     }
 
     public static BigDecimal decimal(String v, String header) {

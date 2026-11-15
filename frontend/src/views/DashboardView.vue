@@ -6,7 +6,7 @@ import PageHeader from '../components/PageHeader.vue'
 import StatusTag from '../components/StatusTag.vue'
 import GroupedBarChart from '../components/GroupedBarChart.vue'
 import ContractTable from '../components/ContractTable.vue'
-import { api, canWrite } from '../api'
+import { api, canWrite, session } from '../api'
 import type { BizRow, BrandLines, Contract, Dashboard, Quote } from '../types'
 import { money, percent, wan, axisWan } from '../utils'
 
@@ -25,7 +25,7 @@ const data = ref<Dashboard>(),
   router = useRouter(),
   route = useRoute()
 const trendView = ref<'amount' | 'line' | 'margin' | 'table'>('amount')
-const dim = ref<'customer' | 'brand' | 'city' | 'line'>('customer')
+const dim = ref<'customer' | 'brand' | 'city' | 'line' | 'owner'>('customer')
 const showAllDims = ref(false)
 const DIM_LIMIT = 10
 /** 业务（品牌）筛选，空字符串为全部业务；写入地址栏便于分享。 */
@@ -142,10 +142,14 @@ const allDimRows = computed<BizRow[]>(() =>
         ? data.value.by_brand
         : dim.value === 'city'
           ? data.value.by_city
-          : data.value.by_line,
+          : dim.value === 'owner'
+            ? data.value.by_owner || []
+            : data.value.by_line,
 )
 const dimRows = computed(() => (showAllDims.value ? allDimRows.value : allDimRows.value.slice(0, DIM_LIMIT)))
-const dimName = computed(() => ({ customer: '客户', brand: '业务线', city: '城市', line: '产品线' })[dim.value])
+const dimName = computed(
+  () => ({ customer: '客户', brand: '业务线', city: '城市', line: '产品线', owner: '销售' })[dim.value],
+)
 watch(dim, () => (showAllDims.value = false))
 const dimMax = computed(() => Math.max(1, ...dimRows.value.map((r) => r.contract_amount)))
 /** 业务线名称已在业务字典中维护，直接显示。 */
@@ -436,17 +440,14 @@ const openQuote = (q: Quote) => router.push(`/quotes?detail=${q.id}`)
           <div class="panel-heading">
             <div>
               <h2>经营分布</h2>
-              <p>
-                合同额、到账额、回款率与毛利，按{{
-                  dim === 'customer' ? '客户' : dim === 'brand' ? '品牌' : '产品线'
-                }}汇总
-              </p>
+              <p>合同额、到账额、回款率与毛利，按{{ dimName }}汇总</p>
             </div>
             <el-radio-group v-model="dim" size="small">
               <el-radio-button value="customer">客户</el-radio-button>
               <el-radio-button v-if="!brand" value="brand">业务线</el-radio-button>
               <el-radio-button value="city">城市</el-radio-button>
               <el-radio-button value="line">产品线</el-radio-button>
+              <el-radio-button v-if="session.user?.role !== 'SALES'" value="owner">销售业绩</el-radio-button>
             </el-radio-group>
           </div>
           <div class="panel-body">
@@ -578,14 +579,25 @@ const openQuote = (q: Quote) => router.push(`/quotes?detail=${q.id}`)
         <div class="panel-heading">
           <div>
             <h2>合同明细</h2>
-            <p>每个合同号一行，展开查看门店。确认应收与登记回款在“回款与应收”中办理。</p>
+            <p>每个合同号一行，点击在合同台账中查看详情、开票、到款与成本。</p>
           </div>
           <el-button link type="primary" @click="router.push('/cash?tab=contracts')">
             去办理
             <el-icon><ArrowRight /></el-icon>
           </el-button>
         </div>
-        <ContractTable :contracts="scopedContracts" />
+        <ContractTable
+          :contracts="scopedContracts"
+          compact
+          :page-size="10"
+          @open="
+            (c) =>
+              router.push({
+                path: '/cash',
+                query: { tab: 'contracts', customer: c.customer_id, contract: c.contract_key },
+              })
+          "
+        />
       </section>
 
       <section class="panel recent-panel">

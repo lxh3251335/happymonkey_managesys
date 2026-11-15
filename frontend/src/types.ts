@@ -36,6 +36,8 @@ export interface Project {
   city: string | null
   project_type_id: string | null
   project_type_name: string | null
+  owner_id: string | null
+  owner_name: string | null
 }
 export interface Product {
   id: string
@@ -97,6 +99,10 @@ export interface Quote {
   outstanding: number
   overdue: boolean
   template_name?: string | null
+  owner_id?: string | null
+  owner_name?: string | null
+  company_id?: string | null
+  company_name?: string | null
   supplier_id?: string | null
   supplier_name?: string | null
   project_type_id?: string | null
@@ -205,6 +211,8 @@ export interface Dashboard {
   by_customer: BizRow[]
   by_brand: BizRow[]
   by_city: BizRow[]
+  /** 按销售负责人汇总的业绩 */
+  by_owner: BizRow[]
   by_line: BizRow[]
   /** contract_amount 为该账龄段的未收余额 */
   aging: BizRow[]
@@ -226,6 +234,8 @@ export interface ContractItem {
   project_code: string
   project_name: string
   brand: string
+  city: string | null
+  owner_name: string | null
   quote_id: string
   quote_code: string
   status: Quote['status']
@@ -236,26 +246,189 @@ export interface ContractItem {
   received: number
   outstanding: number
 }
+export type ContractStatus = 'DRAFT' | 'SIGNED' | 'COMPLETED' | 'TERMINATED'
 export interface Contract {
+  id: string | null
   customer_id: string
   customer_name: string
   contract_no: string | null
   contract_key: string
+  status: ContractStatus
+  /** 是否已有合同记录（历史合同只有门店订单） */
+  recorded: boolean
+  title: string | null
+  content: string | null
+  signed_on: string | null
+  company_id: string | null
+  company_name: string | null
+  owner_id: string | null
+  owner_name: string | null
+  archived: boolean
+  pending_changes: number
   brands: string[]
+  cities: string[]
   projects: number
   shipped: number
   confirmed_projects: number
   confirmation: 'PENDING' | 'PARTIAL' | 'CONFIRMED'
+  /** 门店订单合计 */
+  order_amount: number
+  signed_amount: number | null
+  /** 合同金额：有签约金额用签约金额，否则为门店订单合计 */
   amount: number
+  amount_gap: number | null
   confirmed_amount: number
   received: number
   outstanding: number
   overdue: number
+  overdue_days: number
   collection_rate: number | null
+  invoiced: number
+  uninvoiced: number
+  invoiced_unreceived: number
+  invoice_status: 'NONE' | 'PARTIAL' | 'FULL'
+  last_invoice_on: string | null
+  last_receipt_on: string | null
+  actual_cost: number
+  estimated_cost: number | null
+  cost: number | null
+  cost_source: 'ACTUAL' | 'ESTIMATED' | 'INCOMPLETE'
+  profit: number | null
+  gross_margin: number | null
   order_date: string | null
   due_date: string | null
   items: ContractItem[]
   attachments: number
+}
+export interface ContractInfo {
+  id: string
+  status: ContractStatus
+  company_id: string | null
+  company_name: string | null
+  title: string | null
+  content: string | null
+  signed_on: string | null
+  signed_amount: number | null
+  payment_terms: string | null
+  start_on: string | null
+  end_on: string | null
+  warranty_months: number | null
+  retention_amount: number | null
+  owner_id: string | null
+  owner_name: string | null
+  customer_signer: string | null
+  archived: boolean
+  archive_no: string | null
+  note: string | null
+  updated_at: string
+}
+export interface FieldChange {
+  field: string
+  label: string
+  before: string | null
+  after: string | null
+}
+export interface ContractChange {
+  id: string
+  contract_id: string
+  status: 'PENDING' | 'APPROVED' | 'REJECTED' | 'WITHDRAWN' | 'DIRECT'
+  changes: FieldChange[]
+  reason: string
+  requested_by: string
+  requester_name: string | null
+  requested_at: string
+  reviewed_by: string | null
+  reviewer_name?: string | null
+  reviewed_at: string | null
+  review_note: string | null
+  customer_id?: string
+  contract_no?: string
+  customer_name?: string
+  title?: string | null
+}
+export interface ContractEvent {
+  id: string
+  actor: string
+  actor_name: string | null
+  action: string
+  entity_id: string
+  detail: string
+  created_at: string
+}
+export interface ContractInvoice {
+  id: string
+  customer_id: string
+  customer_name: string
+  contract_no: string
+  company_name: string | null
+  kind: 'INVOICE' | 'RED'
+  invoice_no: string
+  invoice_type: 'SPECIAL' | 'NORMAL' | null
+  issued_on: string
+  amount: number
+  tax_rate: number | null
+  reverses_id: string | null
+  reverses_no: string | null
+  reversed: number
+  note: string | null
+  created_by: string
+}
+export interface ContractCost {
+  id: string
+  category: string
+  supplier_id: string | null
+  supplier_name: string | null
+  amount: number
+  incurred_on: string
+  reference: string | null
+  note: string | null
+  created_by: string
+}
+export interface ContractDetail extends Contract {
+  info: ContractInfo | null
+  changes: ContractChange[]
+  events: ContractEvent[]
+  receipts: ContractReceipt[]
+}
+export interface Scenario {
+  id: string
+  name: string
+  sort: number
+  active: boolean
+  note: string | null
+  products: number
+}
+export interface City {
+  id: string
+  name: string
+  province: string | null
+  aliases: string | null
+  sort: number
+  active: boolean
+  projects: number
+}
+export interface Company {
+  id: string
+  name: string
+  short_name: string | null
+  tax_no: string | null
+  legal_rep: string | null
+  address: string | null
+  phone: string | null
+  bank_name: string | null
+  bank_account: string | null
+  is_default: boolean
+  active: boolean
+  sort: number
+  note: string | null
+  contracts: number
+  quotes: number
+}
+export interface Owner {
+  id: string
+  display_name: string
+  role: string
+  enabled: boolean
 }
 export interface ContractReceipt {
   id: string

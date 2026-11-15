@@ -156,6 +156,7 @@ class ExcelImportExportTest extends ApiTestSupport {
         String sup = "导入供应商" + UUID.randomUUID();
         ok("suppliers", "import", xlsx(List.of("名称"), List.of(List.of(sup))));
         String scenario = "导入场景" + UUID.randomUUID().toString().substring(0, 6);
+        jdbcTemplate.update("INSERT INTO scenario(id,name) VALUES(?,?)", UUID.randomUUID().toString(), scenario);
 
         byte[] products = xlsx(
             List.of("应用场景", "产品名称", "规格", "型号", "供应商", "主流配置"),

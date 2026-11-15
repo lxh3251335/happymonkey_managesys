@@ -5,7 +5,9 @@ import { ElMessage } from 'element-plus'
 import { Plus, Search, Refresh } from '@element-plus/icons-vue'
 import PageHeader from '../components/PageHeader.vue'
 import BusinessSelect from '../components/BusinessSelect.vue'
-import { api, post, canWrite } from '../api'
+import CitySelect from '../components/CitySelect.vue'
+import { api, post, canWrite, isAdmin, session } from '../api'
+import { activeOwners, dict, loadDictionaries } from '../dictionaries'
 import type { Project, Partner, ProjectType } from '../types'
 import { day, today } from '../utils'
 const rows = ref<Project[]>([]),
@@ -13,6 +15,11 @@ const rows = ref<Project[]>([]),
   types = ref<ProjectType[]>([]),
   keyword = ref(''),
   brand = ref(''),
+  city = ref(''),
+  owner = ref(''),
+  selected = ref<Project[]>([]),
+  assignDialog = ref(false),
+  assign = ref({ ownerId: '', includeContracts: true }),
   dialog = ref(false),
   editing = ref(''),
   busy = ref(false),
@@ -30,13 +37,18 @@ const fresh = () => ({
   shippingStatus: '',
   city: '',
   projectTypeId: '',
+  ownerId: '',
 })
+/** 商务只看得到自己的项目，不需要负责人筛选。 */
+const showOwner = computed(() => session.user?.role !== 'SALES')
 const cities = computed(() => [...new Set(rows.value.map((p) => p.city).filter((c): c is string => !!c))].sort())
 const form = ref(fresh())
 const filtered = computed(() =>
   rows.value.filter(
     (p) =>
       (!brand.value || p.brand === brand.value) &&
+      (!city.value || (city.value === '未填' ? !p.city : p.city === city.value)) &&
+      (!owner.value || (owner.value === '-' ? !p.owner_id : p.owner_id === owner.value)) &&
       `${p.name}${p.code}${p.customer_name}${p.external_id || ''}${p.city || ''}`
         .toLowerCase()
         .includes(keyword.value.toLowerCase()),
@@ -48,7 +60,8 @@ async function load() {
       api<Project[]>('/projects'),
       api<Partner[]>('/partners'),
       api<ProjectType[]>('/project-types'),
-    ])
+      loadDictionaries(),
+    ]).then(([a, b, c]) => [a, b, c] as const)
     error.value = ''
   } catch (e) {
     error.value = (e as Error).message
@@ -68,6 +81,7 @@ function open(p?: Project) {
         shippingStatus: p.shipping_status || '',
         city: p.city || '',
         projectTypeId: p.project_type_id || '',
+        ownerId: p.owner_id || '',
       }
     : fresh()
   dialog.value = true
@@ -81,11 +95,30 @@ async function save() {
       orderDate: form.value.orderDate || null,
       city: form.value.city || null,
       projectTypeId: form.value.projectTypeId || null,
+      // 只有管理员可指定负责人；其他角色不提交，后端按本人 / 原值处理
+      ownerId: isAdmin() ? form.value.ownerId : null,
     }
     if (editing.value) await api(`/projects/${editing.value}`, { method: 'PUT', body: JSON.stringify(payload) })
     else await post('/projects', payload)
     dialog.value = false
     ElMessage.success('项目信息已保存')
+    await load()
+  } catch (e) {
+    ElMessage.error((e as Error).message)
+  } finally {
+    busy.value = false
+  }
+}
+async function saveAssign() {
+  busy.value = true
+  try {
+    const r = await post<{ projects: number; contracts: number }>('/projects/owner', {
+      projectIds: selected.value.map((p) => p.id),
+      ownerId: assign.value.ownerId || null,
+      includeContracts: assign.value.includeContracts,
+    })
+    assignDialog.value = false
+    ElMessage.success(`已分配 ${r.projects} 个门店、${r.contracts} 份合同`)
     await load()
   } catch (e) {
     ElMessage.error((e as Error).message)
@@ -118,10 +151,34 @@ onMounted(load)
           @input="page = 1"
         />
         <BusinessSelect v-model="brand" clearable placeholder="全部业务线" class="business-filter" @change="page = 1" />
+        <el-select v-model="city" clearable filterable placeholder="全部城市" class="small-filter" @change="page = 1">
+          <el-option label="未填城市" value="未填" />
+          <el-option v-for="c in cities" :key="c" :label="c" :value="c" />
+        </el-select>
+        <el-select
+          v-if="showOwner"
+          v-model="owner"
+          clearable
+          filterable
+          placeholder="全部负责人"
+          class="small-filter"
+          @change="page = 1"
+        >
+          <el-option label="未分配负责人" value="-" />
+          <el-option v-for="o in dict.owners" :key="o.id" :label="o.display_name" :value="o.id" />
+        </el-select>
         <el-button :icon="Refresh" @click="load">刷新</el-button>
+        <el-button v-if="isAdmin()" :disabled="!selected.length" @click="assignDialog = true">
+          分配负责人{{ selected.length ? `（${selected.length}）` : '' }}
+        </el-button>
         <span class="filter-count">共 {{ filtered.length }} 个项目</span>
       </div>
-      <el-table :data="filtered.slice((page - 1) * 12, page * 12)">
+      <el-table
+        :data="filtered.slice((page - 1) * 12, page * 12)"
+        row-key="id"
+        @selection-change="(v: Project[]) => (selected = v)"
+      >
+        <el-table-column v-if="isAdmin()" type="selection" width="40" reserve-selection />
         <el-table-column label="项目 / 门店" prop="name" min-width="290" show-overflow-tooltip />
         <el-table-column label="客户" prop="customer_name" min-width="120" />
         <el-table-column label="业务线 / 类型" width="130">
@@ -133,6 +190,11 @@ onMounted(load)
         <el-table-column label="城市" width="90">
           <template #default="{ row }">
             <span :class="row.city ? '' : 'muted'">{{ row.city || '未填' }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column v-if="showOwner" label="负责人" width="90">
+          <template #default="{ row }">
+            <span :class="row.owner_name ? '' : 'muted'">{{ row.owner_name || '未分配' }}</span>
           </template>
         </el-table-column>
         <el-table-column label="接单日期" width="120">
@@ -186,16 +248,7 @@ onMounted(load)
             </el-select>
           </el-form-item>
           <el-form-item label="城市">
-            <el-select
-              v-model="form.city"
-              filterable
-              allow-create
-              clearable
-              default-first-option
-              placeholder="留空按名称识别"
-            >
-              <el-option v-for="c in cities" :key="c" :value="c" :label="c" />
-            </el-select>
+            <CitySelect v-model="form.city" placeholder="留空按门店名称识别" />
           </el-form-item>
           <el-form-item label="项目类型">
             <el-select v-model="form.projectTypeId" clearable placeholder="如：小象前置仓">
@@ -211,6 +264,11 @@ onMounted(load)
           <el-form-item label="合同号">
             <el-input v-model="form.contractNo" maxlength="100" placeholder="签约后填写，计入合同额" />
           </el-form-item>
+          <el-form-item v-if="isAdmin()" label="销售负责人">
+            <el-select v-model="form.ownerId" clearable filterable placeholder="新建时默认为本人">
+              <el-option v-for="o in activeOwners" :key="o.id" :label="o.display_name" :value="o.id" />
+            </el-select>
+          </el-form-item>
           <el-form-item label="发货状态">
             <el-select v-model="form.shippingStatus" clearable placeholder="未登记">
               <el-option label="制作中" value="制作中" />
@@ -222,9 +280,27 @@ onMounted(load)
           <el-input v-model="form.note" type="textarea" :rows="3" maxlength="2000" />
         </el-form-item>
       </el-form>
+      <div v-if="editing && !isAdmin()" class="inline-note">
+        门店所属合同已签订时，调整合同号属于合同变更，须由管理员办理。
+      </div>
       <template #footer>
         <el-button @click="dialog = false">取消</el-button>
         <el-button type="primary" :loading="busy" @click="save">保存项目</el-button>
+      </template>
+    </el-dialog>
+    <el-dialog v-model="assignDialog" title="分配销售负责人" width="460px">
+      <p class="dialog-lead">已选 {{ selected.length }} 个门店。负责人只能查看和办理自己负责的门店、报价与合同。</p>
+      <el-form label-position="top">
+        <el-form-item label="负责人">
+          <el-select v-model="assign.ownerId" clearable filterable placeholder="留空为取消分配">
+            <el-option v-for="o in activeOwners" :key="o.id" :label="o.display_name" :value="o.id" />
+          </el-select>
+        </el-form-item>
+        <el-checkbox v-model="assign.includeContracts">同时把这些门店所属合同的负责人一并调整</el-checkbox>
+      </el-form>
+      <template #footer>
+        <el-button @click="assignDialog = false">取消</el-button>
+        <el-button type="primary" :loading="busy" @click="saveAssign">确认分配</el-button>
       </template>
     </el-dialog>
   </div>
@@ -232,5 +308,8 @@ onMounted(load)
 <style scoped>
 .business-filter {
   width: 170px;
+}
+.small-filter {
+  width: 140px;
 }
 </style>

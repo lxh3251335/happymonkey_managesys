@@ -34,17 +34,21 @@ public class ReportService {
     private final QuoteService quotes;
     private final ContractLedger ledger;
     private final cn.tianshang.commerce.business.BusinessService business;
+    private final cn.tianshang.commerce.common.Ownership ownership;
+    static final String UNOWNED = "未分配负责人";
 
     public ReportService(
         Database db,
         QuoteService quotes,
         ContractLedger ledger,
-        cn.tianshang.commerce.business.BusinessService business
+        cn.tianshang.commerce.business.BusinessService business,
+        cn.tianshang.commerce.common.Ownership ownership
     ) {
         this.db = db;
         this.quotes = quotes;
         this.ledger = ledger;
         this.business = business;
+        this.ownership = ownership;
     }
 
     /** 一个分组的累计值。 */
@@ -110,14 +114,16 @@ public class ReportService {
             .toList();
         var today = LocalDate.now();
         String cashSql = """
-            SELECT e.quotation_id,e.kind,e.amount,e.paid_on,p.brand,p.city,c.name AS customer_name
+            SELECT e.quotation_id,e.kind,e.amount,e.paid_on,p.brand,p.city,p.owner_id,c.name AS customer_name,
+              u.display_name AS owner_name
             FROM cash_entry e JOIN quotation q ON q.id=e.quotation_id JOIN project p ON p.id=q.project_id
-            JOIN partner c ON c.id=p.customer_id
+            JOIN partner c ON c.id=p.customer_id LEFT JOIN app_user u ON u.id=p.owner_id
             """;
         var cash = db.jdbc
             .queryForList(cashSql)
             .stream()
             .filter(e -> inScope.test(Objects.toString(e.get("brand"), "")))
+            .filter(e -> ownership.visible(e.get("owner_id")))
             .toList();
         var monthLines = new HashMap<String, Map<String, Acc>>();
 
@@ -125,6 +131,7 @@ public class ReportService {
         var customers = new HashMap<String, Acc>();
         var brands = new HashMap<String, Acc>();
         var cities = new HashMap<String, Acc>();
+        var owners = new HashMap<String, Acc>();
         var lines = new HashMap<String, Acc>();
         var total = new Acc("合计");
         BigDecimal backlog = BigDecimal.ZERO;
@@ -141,7 +148,8 @@ public class ReportService {
                 at(months, f.month() == null ? "未知" : f.month()),
                 at(customers, f.customerName()),
                 at(brands, f.brand()),
-                at(cities, f.city() == null ? "未填城市" : f.city())
+                at(cities, f.city() == null ? "未填城市" : f.city()),
+                at(owners, f.ownerName() == null ? UNOWNED : f.ownerName())
             )) {
                 acc.contract = acc.contract.add(f.amount());
                 acc.outstanding = acc.outstanding.add(f.outstanding());
@@ -196,7 +204,8 @@ public class ReportService {
                 at(months, month),
                 at(customers, e.get("customer_name").toString()),
                 at(brands, e.get("brand").toString()),
-                at(cities, e.get("city") == null ? "未填城市" : e.get("city").toString())
+                at(cities, e.get("city") == null ? "未填城市" : e.get("city").toString()),
+                at(owners, e.get("owner_name") == null ? UNOWNED : e.get("owner_name").toString())
             ))
                 acc.received = acc.received.add(amount);
         }
@@ -259,6 +268,7 @@ public class ReportService {
         out.put("by_customer", byCustomer);
         out.put("by_brand", ranked(brands, total.contract));
         out.put("by_city", ranked(cities, total.contract));
+        out.put("by_owner", ranked(owners, total.contract));
         out.put("by_line", ranked(lines, total.contract));
         out.put("line_summary", lineSummary(lines, total.contract));
         out.put("brand", brand);
@@ -285,7 +295,16 @@ public class ReportService {
                 ((Number) q.get("version")).intValue() > ((Number) latest.get(key).get("version")).intValue()
             ) latest.put(key, q);
         }
-        out.put("projects", db.jdbc.queryForObject("SELECT COUNT(*) FROM project", Integer.class));
+        out.put(
+            "projects",
+            ownership.restricted()
+                ? db.jdbc.queryForObject(
+                      "SELECT COUNT(*) FROM project WHERE owner_id=?",
+                      Integer.class,
+                      Objects.toString(ownership.userId(), "-")
+                  )
+                : db.jdbc.queryForObject("SELECT COUNT(*) FROM project", Integer.class)
+        );
         out.put(
             "customers",
             db.jdbc.queryForObject("SELECT COUNT(*) FROM partner WHERE kind='CUSTOMER'", Integer.class)

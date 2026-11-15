@@ -3,11 +3,15 @@ import { ref, computed, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import ContractTable from '../components/ContractTable.vue'
 import ContractAttachments from '../components/ContractAttachments.vue'
+import ContractDrawer from '../components/ContractDrawer.vue'
+import ContractInfoDialog from '../components/ContractInfoDialog.vue'
+import ExcelTools from '../components/ExcelTools.vue'
+import { changeStatusName } from '../dictionaries'
 import { ElMessage } from 'element-plus'
 import { Plus, Search } from '@element-plus/icons-vue'
 import PageHeader from '../components/PageHeader.vue'
-import { api, post, canFinance, canWrite } from '../api'
-import type { CashEntry, Contract, ContractReceipt, Quote } from '../types'
+import { api, post, canFinance, canWrite, isAdmin } from '../api'
+import type { CashEntry, Contract, ContractChange, ContractInvoice, ContractReceipt, Quote } from '../types'
 import { money, today, day, afterDays } from '../utils'
 const entries = ref<CashEntry[]>([]),
   balances = ref<Quote[]>([]),
@@ -16,6 +20,12 @@ const entries = ref<CashEntry[]>([]),
   tab = ref(String(route.query.tab || 'contracts')),
   contracts = ref<Contract[]>([]),
   receipts = ref<ContractReceipt[]>([]),
+  invoices = ref<ContractInvoice[]>([]),
+  changes = ref<ContractChange[]>([]),
+  drawerOpen = ref(false),
+  drawerKey = ref({ customerId: '', contractKey: '' }),
+  createOpen = ref(false),
+  drawer = ref<InstanceType<typeof ContractDrawer>>(),
   dialog = ref(false),
   attachDialog = ref(false),
   attachContract = ref<Contract>(),
@@ -40,16 +50,17 @@ const filteredEntries = computed(() =>
 const refundable = computed(() =>
   entries.value.filter((e) => e.kind === 'RECEIPT' && e.quotation_id === form.value.quotationId),
 )
-const total = computed(() => balances.value.reduce((s, q) => s + Number(q.outstanding), 0))
-const received = computed(() => balances.value.reduce((s, q) => s + Number(q.received), 0))
 async function load() {
   try {
-    ;[entries.value, balances.value, contracts.value, receipts.value] = await Promise.all([
-      api<CashEntry[]>('/cash'),
-      api<Quote[]>('/cash/balances'),
-      api<Contract[]>('/contracts'),
-      api<ContractReceipt[]>('/contracts/receipts'),
-    ])
+    ;[entries.value, balances.value, contracts.value, receipts.value, invoices.value, changes.value] =
+      await Promise.all([
+        api<CashEntry[]>('/cash'),
+        api<Quote[]>('/cash/balances'),
+        api<Contract[]>('/contracts'),
+        api<ContractReceipt[]>('/contracts/receipts'),
+        api<ContractInvoice[]>('/contracts/invoices'),
+        api<ContractChange[]>('/contracts/changes/pending'),
+      ])
     error.value = ''
   } catch (e) {
     error.value = (e as Error).message
@@ -119,7 +130,7 @@ async function confirmContract() {
     })
     confirmDialog.value = false
     ElMessage.success(`已确认 ${r.confirmed} 个门店订单的应收`)
-    await load()
+    await reloadAll()
   } catch (e) {
     ElMessage.error((e as Error).message)
   } finally {
@@ -139,56 +150,110 @@ async function saveContract() {
     })
     contractDialog.value = false
     ElMessage.success(`已登记，分摊到 ${r.allocations} 个门店订单`)
-    await load()
+    await reloadAll()
   } catch (e) {
     ElMessage.error((e as Error).message)
   } finally {
     busy.value = false
   }
 }
-onMounted(load)
+const csum = (k: keyof Contract) => contracts.value.reduce((s, c) => s + Number(c[k] || 0), 0)
+function openDrawer(customerId: string, contractKey: string) {
+  drawerKey.value = { customerId, contractKey }
+  drawerOpen.value = true
+}
+/** 抽屉中的操作完成后：刷新列表，并让抽屉重新加载。 */
+async function reloadAll() {
+  await load()
+  if (drawerOpen.value) await drawer.value?.refresh()
+}
+const invoiceKeyword = ref('')
+const filteredInvoices = computed(() =>
+  invoices.value.filter((i) =>
+    `${i.invoice_no}${i.customer_name}${i.contract_no}${i.company_name || ''}${i.note || ''}`.includes(
+      invoiceKeyword.value.trim(),
+    ),
+  ),
+)
+const invoiceTotal = computed(() =>
+  filteredInvoices.value.reduce((s, i) => s + (i.kind === 'RED' ? -1 : 1) * Number(i.amount), 0),
+)
+onMounted(async () => {
+  await load()
+  if (route.query.customer && route.query.contract)
+    openDrawer(String(route.query.customer), String(route.query.contract))
+})
 </script>
 <template>
   <div>
     <PageHeader
-      eyebrow="RECEIVABLES & CASH"
-      title="回款与应收"
-      description="以客户确认订单为依据，登记每一笔回款，跟踪未收余额。"
+      eyebrow="CONTRACTS & EXECUTION"
+      title="合同台账"
+      description="合同要素、开票、到款、发货与成本一处追踪；已签订合同的修改须管理员批准。"
     >
-      <el-button v-if="canFinance()" type="primary" @click="open()">
+      <el-button v-if="canWrite()" type="primary" @click="createOpen = true">
         <el-icon><Plus /></el-icon>
-        登记回款 / 退款
+        新建合同
       </el-button>
+      <el-button v-if="canFinance()" @click="open()">登记门店回款</el-button>
     </PageHeader>
     <el-alert v-if="error" :title="error" type="error" :closable="false" />
-    <div class="cash-metrics">
+    <div class="cash-metrics contract-metrics">
       <div class="panel compact-metric">
-        <span>客户净回款</span>
-        <strong>{{ money(received) }}</strong>
-        <small>累计收款减累计退款</small>
+        <span>合同总额</span>
+        <strong>{{ money(csum('amount')) }}</strong>
+        <small>{{ contracts.length }} 份合同 · 拟定中 {{ contracts.filter((c) => c.status === 'DRAFT').length }}</small>
       </div>
       <div class="panel compact-metric">
-        <span>剩余应收</span>
-        <strong>{{ money(total) }}</strong>
-        <small>{{ balances.length }} 份已确认订单</small>
+        <span>已开票</span>
+        <strong>{{ money(csum('invoiced')) }}</strong>
+        <small>未开票 {{ money(csum('uninvoiced')) }}</small>
       </div>
       <div class="panel compact-metric">
-        <span>逾期订单</span>
+        <span>已到款</span>
+        <strong>{{ money(csum('received')) }}</strong>
+        <small>开票未到款 {{ money(csum('invoiced_unreceived')) }}</small>
+      </div>
+      <div class="panel compact-metric">
+        <span>未收应收</span>
+        <strong :class="csum('overdue') > 0 ? 'danger-text' : ''">{{ money(csum('outstanding')) }}</strong>
+        <small>逾期 {{ money(csum('overdue')) }} · {{ contracts.filter((c) => c.overdue > 0).length }} 份合同</small>
+      </div>
+      <div class="panel compact-metric">
+        <span>待审批变更</span>
         <strong>
-          {{ balances.filter((q) => q.overdue).length }}
-          <em>份</em>
+          {{ changes.length }}
+          <em>项</em>
         </strong>
-        <small>到期且仍有未收余额</small>
+        <small>{{ isAdmin() ? '已签订合同的修改申请' : '我提交的申请' }}</small>
       </div>
     </div>
     <section class="panel">
       <div class="filter-bar">
         <el-tabs v-model="tab" class="table-tabs">
           <el-tab-pane label="合同台账" name="contracts" />
+          <el-tab-pane label="开票记录" name="invoices" />
+          <el-tab-pane name="changes">
+            <template #label>
+              变更审批
+              <el-badge v-if="changes.length" :value="changes.length" type="warning" class="tab-badge" />
+            </template>
+          </el-tab-pane>
           <el-tab-pane label="合同收款" name="receipts" />
           <el-tab-pane label="门店应收" name="balances" />
           <el-tab-pane label="收付款流水" name="entries" />
         </el-tabs>
+        <ExcelTools
+          v-if="tab === 'contracts'"
+          dataset="contracts"
+          title="合同台账"
+          :can-import="isAdmin()"
+          @imported="load"
+        />
+        <template v-if="tab === 'invoices'">
+          <el-input v-model="invoiceKeyword" clearable :prefix-icon="Search" placeholder="搜索发票号、客户或合同号" />
+          <ExcelTools dataset="contract-invoices" title="开票记录" :can-import="canFinance()" @imported="load" />
+        </template>
         <el-input
           v-if="tab === 'balances' || tab === 'entries'"
           v-model="keyword"
@@ -198,22 +263,86 @@ onMounted(load)
         />
       </div>
       <template v-if="tab === 'contracts'">
-        <ContractTable
-          :contracts="contracts"
-          :actions="canFinance() || canWrite()"
-          attachments
-          @attachments="(c) => ((attachContract = c), (attachDialog = true))"
-          @confirm="openConfirm"
-          @receipt="
-            (c) => (canFinance() ? openContract(c, 'RECEIPT') : ElMessage.warning('登记回款需要财务或管理员权限'))
-          "
-          @refund="
-            (c) => (canFinance() ? openContract(c, 'REFUND') : ElMessage.warning('登记退款需要财务或管理员权限'))
-          "
-        />
+        <ContractTable :contracts="contracts" @open="(c) => openDrawer(c.customer_id, c.contract_key)" />
         <div class="panel-bottom-note">
-          按合同整笔登记回款时，系统按各门店剩余应收比例自动分摊到门店订单，分摊流水号为“凭证号#序号”。
+          点击合同查看详情、开票、到款、成本与变更记录。按合同整笔登记回款时，系统按各门店剩余应收比例自动分摊到门店订单。
         </div>
+      </template>
+      <template v-else-if="tab === 'invoices'">
+        <div class="invoice-sum">
+          {{ filteredInvoices.length }} 张发票 · 净开票
+          <strong>{{ money(invoiceTotal) }}</strong>
+        </div>
+        <el-table
+          :data="filteredInvoices"
+          class="clickable"
+          @row-click="(r: ContractInvoice) => openDrawer(r.customer_id, r.contract_no)"
+        >
+          <el-table-column label="开票日期" width="110">
+            <template #default="{ row }">{{ day(row.issued_on) }}</template>
+          </el-table-column>
+          <el-table-column label="发票号码" prop="invoice_no" min-width="180" />
+          <el-table-column label="合同号 / 客户" min-width="200">
+            <template #default="{ row }">
+              {{ row.contract_no.startsWith('#') ? '未填合同号' : row.contract_no }}
+              <small class="cell-secondary">{{ row.customer_name }}</small>
+            </template>
+          </el-table-column>
+          <el-table-column label="类型" width="100">
+            <template #default="{ row }">
+              <span :class="row.kind === 'RED' ? 'danger-text' : ''">
+                {{ row.kind === 'RED' ? '红字冲销' : '蓝字' }}
+              </span>
+              <small v-if="row.reverses_no" class="cell-secondary">冲 {{ row.reverses_no }}</small>
+            </template>
+          </el-table-column>
+          <el-table-column label="价税合计" align="right" width="140">
+            <template #default="{ row }">{{ row.kind === 'RED' ? '-' : '' }}{{ money(row.amount) }}</template>
+          </el-table-column>
+          <el-table-column label="开票方" prop="company_name" min-width="160" show-overflow-tooltip />
+          <el-table-column label="备注" prop="note" min-width="140" show-overflow-tooltip />
+        </el-table>
+      </template>
+      <template v-else-if="tab === 'changes'">
+        <div class="inline-note changes-note">
+          {{
+            isAdmin()
+              ? '已签订合同的修改申请，批准后立即生效。点击打开合同查看完整对比后审批。'
+              : '你提交的待审批变更申请。'
+          }}
+        </div>
+        <el-table
+          :data="changes"
+          empty-text="没有待审批的变更"
+          class="clickable"
+          @row-click="(r: ContractChange) => openDrawer(r.customer_id!, r.contract_no!)"
+        >
+          <el-table-column label="提交时间" width="150">
+            <template #default="{ row }">{{ String(row.requested_at).replace('T', ' ').slice(0, 16) }}</template>
+          </el-table-column>
+          <el-table-column label="合同" min-width="200">
+            <template #default="{ row }">
+              {{ row.contract_no?.startsWith('#') ? '未填合同号' : row.contract_no }}
+              <small class="cell-secondary">{{ row.customer_name }} · {{ row.title || '' }}</small>
+            </template>
+          </el-table-column>
+          <el-table-column label="申请人" width="100">
+            <template #default="{ row }">{{ row.requester_name || row.requested_by }}</template>
+          </el-table-column>
+          <el-table-column label="修改内容" min-width="320">
+            <template #default="{ row }">
+              <div v-for="d in row.changes" :key="d.field" class="change-line">
+                <span class="muted">{{ d.label }}：</span>
+                <s class="muted">{{ d.before ?? '空' }}</s>
+                → {{ d.after ?? '空' }}
+              </div>
+            </template>
+          </el-table-column>
+          <el-table-column label="原因" prop="reason" min-width="160" show-overflow-tooltip />
+          <el-table-column label="状态" width="80">
+            <template #default="{ row }">{{ changeStatusName[row.status] }}</template>
+          </el-table-column>
+        </el-table>
       </template>
       <el-table v-else-if="tab === 'receipts'" :data="receipts">
         <el-table-column label="收付款日期" width="125">
@@ -403,6 +532,53 @@ onMounted(load)
         <el-button type="primary" :loading="busy" @click="saveContract">登记</el-button>
       </template>
     </el-dialog>
-    <ContractAttachments v-model="attachDialog" :contract="attachContract" @changed="load" />
+    <ContractAttachments v-model="attachDialog" :contract="attachContract" @changed="reloadAll" />
+    <ContractDrawer
+      ref="drawer"
+      v-model="drawerOpen"
+      :customer-id="drawerKey.customerId"
+      :contract-key="drawerKey.contractKey"
+      @changed="load"
+      @confirm="openConfirm"
+      @receipt="(c) => openContract(c, 'RECEIPT')"
+      @refund="(c) => openContract(c, 'REFUND')"
+      @attachments="(c) => ((attachContract = c), (attachDialog = true))"
+    />
+    <ContractInfoDialog
+      v-model="createOpen"
+      @saved="async (k) => (await load(), openDrawer(k.customerId, k.contractKey))"
+    />
   </div>
 </template>
+<style scoped>
+.contract-metrics {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+@media (max-width: 1100px) {
+  .contract-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+.invoice-sum {
+  padding: 8px 24px;
+  font-size: 12px;
+  color: #6b7a72;
+}
+.invoice-sum strong {
+  color: #253731;
+}
+.clickable :deep(.el-table__row) {
+  cursor: pointer;
+}
+.changes-note {
+  margin: 12px 24px;
+}
+.change-line {
+  font-size: 12px;
+  line-height: 1.6;
+}
+.tab-badge {
+  margin-left: 4px;
+  vertical-align: top;
+}
+</style>

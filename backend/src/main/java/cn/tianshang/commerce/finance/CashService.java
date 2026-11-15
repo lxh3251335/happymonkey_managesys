@@ -17,19 +17,25 @@ public class CashService {
     private final Database db;
     private final QuoteService quotes;
 
-    public CashService(Database db, QuoteService quotes) {
+    private final Ownership ownership;
+
+    public CashService(Database db, QuoteService quotes, Ownership ownership) {
         this.db = db;
         this.quotes = quotes;
+        this.ownership = ownership;
     }
 
     public List<Map<String, Object>> entries() {
-        return db.jdbc.queryForList(
-            """
+        String sql = """
             SELECT e.*,q.code AS quote_code,p.name AS project_name,c.name AS customer_name
             FROM cash_entry e JOIN quotation q ON q.id=e.quotation_id JOIN project p ON p.id=q.project_id
-            JOIN partner c ON c.id=p.customer_id ORDER BY e.paid_on DESC,e.created_at DESC
-            """
+            JOIN partner c ON c.id=p.customer_id
+            """;
+        if (ownership.restricted()) return db.jdbc.queryForList(
+            sql + " WHERE p.owner_id=? ORDER BY e.paid_on DESC,e.created_at DESC",
+            Objects.toString(ownership.userId(), "-")
         );
+        return db.jdbc.queryForList(sql + " ORDER BY e.paid_on DESC,e.created_at DESC");
     }
 
     public List<Map<String, Object>> balances() {

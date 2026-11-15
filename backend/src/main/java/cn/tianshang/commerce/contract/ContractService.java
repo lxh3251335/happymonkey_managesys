@@ -19,28 +19,85 @@ public class ContractService {
     private final ContractLedger ledger;
     private final QuoteService quotes;
     private final ContractAttachmentService attachments;
+    private final Ownership ownership;
 
     public ContractService(
         Database db,
         ContractLedger ledger,
         QuoteService quotes,
-        ContractAttachmentService attachments
+        ContractAttachmentService attachments,
+        Ownership ownership
     ) {
         this.db = db;
         this.ledger = ledger;
         this.quotes = quotes;
         this.attachments = attachments;
+        this.ownership = ownership;
     }
 
+    /** 合同状态（合同记录）：草拟中、已签订、已完结、已终止。没有合同记录的历史合同视为已签订。 */
+    public static final Map<String, String> STATUS = Map.of(
+        "DRAFT",
+        "拟定中",
+        "SIGNED",
+        "已签订",
+        "COMPLETED",
+        "已完结",
+        "TERMINATED",
+        "已终止"
+    );
+
+    /**
+     * 合同台账：门店订单按“客户 + 合同号”汇总，叠加合同信息、开票、回款、实际成本与变更状态。
+     * 商务只看到自己负责的合同。只登记了合同信息、尚未关联门店的合同也列出。
+     */
     public List<Map<String, Object>> contracts() {
         var groups = new LinkedHashMap<String, List<ContractLedger.Fact>>();
         for (var f : ledger.contracted())
             groups.computeIfAbsent(f.customerId() + "::" + f.contractKey(), k -> new ArrayList<>()).add(f);
+        var headers = new HashMap<String, Map<String, Object>>();
+        for (var h : db.jdbc.queryForList(
+            """
+            SELECT k.*,c.name AS customer_name,m.name AS company_name,m.short_name AS company_short,
+              u.display_name AS owner_name,
+              (SELECT COUNT(*) FROM contract_change x WHERE x.contract_id=k.id AND x.status='PENDING') AS pending_changes
+            FROM contract k JOIN partner c ON c.id=k.customer_id LEFT JOIN company m ON m.id=k.company_id
+            LEFT JOIN app_user u ON u.id=k.owner_id
+            """
+        ))
+            headers.put(h.get("customer_id") + "::" + h.get("contract_no"), h);
+        // 只有合同记录、没有（可见）门店订单的合同
+        for (var e : headers.entrySet())
+            if (!groups.containsKey(e.getKey()) && ownership.visible(e.getValue().get("owner_id"))) {
+                boolean anyProject =
+                    db.jdbc.queryForObject(
+                        "SELECT COUNT(*) FROM project WHERE customer_id=? AND (contract_no=? OR '#'||code=?)",
+                        Integer.class,
+                        e.getValue().get("customer_id"),
+                        e.getValue().get("contract_no"),
+                        e.getValue().get("contract_no")
+                    ) >
+                    0;
+                // 商务看不到别人门店的合同；门店存在但对当前用户不可见时不列出
+                if (!anyProject || !ownership.restricted()) groups.put(e.getKey(), new ArrayList<>());
+            }
+        var invoiced = sums(
+            "SELECT customer_id,contract_no,SUM(CASE WHEN kind='INVOICE' THEN amount ELSE -amount END) AS v,MAX(issued_on) AS d FROM contract_invoice WHERE deleted_at IS NULL GROUP BY customer_id,contract_no"
+        );
+        var costs = sums(
+            "SELECT customer_id,contract_no,SUM(amount) AS v,MAX(incurred_on) AS d FROM contract_cost WHERE deleted_at IS NULL GROUP BY customer_id,contract_no"
+        );
+        var lastReceipt = sums(
+            "SELECT customer_id,contract_no,COUNT(*) AS v,MAX(paid_on) AS d FROM contract_receipt WHERE kind='RECEIPT' GROUP BY customer_id,contract_no"
+        );
         var today = LocalDate.now();
         var attachmentCounts = attachments.counts();
         var out = new ArrayList<Map<String, Object>>();
-        for (var g : groups.values()) {
-            var first = g.get(0);
+        for (var entry : groups.entrySet()) {
+            var g = entry.getValue();
+            var header = headers.get(entry.getKey());
+            String[] key = entry.getKey().split("::", 2);
+            var first = g.isEmpty() ? null : g.get(0);
             BigDecimal amount = sum(g, ContractLedger.Fact::amount),
                 received = sum(g, ContractLedger.Fact::received),
                 outstanding = sum(g, ContractLedger.Fact::outstanding),
@@ -56,23 +113,95 @@ public class ContractService {
                     ContractLedger.Fact::outstanding
                 );
             long confirmed = g.stream().filter(ContractLedger.Fact::confirmed).count();
+            BigDecimal signed = header == null ? null : ContractLedger.decimal(header.get("signed_amount"));
+            BigDecimal contractAmount = signed != null ? signed : amount;
+            BigDecimal invoice = value(invoiced, entry.getKey()),
+                actualCost = value(costs, entry.getKey());
+            // 预估成本：报价明细成本；有缺失时标记不完整
+            BigDecimal estimated = BigDecimal.ZERO;
+            boolean costComplete = !g.isEmpty();
+            for (var f : g)
+                for (var i : f.items()) {
+                    if (i.amount() == null) continue;
+                    if (i.cost() == null) costComplete = false;
+                    else estimated = estimated.add(i.cost());
+                }
+            BigDecimal cost = actualCost.signum() > 0 ? actualCost : costComplete ? estimated : null;
             var row = new LinkedHashMap<String, Object>();
-            row.put("customer_id", first.customerId());
-            row.put("customer_name", first.customerName());
-            row.put("contract_no", first.contractNo());
-            row.put("contract_key", first.contractKey());
+            row.put("id", header == null ? null : header.get("id"));
+            row.put("customer_id", key[0]);
+            row.put("customer_name", first != null ? first.customerName() : header.get("customer_name"));
+            String contractKey = key[1];
+            row.put("contract_no", contractKey.startsWith("#") ? null : contractKey);
+            row.put("contract_key", contractKey);
+            row.put("status", header == null ? "SIGNED" : header.get("status"));
+            row.put("recorded", header != null);
+            row.put("title", header == null ? null : header.get("title"));
+            row.put("content", header == null ? null : header.get("content"));
+            row.put("signed_on", header == null ? null : header.get("signed_on"));
+            row.put("company_id", header == null ? null : header.get("company_id"));
+            row.put(
+                "company_name",
+                header == null
+                    ? null
+                    : header.get("company_short") != null
+                        ? header.get("company_short")
+                        : header.get("company_name")
+            );
+            String ownerId =
+                header != null && header.get("owner_id") != null ? header.get("owner_id").toString() : commonOwner(g);
+            row.put("owner_id", ownerId);
+            row.put(
+                "owner_name",
+                header != null && header.get("owner_name") != null
+                    ? header.get("owner_name")
+                    : g
+                          .stream()
+                          .filter(f -> Objects.equals(f.ownerId(), ownerId))
+                          .map(ContractLedger.Fact::ownerName)
+                          .filter(Objects::nonNull)
+                          .findFirst()
+                          .orElse(null)
+            );
+            row.put("archived", header != null && Boolean.TRUE.equals(header.get("archived")));
+            row.put("pending_changes", header == null ? 0 : ((Number) header.get("pending_changes")).intValue());
             row.put("brands", g.stream().map(ContractLedger.Fact::brand).distinct().sorted().toList());
+            row.put(
+                "cities",
+                g.stream().map(ContractLedger.Fact::city).filter(Objects::nonNull).distinct().sorted().toList()
+            );
             row.put("projects", g.size());
             row.put("shipped", g.stream().filter(ContractLedger.Fact::shipped).count());
             row.put("confirmed_projects", confirmed);
-            row.put("confirmation", confirmed == 0 ? "PENDING" : confirmed == g.size() ? "CONFIRMED" : "PARTIAL");
-            row.put("amount", amount);
+            row.put(
+                "confirmation",
+                g.isEmpty() || confirmed == 0 ? "PENDING" : confirmed == g.size() ? "CONFIRMED" : "PARTIAL"
+            );
+            row.put("order_amount", amount);
+            row.put("signed_amount", signed);
+            row.put("amount", contractAmount);
+            row.put("amount_gap", signed == null ? null : signed.subtract(amount));
             row.put("confirmed_amount", confirmedAmount);
             row.put("received", received);
             row.put("outstanding", outstanding);
             row.put("overdue", overdue);
-            row.put("collection_rate", ratio(received, amount));
-            row.put("attachments", attachmentCounts.getOrDefault(first.customerId() + "::" + first.contractKey(), 0));
+            row.put("collection_rate", ratio(received, contractAmount));
+            row.put("invoiced", invoice);
+            row.put("uninvoiced", contractAmount.subtract(invoice));
+            row.put("invoiced_unreceived", invoice.subtract(received).max(BigDecimal.ZERO));
+            row.put(
+                "invoice_status",
+                invoice.signum() <= 0 ? "NONE" : invoice.compareTo(contractAmount) >= 0 ? "FULL" : "PARTIAL"
+            );
+            row.put("last_invoice_on", date(invoiced, entry.getKey()));
+            row.put("last_receipt_on", date(lastReceipt, entry.getKey()));
+            row.put("actual_cost", actualCost);
+            row.put("estimated_cost", costComplete ? estimated : null);
+            row.put("cost", cost);
+            row.put("cost_source", actualCost.signum() > 0 ? "ACTUAL" : costComplete ? "ESTIMATED" : "INCOMPLETE");
+            row.put("profit", cost == null ? null : contractAmount.subtract(cost));
+            row.put("gross_margin", cost == null ? null : ratio(contractAmount.subtract(cost), contractAmount));
+            row.put("attachments", attachmentCounts.getOrDefault(entry.getKey(), 0));
             row.put(
                 "order_date",
                 g
@@ -82,14 +211,28 @@ public class ContractService {
                     .min(Comparator.naturalOrder())
                     .orElse(null)
             );
+            var dueDate = g
+                .stream()
+                .map(ContractLedger.Fact::dueDate)
+                .filter(Objects::nonNull)
+                .min(Comparator.naturalOrder())
+                .orElse(null);
+            row.put("due_date", dueDate);
+            var overdueSince = g
+                .stream()
+                .filter(
+                    f ->
+                        f.confirmed() &&
+                        f.outstanding().signum() > 0 &&
+                        f.dueDate() != null &&
+                        f.dueDate().isBefore(today)
+                )
+                .map(ContractLedger.Fact::dueDate)
+                .min(Comparator.naturalOrder())
+                .orElse(null);
             row.put(
-                "due_date",
-                g
-                    .stream()
-                    .map(ContractLedger.Fact::dueDate)
-                    .filter(Objects::nonNull)
-                    .min(Comparator.naturalOrder())
-                    .orElse(null)
+                "overdue_days",
+                overdueSince == null ? 0 : java.time.temporal.ChronoUnit.DAYS.between(overdueSince, today)
             );
             row.put(
                 "items",
@@ -101,6 +244,8 @@ public class ContractService {
                         x.put("project_code", f.projectCode());
                         x.put("project_name", f.projectName());
                         x.put("brand", f.brand());
+                        x.put("city", f.city());
+                        x.put("owner_name", f.ownerName());
                         x.put("quote_id", f.quoteId());
                         x.put("quote_code", f.quoteCode());
                         x.put("status", f.quoteStatus());
@@ -117,11 +262,51 @@ public class ContractService {
             out.add(row);
         }
         out.sort(
-            Comparator.comparing((Map<String, Object> r) -> Objects.toString(r.get("order_date"), "0000"))
+            Comparator.comparing((Map<String, Object> r) ->
+                Objects.toString(r.get("signed_on") != null ? r.get("signed_on") : r.get("order_date"), "0000")
+            )
                 .reversed()
                 .thenComparing(r -> r.get("contract_key").toString())
         );
         return out;
+    }
+
+    /** 单份合同的台账行（含权限检查）。 */
+    public Map<String, Object> contract(String customerId, String contractKey) {
+        ownership.checkContract(customerId, contractKey);
+        return contracts()
+            .stream()
+            .filter(r -> r.get("customer_id").equals(customerId) && r.get("contract_key").equals(contractKey))
+            .findFirst()
+            .orElseThrow(() -> new ApiException("未找到该合同"));
+    }
+
+    /** 门店负责人一致时作为合同负责人。 */
+    private static String commonOwner(List<ContractLedger.Fact> g) {
+        var owners = g.stream().map(ContractLedger.Fact::ownerId).distinct().toList();
+        return owners.size() == 1 ? owners.get(0) : null;
+    }
+
+    private record Sum(BigDecimal value, Object date) {}
+
+    private Map<String, Sum> sums(String sql) {
+        var out = new HashMap<String, Sum>();
+        for (var r : db.jdbc.queryForList(sql))
+            out.put(
+                r.get("customer_id") + "::" + r.get("contract_no"),
+                new Sum(ContractLedger.decimal(r.get("v")), r.get("d"))
+            );
+        return out;
+    }
+
+    private static BigDecimal value(Map<String, Sum> sums, String key) {
+        var s = sums.get(key);
+        return s == null || s.value() == null ? BigDecimal.ZERO : s.value();
+    }
+
+    private static Object date(Map<String, Sum> sums, String key) {
+        var s = sums.get(key);
+        return s == null ? null : s.date();
     }
 
     public record ConfirmInput(@NotBlank String customerId, @NotBlank String contractKey, @NotNull LocalDate dueDate) {}
@@ -129,6 +314,7 @@ public class ContractService {
     @PreAuthorize("hasAnyRole('ADMIN','SALES','FINANCE')")
     @Transactional
     public Map<String, Object> confirm(@Valid ConfirmInput input) {
+        ownership.checkContract(input.customerId(), input.contractKey());
         var group = group(input.customerId(), input.contractKey());
         int count = 0;
         for (var f : group) {
@@ -262,7 +448,7 @@ public class ContractService {
     }
 
     public List<Map<String, Object>> receipts() {
-        return db.jdbc.queryForList(
+        var rows = db.jdbc.queryForList(
             """
             SELECT r.*,c.name AS customer_name,
               (SELECT COUNT(*) FROM cash_entry e WHERE e.contract_receipt_id=r.id) AS allocations,
@@ -271,6 +457,18 @@ public class ContractService {
             ORDER BY r.paid_on DESC,r.created_at DESC
             """
         );
+        return visibleOnly(rows);
+    }
+
+    /** 商务只保留自己可见合同的记录（按 customer_id + contract_no）。 */
+    public List<Map<String, Object>> visibleOnly(List<Map<String, Object>> rows) {
+        if (!ownership.restricted()) return rows;
+        var keys = new HashSet<String>();
+        for (var c : contracts()) keys.add(c.get("customer_id") + "::" + c.get("contract_key"));
+        return rows
+            .stream()
+            .filter(r -> keys.contains(r.get("customer_id") + "::" + r.get("contract_no")))
+            .toList();
     }
 
     /**

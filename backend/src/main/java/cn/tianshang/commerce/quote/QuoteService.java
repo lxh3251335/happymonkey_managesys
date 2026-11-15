@@ -22,22 +22,39 @@ public class QuoteService {
     private final QuoteTemplateService templates;
     private final ObjectMapper json;
     private final MasterService masters;
+    private final Ownership ownership;
+    private final cn.tianshang.commerce.dictionary.DictionaryService dictionary;
 
-    public QuoteService(Database db, QuoteTemplateService templates, ObjectMapper json, @Lazy MasterService masters) {
+    public QuoteService(
+        Database db,
+        QuoteTemplateService templates,
+        ObjectMapper json,
+        @Lazy MasterService masters,
+        Ownership ownership,
+        cn.tianshang.commerce.dictionary.DictionaryService dictionary
+    ) {
         this.db = db;
         this.templates = templates;
         this.json = json;
         this.masters = masters;
+        this.ownership = ownership;
+        this.dictionary = dictionary;
     }
 
+    /** 报价列表；商务只看到自己负责门店的报价。 */
     public List<Map<String, Object>> list() {
-        var rows = db.jdbc.queryForList(
-            """
-            SELECT q.*,p.name AS project_name,p.brand,c.name AS customer_name
+        String sql = """
+            SELECT q.*,p.name AS project_name,p.brand,p.owner_id,p.contract_no,c.name AS customer_name,
+              u.display_name AS owner_name,k.name AS company_name
             FROM quotation q JOIN project p ON p.id=q.project_id JOIN partner c ON c.id=p.customer_id
-            ORDER BY q.created_at DESC,q.code
-            """
-        );
+            LEFT JOIN app_user u ON u.id=p.owner_id LEFT JOIN company k ON k.id=q.company_id
+            """;
+        var rows = ownership.restricted()
+            ? db.jdbc.queryForList(
+                  sql + " WHERE p.owner_id=? ORDER BY q.created_at DESC,q.code",
+                  Objects.toString(ownership.userId(), "-")
+              )
+            : db.jdbc.queryForList(sql + " ORDER BY q.created_at DESC,q.code");
         var grouped = new HashMap<String, List<Map<String, Object>>>();
         for (var i : db.jdbc.queryForList("SELECT quotation_id,amount,cost FROM quotation_item"))
             grouped.computeIfAbsent(i.get("quotation_id").toString(), k -> new ArrayList<>()).add(i);
@@ -46,14 +63,17 @@ public class QuoteService {
     }
 
     public Map<String, Object> detail(String id) {
+        ownership.checkQuote(id);
         var q = db.one(
             """
             SELECT q.*,p.name AS project_name,p.brand,p.code AS project_code,p.external_id,
             p.city,p.contract_no,c.name AS customer_name,c.contact AS customer_contact,c.phone AS customer_phone,
             c.invoice_title AS customer_invoice_title,c.tax_no AS customer_tax_no,c.address AS customer_address,
             c.invoice_phone AS customer_invoice_phone,c.bank_name AS customer_bank_name,c.bank_account AS customer_bank_account,
-            t.name AS template_name,s.name AS supplier_name,pt.name AS project_type_name
-            FROM quotation q JOIN project p ON p.id=q.project_id
+            t.name AS template_name,s.name AS supplier_name,pt.name AS project_type_name,
+            p.owner_id,u.display_name AS owner_name,k.name AS company_name
+            FROM quotation q JOIN project p ON p.id=q.project_id LEFT JOIN app_user u ON u.id=p.owner_id
+            LEFT JOIN company k ON k.id=q.company_id
             JOIN partner c ON c.id=p.customer_id LEFT JOIN quote_template t ON t.id=q.template_id
             LEFT JOIN partner s ON s.id=q.supplier_id LEFT JOIN project_type pt ON pt.id=q.project_type_id WHERE q.id=?
             """,
@@ -95,6 +115,9 @@ public class QuoteService {
             if (projectTypeId == null) projectTypeId = n.projectTypeId();
         }
         var project = db.one("SELECT * FROM project WHERE id=? FOR UPDATE", projectId);
+        ownership.checkProject(projectId);
+        // 只有明确选择签约主体时才覆盖报价模板的公司抬头
+        String companyId = blank(input.companyId()) == null ? null : dictionary.company(input.companyId(), null);
         if (projectTypeId == null && project.get("project_type_id") != null) projectTypeId = project
             .get("project_type_id")
             .toString();
@@ -115,7 +138,7 @@ public class QuoteService {
         String id = db.id(),
             code = "BJ-" + LocalDate.now().getYear() + "-" + id.substring(0, 8).toUpperCase();
         db.jdbc.update(
-            "INSERT INTO quotation(id,code,project_id,version,status,tax_basis,tax_rate,valid_until,note,template_id,supplier_id,project_type_id) VALUES(?,?,?,?,'DRAFT',?,?,?,?,?,?,?)",
+            "INSERT INTO quotation(id,code,project_id,version,status,tax_basis,tax_rate,valid_until,note,template_id,supplier_id,project_type_id,company_id) VALUES(?,?,?,?,'DRAFT',?,?,?,?,?,?,?,?)",
             id,
             code,
             projectId,
@@ -126,7 +149,8 @@ public class QuoteService {
             input.note(),
             templateId,
             supplierId,
-            projectTypeId
+            projectTypeId,
+            companyId
         );
         int pos = 0;
         for (var line : input.items()) {
@@ -160,6 +184,7 @@ public class QuoteService {
 
     @Transactional
     public void transition(String id, String action, LocalDate dueDate) {
+        ownership.checkQuote(id);
         var quote = db.one("SELECT * FROM quotation WHERE id=? FOR UPDATE", id);
         String status = quote.get("status").toString();
         if (action.equals("issue")) {
@@ -168,7 +193,12 @@ public class QuoteService {
             // 出具时固定模板内容：之后修改模板不改变已出具的对客报价单
             db.jdbc.update(
                 "UPDATE quotation SET status='ISSUED',template_snapshot=? WHERE id=?",
-                snapshot(templates.printable((String) quote.get("template_id"))),
+                snapshot(
+                    withCompany(
+                        templates.printable((String) quote.get("template_id")),
+                        (String) quote.get("company_id")
+                    )
+                ),
                 id
             );
         } else if (action.equals("accept")) {
@@ -253,7 +283,19 @@ public class QuoteService {
                 throw new IllegalStateException("报价模板快照损坏：" + quote.get("id"), e);
             }
         }
-        return templates.printable((String) quote.get("template_id"));
+        return withCompany(templates.printable((String) quote.get("template_id")), (String) quote.get("company_id"));
+    }
+
+    /** 报价选择了签约主体时，抬头、税号、地址电话、收款账户使用签约主体的资料。 */
+    private Map<String, Object> withCompany(Map<String, Object> template, String companyId) {
+        var company = dictionary.companyRow(companyId);
+        if (template == null || company == null) return template;
+        var out = new LinkedHashMap<>(template);
+        out.put("company_name", company.get("name"));
+        for (String k : List.of("tax_no", "address", "phone", "bank_name", "bank_account"))
+            if (company.get(k) != null) out.put(k, company.get(k));
+        out.put("legal_rep", company.get("legal_rep"));
+        return out;
     }
 
     private String snapshot(Map<String, Object> template) {

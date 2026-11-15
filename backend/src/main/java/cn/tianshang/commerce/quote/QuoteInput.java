@@ -20,6 +20,7 @@ public record QuoteInput(
     @Size(max = 36) String templateId,
     @Size(max = 36) String supplierId,
     @Size(max = 36) String projectTypeId,
+    @Size(max = 36) String companyId,
     @NotEmpty @Size(max = 200) List<@Valid Line> items
 ) {
     public record NewProject(

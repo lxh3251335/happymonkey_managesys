@@ -14,10 +14,99 @@ public class ContractController {
 
     private final ContractService service;
     private final ContractAttachmentService attachments;
+    private final ContractRecordService records;
+    private final ContractExecutionService execution;
 
-    public ContractController(ContractService service, ContractAttachmentService attachments) {
+    public ContractController(
+        ContractService service,
+        ContractAttachmentService attachments,
+        ContractRecordService records,
+        ContractExecutionService execution
+    ) {
         this.service = service;
         this.attachments = attachments;
+        this.records = records;
+        this.execution = execution;
+    }
+
+    @GetMapping("/detail")
+    public Map<String, Object> detail(@RequestParam String customerId, @RequestParam String contractKey) {
+        return records.detail(customerId, contractKey);
+    }
+
+    @PostMapping
+    public Map<String, Object> create(@Valid @RequestBody ContractRecordService.CreateInput input) {
+        return records.create(input);
+    }
+
+    @PostMapping("/from-quote/{quoteId}")
+    public Map<String, Object> fromQuote(
+        @PathVariable String quoteId,
+        @Valid @RequestBody ContractRecordService.FromQuoteInput input
+    ) {
+        return records.fromQuote(quoteId, input);
+    }
+
+    @PutMapping("/info")
+    public Map<String, Object> update(
+        @RequestParam String customerId,
+        @RequestParam String contractKey,
+        @Valid @RequestBody ContractRecordService.UpdateInput input
+    ) {
+        return records.update(customerId, contractKey, input);
+    }
+
+    @GetMapping("/changes/pending")
+    public List<Map<String, Object>> pendingChanges() {
+        return records.pendingChanges();
+    }
+
+    @PostMapping("/changes/{id}/approve")
+    public void approve(@PathVariable String id, @Valid @RequestBody ContractRecordService.ReviewInput input) {
+        records.approve(id, input);
+    }
+
+    @PostMapping("/changes/{id}/reject")
+    public void reject(@PathVariable String id, @Valid @RequestBody ContractRecordService.ReviewInput input) {
+        records.reject(id, input);
+    }
+
+    @PostMapping("/changes/{id}/withdraw")
+    public void withdraw(@PathVariable String id) {
+        records.withdraw(id);
+    }
+
+    @GetMapping("/invoices")
+    public List<Map<String, Object>> invoices(
+        @RequestParam(required = false) String customerId,
+        @RequestParam(required = false) String contractKey
+    ) {
+        return execution.invoices(customerId, contractKey);
+    }
+
+    @PostMapping("/invoices")
+    public Map<String, Object> invoice(@Valid @RequestBody ContractExecutionService.InvoiceInput input) {
+        return execution.invoice(input);
+    }
+
+    @PostMapping("/invoices/{id}/delete")
+    public void deleteInvoice(@PathVariable String id, @Valid @RequestBody ContractExecutionService.DeleteInput input) {
+        execution.deleteInvoice(id, input);
+    }
+
+    @GetMapping("/costs")
+    public List<Map<String, Object>> costs(@RequestParam String customerId, @RequestParam String contractKey) {
+        return execution.costs(customerId, contractKey);
+    }
+
+    @PostMapping("/costs")
+    public Map<String, Object> cost(@Valid @RequestBody ContractExecutionService.CostInput input) {
+        return execution.cost(input);
+    }
+
+    @PostMapping("/costs/{id}/delete")
+    public void deleteCost(@PathVariable String id, @Valid @RequestBody ContractExecutionService.DeleteInput input) {
+        execution.deleteCost(id, input);
     }
 
     @GetMapping

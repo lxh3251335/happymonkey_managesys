@@ -3,6 +3,8 @@ import { ref, computed, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Plus, Delete } from '@element-plus/icons-vue'
 import { api, post } from '../api'
+import CitySelect from './CitySelect.vue'
+import { activeCompanies, companyLabel, defaultCompany, loadDictionaries } from '../dictionaries'
 import type {
   Partner,
   PrefillLine,
@@ -52,6 +54,7 @@ const form = ref({
   validUntil: afterDays(30),
   note: '',
   templateId: '',
+  companyId: '',
 })
 const lines = ref<LineDraft[]>([]),
   busy = ref(false),
@@ -63,11 +66,6 @@ const lines = ref<LineDraft[]>([]),
   prefillNote = ref('')
 
 const customers = computed(() => partners.value.filter((p) => p.kind === 'CUSTOMER'))
-const cities = computed(() =>
-  [...new Set(props.projects.map((p) => p.city).filter((c): c is string => !!c))].sort((a, b) =>
-    a.localeCompare(b, 'zh-CN'),
-  ),
-)
 const activeTypes = computed(() => types.value.filter((t) => t.active))
 /** 当前项目类型下有成本模板的供应商。 */
 const suppliers = computed(() =>
@@ -93,7 +91,7 @@ watch(
   async (open) => {
     if (!open) return
     try {
-      await loadOptions()
+      await Promise.all([loadOptions(), loadDictionaries()])
     } catch (e) {
       ElMessage.error((e as Error).message)
     }
@@ -110,6 +108,7 @@ watch(
       validUntil: afterDays(30),
       note: props.seed?.note || '',
       templateId: templates.value.find((t) => t.is_default)?.id || '',
+      companyId: props.seed?.company_id || defaultCompany.value?.id || '',
     }
     prefillNote.value = ''
     lines.value = props.seed
@@ -238,6 +237,7 @@ async function save() {
       validUntil: form.value.validUntil,
       note: form.value.note,
       templateId: form.value.templateId || null,
+      companyId: form.value.companyId || null,
       items: lines.value.map((l) => ({
         productId: l.productId,
         quantity: l.quantity,
@@ -282,16 +282,7 @@ async function save() {
           </el-select>
         </el-form-item>
         <el-form-item label="城市">
-          <el-select
-            v-model="store.city"
-            filterable
-            allow-create
-            clearable
-            default-first-option
-            placeholder="选择或输入城市"
-          >
-            <el-option v-for="c in cities" :key="c" :value="c" :label="c" />
-          </el-select>
+          <CitySelect v-model="store.city" placeholder="留空按门店名称识别" />
         </el-form-item>
         <el-form-item label="项目类型" required>
           <el-select v-model="form.projectTypeId" placeholder="如：小象前置仓" @change="onTypeChange">
@@ -376,6 +367,16 @@ async function save() {
               :key="t.id"
               :value="t.id"
               :label="`${t.name}${t.is_default ? '（默认）' : ''}`"
+            />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="我方签约主体">
+          <el-select v-model="form.companyId" placeholder="默认签约主体">
+            <el-option
+              v-for="c in activeCompanies"
+              :key="c.id"
+              :value="c.id"
+              :label="`${companyLabel(c)}${c.is_default ? '（默认）' : ''}`"
             />
           </el-select>
         </el-form-item>

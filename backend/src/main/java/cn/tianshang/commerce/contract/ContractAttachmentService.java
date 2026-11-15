@@ -38,14 +38,17 @@ public class ContractAttachmentService {
     private final Database db;
     private final ContractLedger ledger;
     private final FileStore store;
+    private final Ownership ownership;
 
-    public ContractAttachmentService(Database db, ContractLedger ledger, FileStore store) {
+    public ContractAttachmentService(Database db, ContractLedger ledger, FileStore store, Ownership ownership) {
         this.db = db;
         this.ledger = ledger;
         this.store = store;
+        this.ownership = ownership;
     }
 
     public List<Map<String, Object>> list(String customerId, String contractKey) {
+        ownership.checkContract(customerId, contractKey);
         return db.jdbc.queryForList(
             """
             SELECT id,customer_id,contract_no,category,file_name,extension,size_bytes,sha256,note,uploaded_by,created_at
@@ -76,11 +79,20 @@ public class ContractAttachmentService {
         MultipartFile file
     ) {
         if (customerId == null || contractKey == null) throw new ApiException("请指定合同");
-        boolean exists = ledger
-            .contracted()
-            .stream()
-            .anyMatch(f -> f.customerId().equals(customerId) && f.contractKey().equals(contractKey));
-        if (!exists) throw new ApiException("未找到该合同的门店订单");
+        ownership.checkContract(customerId, contractKey);
+        boolean exists =
+            ledger
+                .contracted()
+                .stream()
+                .anyMatch(f -> f.customerId().equals(customerId) && f.contractKey().equals(contractKey)) ||
+            db.jdbc.queryForObject(
+                "SELECT COUNT(*) FROM contract WHERE customer_id=? AND contract_no=?",
+                Integer.class,
+                customerId,
+                contractKey
+            ) >
+            0;
+        if (!exists) throw new ApiException("未找到该合同");
         if (category == null || !CATEGORIES.containsKey(category)) throw new ApiException("附件类别不正确");
         if (note != null && note.length() > 500) throw new ApiException("备注不能超过 500 字");
         String id = db.id();
@@ -137,6 +149,7 @@ public class ContractAttachmentService {
 
     public Stored file(String id) {
         var row = db.one("SELECT * FROM contract_attachment WHERE id=? AND deleted_at IS NULL", id);
+        ownership.checkContract(row.get("customer_id").toString(), row.get("contract_no").toString());
         Path path = store.existing(row.get("storage_path").toString());
         db.audit("ATTACHMENT_DOWNLOADED", id, db.text(row, "file_name"));
         return new Stored(
@@ -151,6 +164,7 @@ public class ContractAttachmentService {
     @Transactional
     public void delete(String id) {
         var row = db.one("SELECT * FROM contract_attachment WHERE id=? AND deleted_at IS NULL FOR UPDATE", id);
+        ownership.checkContract(row.get("customer_id").toString(), row.get("contract_no").toString());
         String actor = actor();
         boolean admin = SecurityContextHolder.getContext()
             .getAuthentication()

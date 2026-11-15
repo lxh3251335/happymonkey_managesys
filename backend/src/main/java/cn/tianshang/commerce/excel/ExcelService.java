@@ -31,7 +31,9 @@ public class ExcelService {
         SUPPLIERS("suppliers", "供应商资料"),
         PRODUCTS("products", "标准产品库"),
         PROJECT_TYPES("project-types", "项目类型"),
-        SUPPLIER_TEMPLATES("supplier-templates", "供应商成本模板");
+        SUPPLIER_TEMPLATES("supplier-templates", "供应商成本模板"),
+        CONTRACTS("contracts", "合同台账"),
+        CONTRACT_INVOICES("contract-invoices", "开票记录");
 
         public final String path;
         public final String title;
@@ -52,7 +54,7 @@ public class ExcelService {
     public record Report(String dataset, int created, int updated, int unchanged, int errors, List<Result> results) {}
 
     /** 一行（或一组行）的计划：预览结果 + 确认后的写入动作。 */
-    private record Op(Result result, Runnable apply) {}
+    record Op(Result result, Runnable apply) {}
 
     static final String CREATE = "CREATE",
         UPDATE = "UPDATE",
@@ -66,19 +68,25 @@ public class ExcelService {
     private final CatalogService catalog;
     private final Validator validator;
     private final cn.tianshang.commerce.business.BusinessService business;
+    private final cn.tianshang.commerce.dictionary.DictionaryService dictionary;
+    private final ContractExcel contractExcel;
 
     public ExcelService(
         Database db,
         MasterService masters,
         CatalogService catalog,
         Validator validator,
-        cn.tianshang.commerce.business.BusinessService business
+        cn.tianshang.commerce.business.BusinessService business,
+        cn.tianshang.commerce.dictionary.DictionaryService dictionary,
+        ContractExcel contractExcel
     ) {
         this.db = db;
         this.masters = masters;
         this.catalog = catalog;
         this.validator = validator;
         this.business = business;
+        this.dictionary = dictionary;
+        this.contractExcel = contractExcel;
     }
 
     /** 业务线下拉选项：启用的业务线 + “未指定”。 */
@@ -92,6 +100,8 @@ public class ExcelService {
 
     List<Column> columns(Dataset d) {
         return switch (d) {
+            case CONTRACTS -> contractExcel.contractColumns();
+            case CONTRACT_INVOICES -> contractExcel.invoiceColumns();
             case CUSTOMERS, SUPPLIERS -> List.of(
                 Column.of("id", "系统编号", 38).note(ID_NOTE),
                 Column.of("name", "名称", 28).required().note("同类资料中名称不能重复"),
@@ -108,7 +118,10 @@ public class ExcelService {
             );
             case PRODUCTS -> List.of(
                 Column.of("id", "系统编号", 38).note(ID_NOTE),
-                Column.of("scenario", "应用场景", 14).required().note("如：小象前置仓、快乐猴、冷库"),
+                Column.of("scenario", "应用场景", 14)
+                    .required()
+                    .note("在系统管理 → 数据字典 → 应用场景中维护")
+                    .options(dictionary.activeScenarioNames().toArray(String[]::new)),
                 Column.of("name", "产品名称", 24).required(),
                 Column.of("specification", "规格", 18).note("软件、服务类可留空"),
                 Column.of("model", "型号", 14).note("应用场景 + 名称 + 规格 + 型号 不能重复"),
@@ -158,19 +171,38 @@ public class ExcelService {
 
     public byte[] export(Dataset d, boolean template) {
         List<Map<String, Object>> rows = template ? List.of() : exportRows(d);
-        var notes = List.of(
-            d.title + " 导入说明",
-            "1. 第一张表为数据表，第一行是表头；列名带 * 的为必填。可删除不需要更新的列，缺少的列保持原值。",
-            "2. 有“系统编号”的行按编号更新；没有编号的按名称匹配，匹配不到则新增。",
-            "3. 导入前系统会逐行预览新增 / 更新 / 错误；有任何错误时整批不写入。",
-            "4. 税号、银行账号等长数字请保持文本格式，避免 Excel 改成科学计数法。"
-        );
+        var notes =
+            d == Dataset.CONTRACTS
+                ? List.of(
+                      "合同台账 导入说明",
+                      "1. 按“客户 + 合同号”匹配：已有合同更新合同要素，没有的新建合同（合同号以 # 开头的是未填合同号的单店订单）。",
+                      "2. 门店数、订单金额、开票、到款、成本、毛利等统计列只导出、不导入；开票请用“开票记录”导入，到款在系统中登记。",
+                      "3. 导入由管理员执行，每份合同的修改都会记入合同变更记录（原因：Excel 批量导入）。",
+                      "4. 删除不需要更新的列即可保持原值；有任何错误时整批不写入。"
+                  )
+                : d == Dataset.CONTRACT_INVOICES
+                    ? List.of(
+                          "开票记录 导入说明",
+                          "1. 每行一张发票；按发票号码匹配，已登记的发票跳过，不能通过导入修改。",
+                          "2. 红字发票填写“原发票号码”，金额填正数；同一批次内可先蓝字后红字。",
+                          "3. 开票合计不能超过合同金额；有任何错误时整批不写入。",
+                          "4. 发票号码请保持文本格式，避免 Excel 改成科学计数法。"
+                      )
+                    : List.of(
+                          d.title + " 导入说明",
+                          "1. 第一张表为数据表，第一行是表头；列名带 * 的为必填。可删除不需要更新的列，缺少的列保持原值。",
+                          "2. 有“系统编号”的行按编号更新；没有编号的按名称匹配，匹配不到则新增。",
+                          "3. 导入前系统会逐行预览新增 / 更新 / 错误；有任何错误时整批不写入。",
+                          "4. 税号、银行账号等长数字请保持文本格式，避免 Excel 改成科学计数法。"
+                      );
         db.audit("EXCEL_EXPORT", d.path, d.title + (template ? " 模板" : " " + rows.size() + " 行"));
         return ExcelIo.write(d.title, columns(d), rows, notes);
     }
 
     private List<Map<String, Object>> exportRows(Dataset d) {
         return switch (d) {
+            case CONTRACTS -> contractExcel.contractRows();
+            case CONTRACT_INVOICES -> contractExcel.invoiceRows();
             case CUSTOMERS, SUPPLIERS -> {
                 String kind = d == Dataset.CUSTOMERS ? "CUSTOMER" : "SUPPLIER";
                 var out = new ArrayList<Map<String, Object>>();
@@ -301,10 +333,11 @@ public class ExcelService {
             .stream()
             .map(a -> a.getAuthority())
             .collect(Collectors.toSet());
-        var allowed =
-            d == Dataset.SUPPLIER_TEMPLATES
-                ? List.of("ROLE_ADMIN", "ROLE_FINANCE")
-                : List.of("ROLE_ADMIN", "ROLE_SALES");
+        var allowed = switch (d) {
+            case SUPPLIER_TEMPLATES, CONTRACT_INVOICES -> List.of("ROLE_ADMIN", "ROLE_FINANCE");
+            case CONTRACTS -> List.of("ROLE_ADMIN");
+            default -> List.of("ROLE_ADMIN", "ROLE_SALES");
+        };
         if (allowed.stream().noneMatch(roles::contains)) throw new AccessDeniedException("当前角色不能导入" + d.title);
     }
 
@@ -316,6 +349,8 @@ public class ExcelService {
             case PRODUCTS -> planProducts(sheet);
             case PROJECT_TYPES -> planTypes(sheet);
             case SUPPLIER_TEMPLATES -> planSupplierTemplates(sheet);
+            case CONTRACTS -> contractExcel.planContracts(sheet);
+            case CONTRACT_INVOICES -> contractExcel.planInvoices(sheet);
         };
     }
 
@@ -453,6 +488,11 @@ public class ExcelService {
                 if (current == null) errors.add("系统编号不存在");
             } else current = byKey.get(key);
             if (scenario.isEmpty()) errors.add("应用场景必填");
+            else try {
+                dictionary.scenario(scenario, current == null ? null : db.text(current, "scenario"));
+            } catch (ApiException e) {
+                errors.add(e.getMessage());
+            }
             if (name.isEmpty()) errors.add("产品名称必填");
             if (seen.put(key, row.number()) != null) errors.add(
                 "与第 " + seen.get(key) + " 行重复（应用场景 + 名称 + 规格 + 型号）"

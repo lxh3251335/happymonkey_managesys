@@ -23,7 +23,7 @@ const menu = [
   { path: '/projects', name: '项目台账', icon: FolderOpened },
   { path: '/quotes', name: '客户报价', icon: Document },
   { path: '/offers', name: '供应商比价', icon: Connection },
-  { path: '/cash', name: '回款与应收', icon: Wallet },
+  { path: '/cash', name: '合同台账', icon: Wallet },
   { path: '/masters', name: '基础资料', icon: Grid },
   { path: '/settings', name: '系统管理', icon: Setting },
 ]

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Search } from '@element-plus/icons-vue'
 import PageHeader from '../components/PageHeader.vue'
@@ -8,10 +8,12 @@ import StatusTag from '../components/StatusTag.vue'
 import QuoteEditor from '../components/QuoteEditor.vue'
 import QuoteDetail from '../components/QuoteDetail.vue'
 import CostCorrection from '../components/CostCorrection.vue'
-import { api, post, canWrite, canFinance } from '../api'
+import { api, post, canWrite, canFinance, session } from '../api'
+import { activeCompanies, companyLabel, defaultCompany, loadDictionaries } from '../dictionaries'
 import type { Quote, Product, Project } from '../types'
 import { money, percent, statusName, afterDays } from '../utils'
 const route = useRoute(),
+  router = useRouter(),
   rows = ref<Quote[]>([]),
   projects = ref<Project[]>([]),
   products = ref<Product[]>([]),
@@ -27,7 +29,46 @@ const route = useRoute(),
   accepting = ref(false),
   dueDate = ref(afterDays(30)),
   busy = ref(false),
-  fixing = ref(false)
+  fixing = ref(false),
+  contractForm = ref({ contractNo: '', companyId: '', signedOn: '', paymentTerms: '' })
+const showOwner = computed(() => session.user?.role !== 'SALES')
+/** 客户确认后生成正式合同：确认应收、门店写入合同号、建立合同记录。 */
+function openContract() {
+  const q = detail.value
+  if (!q) return
+  contractForm.value = {
+    contractNo: q.contract_no || '',
+    companyId: q.company_id || defaultCompany.value?.id || '',
+    signedOn: '',
+    paymentTerms: '',
+  }
+  dueDate.value = afterDays(30)
+  loadDictionaries().catch(() => {})
+  accepting.value = true
+}
+async function makeContract() {
+  const q = detail.value
+  if (!q) return
+  if (q.status !== 'ACCEPTED' && !dueDate.value) return ElMessage.warning('请填写应收截止日期')
+  busy.value = true
+  try {
+    const r = await post<{ customerId: string; contractKey: string }>(`/contracts/from-quote/${q.id}`, {
+      contractNo: contractForm.value.contractNo || null,
+      companyId: contractForm.value.companyId || null,
+      signedOn: contractForm.value.signedOn || null,
+      dueDate: q.status === 'ACCEPTED' ? null : dueDate.value,
+      paymentTerms: contractForm.value.paymentTerms || null,
+    })
+    accepting.value = false
+    detailOpen.value = false
+    ElMessage.success(`合同 ${r.contractKey} 已生成`)
+    router.push({ path: '/cash', query: { tab: 'contracts', customer: r.customerId, contract: r.contractKey } })
+  } catch (e) {
+    ElMessage.error((e as Error).message)
+  } finally {
+    busy.value = false
+  }
+}
 const projectId = computed(() => String(route.query.project || ''))
 const filtered = computed(() =>
   rows.value.filter(
@@ -152,6 +193,11 @@ onMounted(async () => {
       <el-table :data="filtered.slice((page - 1) * 12, page * 12)">
         <el-table-column label="项目 / 门店" prop="project_name" min-width="260" show-overflow-tooltip />
         <el-table-column label="客户" prop="customer_name" min-width="115" />
+        <el-table-column v-if="showOwner" label="负责人" width="90">
+          <template #default="{ row }">
+            <span :class="row.owner_name ? '' : 'muted'">{{ row.owner_name || '未分配' }}</span>
+          </template>
+        </el-table-column>
         <el-table-column label="版本" width="70">
           <template #default="{ row }">V{{ row.version }}</template>
         </el-table-column>
@@ -212,23 +258,66 @@ onMounted(async () => {
         <el-button
           v-if="canWrite() && ['ISSUED', 'HISTORICAL'].includes(detail?.status || '')"
           type="primary"
-          @click="accepting = true"
+          @click="openContract"
         >
-          确认订单与应收
+          客户确认 · 生成合同
+        </el-button>
+        <el-button
+          v-if="canWrite() && detail?.status === 'ACCEPTED' && !detail?.contract_no"
+          type="primary"
+          @click="openContract"
+        >
+          生成合同
         </el-button>
       </template>
     </el-dialog>
     <CostCorrection v-model="fixing" :quote="detail" @saved="detail && saved(detail.id)" />
-    <el-dialog v-model="accepting" title="确认客户订单" width="480px">
-      <p>确认后，该版本金额将建立应收。每个项目只允许一份已确认订单，请核实客户确认凭据及金额。</p>
+    <el-dialog v-model="accepting" title="客户确认 · 生成正式合同" width="560px">
+      <p class="dialog-lead" v-if="detail">
+        {{ detail.project_name }} ·
+        {{ money(detail.amount) }}。确认后该版本金额建立应收，门店写入合同号并在合同台账中建立合同。
+      </p>
       <el-form label-position="top">
-        <el-form-item label="应收截止日期" required>
-          <el-date-picker v-model="dueDate" type="date" value-format="YYYY-MM-DD" />
+        <div class="form-grid">
+          <el-form-item label="合同号">
+            <el-input
+              v-model="contractForm.contractNo"
+              maxlength="100"
+              :disabled="!!detail?.contract_no"
+              placeholder="留空自动编号，如 HT20261115-01"
+            />
+          </el-form-item>
+          <el-form-item label="我方签约主体">
+            <el-select v-model="contractForm.companyId">
+              <el-option v-for="c in activeCompanies" :key="c.id" :value="c.id" :label="companyLabel(c)" />
+            </el-select>
+          </el-form-item>
+          <el-form-item v-if="detail?.status !== 'ACCEPTED'" label="应收截止日期" required>
+            <el-date-picker v-model="dueDate" type="date" value-format="YYYY-MM-DD" />
+          </el-form-item>
+          <el-form-item label="签订日期">
+            <el-date-picker
+              v-model="contractForm.signedOn"
+              type="date"
+              value-format="YYYY-MM-DD"
+              placeholder="未签订先留空"
+            />
+          </el-form-item>
+        </div>
+        <el-form-item label="付款条款">
+          <el-input
+            v-model="contractForm.paymentTerms"
+            maxlength="1000"
+            placeholder="如：发货前预付 30%，验收后 30 日内付清"
+          />
         </el-form-item>
       </el-form>
+      <div class="inline-note">
+        填了签订日期即为“已签订”，否则为“拟定中”（可继续修改，签订时补填日期）。已签订合同的任何修改都需管理员批准，并保留完整修改记录。
+      </div>
       <template #footer>
         <el-button @click="accepting = false">取消</el-button>
-        <el-button type="primary" :loading="busy" @click="transition('accept')">确认并建立应收</el-button>
+        <el-button type="primary" :loading="busy" @click="makeContract">生成合同</el-button>
       </template>
     </el-dialog>
   </div>

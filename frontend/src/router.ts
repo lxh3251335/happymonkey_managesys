@@ -19,7 +19,7 @@ export const router = createRouter({
         { path: 'projects', component: () => import('./views/ProjectsView.vue'), meta: { title: '项目台账' } },
         { path: 'quotes', component: () => import('./views/QuotesView.vue'), meta: { title: '客户报价' } },
         { path: 'offers', component: () => import('./views/OffersView.vue'), meta: { title: '供应商比价' } },
-        { path: 'cash', component: () => import('./views/CashView.vue'), meta: { title: '回款与应收' } },
+        { path: 'cash', component: () => import('./views/CashView.vue'), meta: { title: '合同台账' } },
         { path: 'masters', component: () => import('./views/MastersView.vue'), meta: { title: '基础资料' } },
         { path: 'settings', component: () => import('./views/SettingsView.vue'), meta: { title: '系统管理' } },
       ],

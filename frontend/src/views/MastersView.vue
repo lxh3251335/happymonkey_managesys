@@ -8,6 +8,7 @@ import SupplierTemplateManager from '../components/SupplierTemplateManager.vue'
 import ProductDrawings from '../components/ProductDrawings.vue'
 import ExcelTools from '../components/ExcelTools.vue'
 import { api, post, put, canWrite, canFinance } from '../api'
+import { dict, loadDictionaries } from '../dictionaries'
 import type { Partner, Product } from '../types'
 import { money, missingInvoiceFields, invoiceText, invoiceTypeName } from '../utils'
 const partners = ref<Partner[]>([]),
@@ -48,9 +49,10 @@ const scenario = ref(''),
   drawingsOpen = ref(false),
   drawingProduct = ref<Product>()
 const product = ref(freshProduct())
-/** 已有应用场景（产品与项目类型名称），供筛选与新增时选择；也可直接输入新场景。 */
-const scenarios = computed(() =>
-  [...new Set(products.value.map((p) => p.scenario).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'zh-CN')),
+/** 应用场景来自数据字典：筛选列出全部，新增/修改只能选启用的（当前值保留）。 */
+const scenarios = computed(() => dict.scenarios.map((s) => s.name))
+const selectableScenarios = computed(() =>
+  dict.scenarios.filter((s) => s.active || s.name === product.value.scenario).map((s) => s.name),
 )
 const suppliers = computed(() => partners.value.filter((p) => p.kind === 'SUPPLIER'))
 const filteredPartners = computed(() =>
@@ -97,7 +99,11 @@ function resetFilters() {
 }
 async function load() {
   try {
-    ;[partners.value, products.value] = await Promise.all([api<Partner[]>('/partners'), api<Product[]>('/products')])
+    ;[partners.value, products.value] = await Promise.all([
+      api<Partner[]>('/partners'),
+      api<Product[]>('/products'),
+      loadDictionaries(true),
+    ]).then(([a, b]) => [a, b] as const)
     error.value = ''
   } catch (e) {
     error.value = (e as Error).message
@@ -359,15 +365,10 @@ onMounted(load)
         <template v-else>
           <div class="form-grid">
             <el-form-item label="应用场景" required>
-              <el-select
-                v-model="product.scenario"
-                filterable
-                allow-create
-                default-first-option
-                placeholder="选择或输入，如：小象前置仓"
-              >
-                <el-option v-for="x in scenarios" :key="x" :label="x" :value="x" />
+              <el-select v-model="product.scenario" filterable placeholder="选择应用场景">
+                <el-option v-for="x in selectableScenarios" :key="x" :label="x" :value="x" />
               </el-select>
+              <small class="muted">新场景请在 系统管理 → 数据字典 → 应用场景 中添加</small>
             </el-form-item>
             <el-form-item label="单位" required><el-input v-model="product.unit" maxlength="30" /></el-form-item>
             <el-form-item label="供应商">

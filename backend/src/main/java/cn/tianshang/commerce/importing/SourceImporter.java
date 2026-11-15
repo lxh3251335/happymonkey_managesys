@@ -17,11 +17,18 @@ public class SourceImporter {
     private final Database db;
     private final ObjectMapper mapper;
     private final cn.tianshang.commerce.business.BusinessService business;
+    private final cn.tianshang.commerce.dictionary.DictionaryService dictionary;
 
-    public SourceImporter(Database db, ObjectMapper mapper, cn.tianshang.commerce.business.BusinessService business) {
+    public SourceImporter(
+        Database db,
+        ObjectMapper mapper,
+        cn.tianshang.commerce.business.BusinessService business,
+        cn.tianshang.commerce.dictionary.DictionaryService dictionary
+    ) {
         this.db = db;
         this.mapper = mapper;
         this.business = business;
+        this.dictionary = dictionary;
     }
 
     @Transactional
@@ -58,7 +65,7 @@ public class SourceImporter {
                     note,
                     Contracts.blankToNull(r.path("contract").asText()),
                     Contracts.shipping(r.path("shipping").asText()),
-                    cn.tianshang.commerce.master.Cities.detect(r.path("project").asText())
+                    dictionary.detectCity(r.path("project").asText())
                 );
                 db.jdbc.update(
                     "INSERT INTO quotation(id,code,project_id,version,status,tax_basis,note,created_at) VALUES(?,?,?,1,'HISTORICAL','UNKNOWN',?,?)",
@@ -88,6 +95,7 @@ public class SourceImporter {
                 );
                 productId = existing.isEmpty() ? db.id() : existing.get(0).get("id").toString();
                 products.put(productKey, productId);
+                if (existing.isEmpty()) dictionary.ensureScenario(r.path("brand").asText());
                 if (existing.isEmpty()) db.jdbc.update(
                     "INSERT INTO product(id,scenario,name,specification,model,unit) VALUES(?,?,?,?,?,'台')",
                     productId,

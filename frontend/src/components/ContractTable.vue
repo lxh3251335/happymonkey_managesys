@@ -1,159 +1,282 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { Search } from '@element-plus/icons-vue'
-import StatusTag from './StatusTag.vue'
 import type { Contract } from '../types'
 import { money, percent, day } from '../utils'
+import { contractStatusName, invoiceStatusName } from '../dictionaries'
+import { session } from '../api'
 
-const props = withDefaults(
-  defineProps<{ contracts: Contract[]; actions?: boolean; attachments?: boolean; pageSize?: number }>(),
+/** 合同台账表：快捷筛选 + 条件筛选 + 合计；点击合同打开详情。 */
+const props = withDefaults(defineProps<{ contracts: Contract[]; pageSize?: number; compact?: boolean }>(), {
+  pageSize: 12,
+  compact: false,
+})
+const emit = defineEmits<{ open: [Contract] }>()
+
+/** 快捷筛选：名称、条件。 */
+const QUICK: { key: string; label: string; test: (c: Contract) => boolean }[] = [
+  { key: 'ALL', label: '全部', test: () => true },
+  { key: 'DRAFT', label: '拟定中', test: (c) => c.status === 'DRAFT' },
+  { key: 'PENDING', label: '待确认应收', test: (c) => c.projects > 0 && c.confirmation !== 'CONFIRMED' },
+  { key: 'UNPAID', label: '有未收', test: (c) => Number(c.outstanding) > 0 },
+  { key: 'OVERDUE', label: '已逾期', test: (c) => Number(c.overdue) > 0 },
   {
-    actions: false,
-    attachments: false,
-    pageSize: 10,
+    key: 'UNINVOICED',
+    label: '未开足票',
+    test: (c) => c.status !== 'DRAFT' && c.status !== 'TERMINATED' && Number(c.uninvoiced) > 0,
   },
-)
-const emit = defineEmits<{ confirm: [Contract]; receipt: [Contract]; refund: [Contract]; attachments: [Contract] }>()
+  { key: 'INV_UNPAID', label: '开票未到款', test: (c) => Number(c.invoiced_unreceived) > 0 },
+  { key: 'UNSHIPPED', label: '未发完货', test: (c) => c.projects > c.shipped },
+  { key: 'CHANGES', label: '待审批变更', test: (c) => c.pending_changes > 0 },
+  {
+    key: 'UNARCHIVED',
+    label: '原件未归档',
+    test: (c) => (c.status === 'SIGNED' || c.status === 'COMPLETED') && !c.archived,
+  },
+]
 
-const keyword = ref(''),
-  status = ref(''),
+const quick = ref('ALL'),
+  keyword = ref(''),
   customer = ref(''),
-  page = ref(1)
-const customers = computed(() => [...new Set(props.contracts.map((c) => c.customer_name))].sort())
-const filtered = computed(() =>
-  props.contracts.filter(
-    (c) =>
-      (!status.value ||
-        (status.value === 'UNPAID'
-          ? c.outstanding > 0
-          : status.value === 'OVERDUE'
-            ? c.overdue > 0
-            : c.confirmation === status.value)) &&
-      (!customer.value || c.customer_name === customer.value) &&
-      `${c.contract_no ?? ''}${c.customer_name}${c.items.map((i) => i.project_name).join('')}`.includes(
-        keyword.value.trim(),
-      ),
-  ),
+  company = ref(''),
+  brand = ref(''),
+  city = ref(''),
+  owner = ref(''),
+  status = ref(''),
+  months = ref<[string, string] | null>(null),
+  page = ref(1),
+  sort = ref<{ prop: string; order: 'ascending' | 'descending' | null }>({ prop: '', order: null })
+
+const showOwner = computed(() => session.user?.role !== 'SALES')
+const uniq = (xs: (string | null | undefined)[]) =>
+  [...new Set(xs.filter((x): x is string => !!x))].sort((a, b) => a.localeCompare(b, 'zh-CN'))
+const customers = computed(() => uniq(props.contracts.map((c) => c.customer_name)))
+const companies = computed(() => uniq(props.contracts.map((c) => c.company_name)))
+const brands = computed(() => uniq(props.contracts.flatMap((c) => c.brands)))
+const cities = computed(() => uniq(props.contracts.flatMap((c) => c.cities)))
+const owners = computed(() => uniq(props.contracts.map((c) => c.owner_name)))
+
+/** 签订月份（无签订日期按下单月份）。 */
+const monthOf = (c: Contract) => String(c.signed_on || c.order_date || '').slice(0, 7)
+
+const base = computed(() =>
+  props.contracts.filter((c) => {
+    const k = keyword.value.trim().toLowerCase()
+    if (
+      k &&
+      !`${c.contract_no ?? ''}${c.title ?? ''}${c.content ?? ''}${c.customer_name}${c.items
+        .map((i) => i.project_name)
+        .join('')}`
+        .toLowerCase()
+        .includes(k)
+    )
+      return false
+    if (customer.value && c.customer_name !== customer.value) return false
+    if (company.value && (company.value === '-' ? c.company_name : c.company_name !== company.value)) return false
+    if (brand.value && !c.brands.includes(brand.value)) return false
+    if (city.value && !c.cities.includes(city.value)) return false
+    if (owner.value && (owner.value === '-' ? c.owner_name : c.owner_name !== owner.value)) return false
+    if (status.value && c.status !== status.value) return false
+    if (months.value) {
+      const m = monthOf(c)
+      if (!m || m < months.value[0].slice(0, 7) || m > months.value[1].slice(0, 7)) return false
+    }
+    return true
+  }),
 )
-watch([keyword, status, customer], () => (page.value = 1))
+const counts = computed(() => Object.fromEntries(QUICK.map((q) => [q.key, base.value.filter(q.test).length])))
+const filtered = computed(() => {
+  const q = QUICK.find((x) => x.key === quick.value) || QUICK[0]
+  const rows = base.value.filter(q.test)
+  const { prop, order } = sort.value
+  if (!prop || !order) return rows
+  const val = (c: Contract) => {
+    const v = (c as unknown as Record<string, unknown>)[prop]
+    return typeof v === 'number' || (typeof v === 'string' && /^-?\d+(\.\d+)?$/.test(v)) ? Number(v) : String(v ?? '')
+  }
+  return [...rows].sort((a, b) => {
+    const x = val(a),
+      y = val(b)
+    const r = x < y ? -1 : x > y ? 1 : 0
+    return order === 'ascending' ? r : -r
+  })
+})
+watch([quick, keyword, customer, company, brand, city, owner, status, months], () => (page.value = 1))
 const rows = computed(() => filtered.value.slice((page.value - 1) * props.pageSize, page.value * props.pageSize))
-const sum = (k: 'amount' | 'received' | 'outstanding') => filtered.value.reduce((s, c) => s + Number(c[k]), 0)
-const confirmName = { PENDING: '待确认', PARTIAL: '部分确认', CONFIRMED: '已确认' }
-const confirmClass = { PENDING: 'tag-pending', PARTIAL: 'tag-partial', CONFIRMED: 'tag-done' }
+const sum = (k: keyof Contract) => filtered.value.reduce((s, c) => s + Number(c[k] || 0), 0)
+const anyFilter = computed(
+  () =>
+    !!(
+      keyword.value ||
+      customer.value ||
+      company.value ||
+      brand.value ||
+      city.value ||
+      owner.value ||
+      status.value ||
+      months.value
+    ) || quick.value !== 'ALL',
+)
+function reset() {
+  quick.value = 'ALL'
+  keyword.value = customer.value = company.value = brand.value = city.value = owner.value = status.value = ''
+  months.value = null
+}
+const statusClass: Record<string, string> = {
+  DRAFT: 'tag-pending',
+  SIGNED: 'tag-partial',
+  COMPLETED: 'tag-done',
+  TERMINATED: 'tag-muted',
+}
+defineExpose({ filtered })
 </script>
 <template>
   <div class="contract-table">
+    <div class="quick-row">
+      <button
+        v-for="q in QUICK"
+        :key="q.key"
+        type="button"
+        :class="['quick', { on: quick === q.key }]"
+        @click="quick = q.key"
+      >
+        {{ q.label }}
+        <em>{{ counts[q.key] }}</em>
+      </button>
+    </div>
     <div class="filter-bar contract-filters">
-      <el-input v-model="keyword" clearable :prefix-icon="Search" placeholder="搜索合同号、客户或门店" />
-      <el-select v-model="customer" clearable placeholder="全部客户">
+      <el-input v-model="keyword" clearable :prefix-icon="Search" placeholder="合同号、名称、内容、客户或门店" />
+      <el-select v-model="customer" clearable filterable placeholder="客户">
         <el-option v-for="c in customers" :key="c" :label="c" :value="c" />
       </el-select>
-      <el-select v-model="status" clearable placeholder="全部状态">
-        <el-option label="待确认应收" value="PENDING" />
-        <el-option label="部分确认" value="PARTIAL" />
-        <el-option label="已确认" value="CONFIRMED" />
-        <el-option label="仍有未收" value="UNPAID" />
-        <el-option label="有逾期" value="OVERDUE" />
+      <el-select v-if="!compact" v-model="company" clearable placeholder="签约主体">
+        <el-option label="未指定" value="-" />
+        <el-option v-for="c in companies" :key="c" :label="c" :value="c" />
       </el-select>
-      <span class="contract-sum">
-        {{ filtered.length }} 份合同 · 合同额
+      <el-select v-model="brand" clearable filterable placeholder="业务线">
+        <el-option v-for="c in brands" :key="c" :label="c" :value="c" />
+      </el-select>
+      <el-select v-model="city" clearable filterable placeholder="城市">
+        <el-option v-for="c in cities" :key="c" :label="c" :value="c" />
+      </el-select>
+      <el-select v-if="showOwner && !compact" v-model="owner" clearable filterable placeholder="负责人">
+        <el-option label="未分配" value="-" />
+        <el-option v-for="c in owners" :key="c" :label="c" :value="c" />
+      </el-select>
+      <el-select v-if="!compact" v-model="status" clearable placeholder="合同状态">
+        <el-option v-for="(n, k) in contractStatusName" :key="k" :label="n" :value="k" />
+      </el-select>
+      <el-date-picker
+        v-model="months"
+        type="monthrange"
+        value-format="YYYY-MM"
+        range-separator="至"
+        start-placeholder="签订月份"
+        end-placeholder="止"
+        class="month-range"
+      />
+      <el-button v-if="anyFilter" link type="primary" @click="reset">清除筛选</el-button>
+    </div>
+    <div class="contract-sum">
+      <span>
+        <strong>{{ filtered.length }}</strong>
+        份合同
+      </span>
+      <span>
+        合同额
         <strong>{{ money(sum('amount')) }}</strong>
-        · 已到账
+      </span>
+      <span>
+        已开票
+        <strong>{{ money(sum('invoiced')) }}</strong>
+      </span>
+      <span>
+        已到款
         <strong>{{ money(sum('received')) }}</strong>
-        · 未收
+      </span>
+      <span>
+        未收
         <strong>{{ money(sum('outstanding')) }}</strong>
       </span>
+      <span v-if="sum('overdue') > 0" class="danger-text">
+        逾期
+        <strong class="danger-text">{{ money(sum('overdue')) }}</strong>
+      </span>
     </div>
-    <el-table :data="rows" row-key="contract_key" size="default">
-      <el-table-column type="expand">
-        <template #default="{ row }">
-          <el-table :data="row.items" size="small" class="contract-items">
-            <el-table-column label="门店" prop="project_name" min-width="240" show-overflow-tooltip />
-            <el-table-column label="品牌" prop="brand" width="80" />
-            <el-table-column label="下单日期" width="110">
-              <template #default="{ row: i }">{{ day(i.order_date) }}</template>
-            </el-table-column>
-            <el-table-column label="发货" width="90">
-              <template #default="{ row: i }">{{ i.shipping_status || '未登记' }}</template>
-            </el-table-column>
-            <el-table-column label="报价状态" width="110">
-              <template #default="{ row: i }"><StatusTag :status="i.status" /></template>
-            </el-table-column>
-            <el-table-column label="金额" align="right" min-width="120">
-              <template #default="{ row: i }">{{ money(i.amount) }}</template>
-            </el-table-column>
-            <el-table-column label="已到账" align="right" min-width="120">
-              <template #default="{ row: i }">{{ money(i.received) }}</template>
-            </el-table-column>
-            <el-table-column label="未收" align="right" min-width="120">
-              <template #default="{ row: i }">{{ money(i.outstanding) }}</template>
-            </el-table-column>
-          </el-table>
-        </template>
-      </el-table-column>
-      <el-table-column label="合同号" min-width="170">
+    <el-table
+      :data="rows"
+      row-key="contract_key"
+      class="clickable-rows"
+      @row-click="(row: Contract) => emit('open', row)"
+      @sort-change="(s: any) => (sort = { prop: s.prop, order: s.order })"
+    >
+      <el-table-column label="合同" min-width="230">
         <template #default="{ row }">
           <strong v-if="row.contract_no">{{ row.contract_no }}</strong>
           <span v-else class="muted">未填合同号</span>
-          <small class="cell-secondary">{{ row.customer_name }} · {{ row.brands.join(' / ') }}</small>
+          <el-tag v-if="row.pending_changes" size="small" type="warning" class="gap">变更待审批</el-tag>
+          <small class="cell-secondary ellipsis">
+            {{
+              row.title || row.items.map((i: { project_name: string }) => i.project_name).join('、') || '未填合同名称'
+            }}
+          </small>
+          <small class="cell-secondary">{{ row.customer_name }} · {{ row.brands.join(' / ') || '未关联门店' }}</small>
         </template>
       </el-table-column>
-      <el-table-column label="下单" width="105">
-        <template #default="{ row }">{{ day(row.order_date) }}</template>
+      <el-table-column label="状态" width="86">
+        <template #default="{ row }">
+          <span :class="['confirm-tag', statusClass[row.status]]">{{ contractStatusName[row.status] }}</span>
+        </template>
       </el-table-column>
-      <el-table-column label="门店 / 发货" width="100" align="center">
+      <el-table-column v-if="!compact" label="签约主体 / 负责人" width="140">
+        <template #default="{ row }">
+          <span :class="row.company_name ? '' : 'muted'">{{ row.company_name || '未指定' }}</span>
+          <small class="cell-secondary">{{ row.owner_name || '未分配' }}</small>
+        </template>
+      </el-table-column>
+      <el-table-column label="签订 / 下单" prop="signed_on" width="108" sortable="custom">
+        <template #default="{ row }">
+          {{ day(row.signed_on) }}
+          <small class="cell-secondary">{{ day(row.order_date) }}</small>
+        </template>
+      </el-table-column>
+      <el-table-column label="门店 / 发货" width="88" align="center">
         <template #default="{ row }">{{ row.projects }} / {{ row.shipped }}</template>
       </el-table-column>
-      <el-table-column label="合同额" align="right" min-width="125">
-        <template #default="{ row }">{{ money(row.amount) }}</template>
+      <el-table-column label="合同金额" prop="amount" align="right" min-width="120" sortable="custom">
+        <template #default="{ row }">
+          {{ money(row.amount) }}
+          <small v-if="row.amount_gap && Number(row.amount_gap) !== 0" class="cell-secondary warn-text">
+            订单差 {{ money(row.amount_gap) }}
+          </small>
+        </template>
       </el-table-column>
-      <el-table-column label="已到账" align="right" min-width="125">
-        <template #default="{ row }">{{ money(row.received) }}</template>
+      <el-table-column label="已开票" prop="invoiced" align="right" min-width="118" sortable="custom">
+        <template #default="{ row }">
+          {{ money(row.invoiced) }}
+          <small class="cell-secondary">{{ invoiceStatusName[row.invoice_status] }}</small>
+        </template>
       </el-table-column>
-      <el-table-column label="未收" align="right" min-width="125">
+      <el-table-column label="已到款" prop="received" align="right" min-width="118" sortable="custom">
+        <template #default="{ row }">
+          {{ money(row.received) }}
+          <small class="cell-secondary">{{ percent(row.collection_rate) }}</small>
+        </template>
+      </el-table-column>
+      <el-table-column label="未收" prop="outstanding" align="right" min-width="118" sortable="custom">
         <template #default="{ row }">
           <span :class="row.overdue > 0 ? 'danger-text' : ''">{{ money(row.outstanding) }}</span>
-          <small v-if="row.overdue > 0" class="cell-secondary danger-text">逾期 {{ money(row.overdue) }}</small>
+          <small v-if="row.overdue > 0" class="cell-secondary danger-text">逾期 {{ row.overdue_days }} 天</small>
         </template>
       </el-table-column>
-      <el-table-column label="回款率" width="120">
+      <el-table-column v-if="!compact" label="毛利率" prop="gross_margin" align="right" width="96" sortable="custom">
         <template #default="{ row }">
-          <div class="rate-cell">
-            <span class="rate-track">
-              <i :style="{ width: `${Math.min(100, (row.collection_rate || 0) * 100)}%` }"></i>
-            </span>
-            {{ percent(row.collection_rate) }}
-          </div>
-        </template>
-      </el-table-column>
-      <el-table-column label="应收" width="100">
-        <template #default="{ row }">
-          <span :class="['confirm-tag', confirmClass[row.confirmation as keyof typeof confirmClass]]">
-            {{ confirmName[row.confirmation as keyof typeof confirmName] }}
+          <span :class="row.gross_margin != null && row.gross_margin < 0 ? 'danger-text' : ''">
+            {{ row.gross_margin == null ? '—' : percent(row.gross_margin) }}
           </span>
-        </template>
-      </el-table-column>
-      <el-table-column v-if="actions || attachments" label="操作" width="200" fixed="right">
-        <template #default="{ row }">
-          <el-button
-            v-if="attachments"
-            link
-            :type="row.attachments ? 'primary' : 'info'"
-            @click="emit('attachments', row)"
-          >
-            附件{{ row.attachments ? ` ${row.attachments}` : '' }}
-          </el-button>
-          <template v-if="actions">
-            <el-button v-if="row.confirmation !== 'CONFIRMED'" link type="primary" @click="emit('confirm', row)">
-              确认应收
-            </el-button>
-            <template v-else>
-              <el-button v-if="row.outstanding > 0" link type="primary" @click="emit('receipt', row)">
-                登记回款
-              </el-button>
-              <el-button v-if="row.received > 0" link @click="emit('refund', row)">退款</el-button>
-            </template>
-          </template>
+          <small class="cell-secondary">
+            {{ row.cost_source === 'ACTUAL' ? '实际成本' : row.cost_source === 'ESTIMATED' ? '报价预估' : '成本待补' }}
+          </small>
         </template>
       </el-table-column>
     </el-table>
@@ -169,18 +292,55 @@ const confirmClass = { PENDING: 'tag-pending', PARTIAL: 'tag-partial', CONFIRMED
   </div>
 </template>
 <style scoped>
+.quick-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 12px 24px 0;
+}
+.quick {
+  border: 1px solid #dfe6dc;
+  background: #fff;
+  color: #4b5a52;
+  border-radius: 14px;
+  padding: 3px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  line-height: 18px;
+}
+.quick em {
+  font-style: normal;
+  color: #8a958e;
+  margin-left: 2px;
+  font-variant-numeric: tabular-nums;
+}
+.quick.on {
+  background: #24634f;
+  border-color: #24634f;
+  color: #fff;
+}
+.quick.on em {
+  color: #d5e7de;
+}
 .contract-filters {
   flex-wrap: wrap;
-  gap: 10px;
+  gap: 8px;
 }
 .contract-filters .el-input {
-  max-width: 260px;
+  max-width: 240px;
 }
 .contract-filters .el-select {
-  width: 150px;
+  width: 118px;
+}
+.contract-filters :deep(.month-range.el-date-editor) {
+  flex: 0 0 240px;
+  width: 240px;
 }
 .contract-sum {
-  margin-left: auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  padding: 0 24px 8px;
   color: #6b7a72;
   font-size: 12px;
 }
@@ -188,28 +348,8 @@ const confirmClass = { PENDING: 'tag-pending', PARTIAL: 'tag-partial', CONFIRMED
   color: #253731;
   font-variant-numeric: tabular-nums;
 }
-.contract-items {
-  margin: 4px 0 8px 48px;
-  width: calc(100% - 48px);
-}
-.rate-cell {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-variant-numeric: tabular-nums;
-}
-.rate-track {
-  flex: 0 0 44px;
-  height: 6px;
-  border-radius: 3px;
-  background: #eef1ec;
-  overflow: hidden;
-}
-.rate-track i {
-  display: block;
-  height: 100%;
-  border-radius: 3px;
-  background: #c27c0e;
+.clickable-rows :deep(.el-table__row) {
+  cursor: pointer;
 }
 .confirm-tag {
   display: inline-block;
@@ -228,6 +368,22 @@ const confirmClass = { PENDING: 'tag-pending', PARTIAL: 'tag-partial', CONFIRMED
 .tag-done {
   color: #24634f;
   background: #e6f0ea;
+}
+.tag-muted {
+  color: #6b7a72;
+  background: #eef1ec;
+}
+.warn-text {
+  color: #a0661b;
+}
+.gap {
+  margin-left: 6px;
+}
+.ellipsis {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 260px;
 }
 .contract-pager {
   justify-content: flex-end;

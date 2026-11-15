@@ -73,3 +73,4 @@ export async function login(username: string, password: string) {
 export const canWrite = () => ['ADMIN', 'SALES'].includes(session.user?.role || '')
 export const canAttach = () => ['ADMIN', 'SALES', 'FINANCE'].includes(session.user?.role || '')
 export const canFinance = () => ['ADMIN', 'FINANCE'].includes(session.user?.role || '')
+export const isAdmin = () => session.user?.role === 'ADMIN'
