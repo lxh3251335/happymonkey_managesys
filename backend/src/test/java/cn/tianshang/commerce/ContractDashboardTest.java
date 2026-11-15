@@ -40,7 +40,7 @@ class ContractDashboardTest extends ApiTestSupport {
         body.put("brand", brand);
         body.put("customerId", customer);
         body.put("contractNo", contractNo);
-        body.put("shippingStatus", shipping);
+        if (shipping != null) body.put("delivery", Map.of("status", shipping));
         body.put("orderDate", orderDate);
         return postJson("/api/projects", body).path("id").asText();
     }

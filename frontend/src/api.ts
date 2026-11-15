@@ -74,3 +74,7 @@ export const canWrite = () => ['ADMIN', 'SALES'].includes(session.user?.role || 
 export const canAttach = () => ['ADMIN', 'SALES', 'FINANCE'].includes(session.user?.role || '')
 export const canFinance = () => ['ADMIN', 'FINANCE'].includes(session.user?.role || '')
 export const isAdmin = () => session.user?.role === 'ADMIN'
+/** 审批合同变更、直接修改已签订合同、分配负责人：系统管理员或管理层。 */
+export const canApprove = () => ['ADMIN', 'MANAGER'].includes(session.user?.role || '')
+/** 可见成本与毛利：系统管理员、管理层、财务（后端同样会去掉其他角色的成本字段）。 */
+export const canSeeCost = () => ['ADMIN', 'MANAGER', 'FINANCE'].includes(session.user?.role || '')

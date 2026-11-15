@@ -50,6 +50,7 @@ public abstract class ApiTestSupport {
             { "finance1", "FINANCE" },
             { "sales1", "SALES" },
             { "sales2", "SALES" },
+            { "manager1", "MANAGER" },
         })
             if (
                 jdbcTemplate.queryForObject("SELECT COUNT(*) FROM app_user WHERE username=?", Integer.class, u[0]) == 0

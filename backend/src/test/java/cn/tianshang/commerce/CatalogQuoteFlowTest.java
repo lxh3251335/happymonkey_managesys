@@ -6,6 +6,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 import cn.tianshang.commerce.master.Cities;
+import com.fasterxml.jackson.databind.JsonNode;
 import java.time.LocalDate;
 import java.util.*;
 import org.junit.jupiter.api.Test;
@@ -76,6 +77,124 @@ class CatalogQuoteFlowTest extends ApiTestSupport {
             )
         );
         return new String[] { type, sup, box, main };
+    }
+
+    @Test
+    void costTemplateKeepsProductsOutsideStandardSetup() throws Exception {
+        var c = setup(); // type, supplier, box, main
+        String option = productNamed("选配触摸屏");
+        var body = Map.of(
+            "supplierId",
+            c[1],
+            "projectTypeId",
+            c[0],
+            "active",
+            true,
+            "items",
+            List.of(
+                Map.of("productId", c[2], "materialCost", "1200", "laborCost", "200", "financeCost", "100"),
+                Map.of("productId", option, "materialCost", "800")
+            )
+        );
+        // 管理层也可以维护成本模板；业务员不行
+        mvc
+            .perform(
+                post("/api/supplier-templates")
+                    .with(csrf())
+                    .with(user("sales1").roles("SALES"))
+                    .contentType("application/json")
+                    .content(mapper.writeValueAsString(body))
+            )
+            .andExpect(status().isForbidden());
+        mvc
+            .perform(
+                post("/api/supplier-templates")
+                    .with(csrf())
+                    .with(user("manager1").roles("MANAGER"))
+                    .contentType("application/json")
+                    .content(mapper.writeValueAsString(body))
+            )
+            .andExpect(status().isOk());
+        JsonNode template = null;
+        for (var t : getJson("/api/supplier-templates"))
+            if (
+                t.path("supplier_id").asText().equals(c[1]) && t.path("project_type_id").asText().equals(c[0])
+            ) template = t;
+        assertThat(template.path("items").size()).isEqualTo(2);
+        assertThat(template.path("items").toString()).contains(option);
+        // 业务员在报价中手动加入配置外产品：成本按模板核算
+        String project = read(
+            mvc
+                .perform(
+                    post("/api/projects")
+                        .with(csrf())
+                        .with(user("sales1").roles("SALES"))
+                        .contentType("application/json")
+                        .content(
+                            mapper.writeValueAsString(
+                                Map.of("name", "选配门店", "brand", "小象", "customerId", customer())
+                            )
+                        )
+                )
+                .andExpect(status().isOk())
+                .andReturn()
+        )
+            .path("id")
+            .asText();
+        var q = new HashMap<String, Object>(quoteInput(project, option, null));
+        q.put("items", List.of(Map.of("productId", option, "quantity", 1, "unitPrice", "1500")));
+        q.put("projectTypeId", c[0]);
+        q.put("supplierId", c[1]);
+        String quote = read(
+            mvc
+                .perform(
+                    post("/api/quotes")
+                        .with(csrf())
+                        .with(user("sales1").roles("SALES"))
+                        .contentType("application/json")
+                        .content(mapper.writeValueAsString(q))
+                )
+                .andExpect(status().isOk())
+                .andReturn()
+        )
+            .path("id")
+            .asText();
+        assertThat(
+            getJson("/api/quotes/" + quote).path("items").get(0).path("unit_cost").decimalValue()
+        ).isEqualByComparingTo("800");
+    }
+
+    @Test
+    void suggestsMostCommonStandardConfigFromHistory() throws Exception {
+        String a = productNamed("推荐电箱"),
+            b = productNamed("推荐配电箱");
+        String customer = customer();
+        // 两家门店同配置（a×1 + b×2），一家不同配置
+        for (int n = 0; n < 3; n++) {
+            String project = postJson(
+                "/api/projects",
+                Map.of("name", "推荐门店" + n, "brand", "快乐猴", "customerId", customer)
+            )
+                .path("id")
+                .asText();
+            var items =
+                n < 2
+                    ? List.of(
+                          Map.of("productId", a, "quantity", 1, "unitPrice", "5000"),
+                          Map.of("productId", b, "quantity", 2, "unitPrice", "3000")
+                      )
+                    : List.of(Map.of("productId", a, "quantity", 3, "unitPrice", "4800"));
+            var q = new HashMap<String, Object>(quoteInput(project, a, null));
+            q.put("items", items);
+            postJson("/api/quotes", q);
+        }
+        var r = getJson("/api/project-types/suggest?brand=" + "快乐猴");
+        assertThat(r.path("brand").asText()).isEqualTo("快乐猴超市");
+        var top = r.path("options").get(0);
+        assertThat(top.path("stores").asInt()).isEqualTo(2);
+        assertThat(top.path("items").size()).isEqualTo(2);
+        assertThat(top.path("items").toString()).contains("3000", "5000");
+        assertThat(r.path("options").size()).isEqualTo(2);
     }
 
     @Test

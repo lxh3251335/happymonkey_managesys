@@ -35,6 +35,7 @@ public class ReportService {
     private final ContractLedger ledger;
     private final cn.tianshang.commerce.business.BusinessService business;
     private final cn.tianshang.commerce.common.Ownership ownership;
+    private final cn.tianshang.commerce.contract.ContractService contracts;
     static final String UNOWNED = "未分配负责人";
 
     public ReportService(
@@ -42,13 +43,15 @@ public class ReportService {
         QuoteService quotes,
         ContractLedger ledger,
         cn.tianshang.commerce.business.BusinessService business,
-        cn.tianshang.commerce.common.Ownership ownership
+        cn.tianshang.commerce.common.Ownership ownership,
+        cn.tianshang.commerce.contract.ContractService contracts
     ) {
         this.db = db;
         this.quotes = quotes;
         this.ledger = ledger;
         this.business = business;
         this.ownership = ownership;
+        this.contracts = contracts;
     }
 
     /** 一个分组的累计值。 */
@@ -107,7 +110,8 @@ public class ReportService {
         var groupOf = business.groupOfLine();
         java.util.function.Predicate<String> inScope = b ->
             brand != null ? brand.equals(b) : group == null || group.equals(groupOf.get(b));
-        var all = ledger.contracted();
+        // 经营分析按合同口径：签约金额、实际成本、签订月份，已终止合同不计入
+        var all = ledger.analysis();
         var facts = all
             .stream()
             .filter(f -> inScope.test(f.brand()))
@@ -269,6 +273,7 @@ public class ReportService {
         out.put("by_brand", ranked(brands, total.contract));
         out.put("by_city", ranked(cities, total.contract));
         out.put("by_owner", ranked(owners, total.contract));
+        out.put("execution", execution(inScope));
         out.put("by_line", ranked(lines, total.contract));
         out.put("line_summary", lineSummary(lines, total.contract));
         out.put("brand", brand);
@@ -312,6 +317,67 @@ public class ReportService {
         out.put("recent", latest.values().stream().limit(6).toList());
         out.put("imports", db.jdbc.queryForList("SELECT * FROM import_batch ORDER BY created_at DESC"));
         return out;
+    }
+
+    /** 合同执行概况：开票、开票未到款、实际成本覆盖、合同状态（当前筛选、当前用户可见范围）。 */
+    private Map<String, Object> execution(java.util.function.Predicate<String> inScope) {
+        BigDecimal invoiced = BigDecimal.ZERO,
+            uninvoiced = BigDecimal.ZERO,
+            invoicedUnreceived = BigDecimal.ZERO,
+            actualCost = BigDecimal.ZERO,
+            terminatedAmount = BigDecimal.ZERO;
+        int count = 0,
+            drafts = 0,
+            signed = 0,
+            completed = 0,
+            terminated = 0,
+            withActual = 0,
+            unarchived = 0,
+            pendingChanges = 0;
+        for (var c : contracts.contracts()) {
+            @SuppressWarnings("unchecked")
+            var brands = (List<String>) c.get("brands");
+            boolean in = brands.isEmpty() ? inScope.test("未指定") : brands.stream().anyMatch(inScope);
+            if (!in) continue;
+            String status = c.get("status").toString();
+            BigDecimal amount = (BigDecimal) c.get("amount");
+            if (status.equals("TERMINATED")) {
+                terminated++;
+                terminatedAmount = terminatedAmount.add(amount);
+                continue;
+            }
+            count++;
+            switch (status) {
+                case "DRAFT" -> drafts++;
+                case "COMPLETED" -> completed++;
+                default -> signed++;
+            }
+            invoiced = invoiced.add((BigDecimal) c.get("invoiced"));
+            uninvoiced = uninvoiced.add(((BigDecimal) c.get("uninvoiced")).max(BigDecimal.ZERO));
+            invoicedUnreceived = invoicedUnreceived.add((BigDecimal) c.get("invoiced_unreceived"));
+            BigDecimal ac = (BigDecimal) c.get("actual_cost");
+            if (ac.signum() > 0) {
+                withActual++;
+                actualCost = actualCost.add(ac);
+            }
+            if (!status.equals("DRAFT") && !Boolean.TRUE.equals(c.get("archived"))) unarchived++;
+            pendingChanges += ((Number) c.get("pending_changes")).intValue();
+        }
+        var x = new LinkedHashMap<String, Object>();
+        x.put("contracts", count);
+        x.put("draft", drafts);
+        x.put("signed", signed);
+        x.put("completed", completed);
+        x.put("terminated", terminated);
+        x.put("terminated_amount", terminatedAmount);
+        x.put("invoiced", invoiced);
+        x.put("uninvoiced", uninvoiced);
+        x.put("invoiced_unreceived", invoicedUnreceived);
+        x.put("actual_cost", actualCost);
+        x.put("actual_cost_contracts", withActual);
+        x.put("unarchived", unarchived);
+        x.put("pending_changes", pendingChanges);
+        return x;
     }
 
     /** 产品线：合同额与毛利按明细行归集，到账额与应收按明细金额比例分摊。 */

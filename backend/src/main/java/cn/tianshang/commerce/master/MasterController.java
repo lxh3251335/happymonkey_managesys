@@ -29,31 +29,6 @@ public class MasterController {
         service.updatePartner(id, input);
     }
 
-    @GetMapping("/projects")
-    public List<Map<String, Object>> projects() {
-        return service.projects();
-    }
-
-    @GetMapping("/owners")
-    public List<Map<String, Object>> owners() {
-        return service.owners();
-    }
-
-    @PostMapping("/projects/owner")
-    public Map<String, Object> assignOwner(@Valid @RequestBody MasterService.AssignInput input) {
-        return service.assignOwner(input);
-    }
-
-    @PostMapping("/projects")
-    public Map<String, String> project(@Valid @RequestBody MasterService.ProjectInput input) {
-        return service.project(input);
-    }
-
-    @PutMapping("/projects/{id}")
-    public void update(@PathVariable String id, @Valid @RequestBody MasterService.ProjectInput input) {
-        service.updateProject(id, input);
-    }
-
     @GetMapping("/products")
     public List<Map<String, Object>> products() {
         return service.products();

@@ -92,6 +92,10 @@ public class ContractService {
         );
         var today = LocalDate.now();
         var attachmentCounts = attachments.counts();
+        // 发货与物流由项目台账维护，这里只读展示
+        var delivery = new HashMap<String, Map<String, Object>>();
+        for (var r : db.jdbc.queryForList("SELECT id,expected_ship_on,courier,tracking_no FROM project"))
+            delivery.put(r.get("id").toString(), r);
         var out = new ArrayList<Map<String, Object>>();
         for (var entry : groups.entrySet()) {
             var g = entry.getValue();
@@ -250,6 +254,11 @@ public class ContractService {
                         x.put("quote_code", f.quoteCode());
                         x.put("status", f.quoteStatus());
                         x.put("shipping_status", f.shippingStatus());
+                        x.put("shipped_on", f.shippedOn());
+                        var d = delivery.getOrDefault(f.projectId(), Map.of());
+                        x.put("expected_ship_on", d.get("expected_ship_on"));
+                        x.put("courier", d.get("courier"));
+                        x.put("tracking_no", d.get("tracking_no"));
                         x.put("order_date", f.orderDate());
                         x.put("due_date", f.dueDate());
                         x.put("amount", f.amount());

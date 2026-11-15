@@ -2,7 +2,7 @@
 import { ref, computed, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Plus, Delete } from '@element-plus/icons-vue'
-import { api, post } from '../api'
+import { api, canSeeCost, post } from '../api'
 import CitySelect from './CitySelect.vue'
 import { activeCompanies, companyLabel, defaultCompany, loadDictionaries } from '../dictionaries'
 import type {
@@ -56,6 +56,8 @@ const form = ref({
   templateId: '',
   companyId: '',
 })
+/** 业务员看不到成本：成本列与毛利隐藏，保存时由系统按供应商成本模板核算。 */
+const seeCost = canSeeCost()
 const lines = ref<LineDraft[]>([]),
   busy = ref(false),
   filling = ref(false),
@@ -158,11 +160,15 @@ async function applyTemplate() {
     }))
     if (!lines.value.length) lines.value.push(blankLine())
     const missing = r.items.filter((i) => i.unit_cost == null).length
-    prefillNote.value = !form.value.supplierId
-      ? '已按项目类型带出配置和售价；选择供应商后带出成本。'
-      : missing
-        ? `已带出配置、售价和供应商成本；${missing} 项该供应商模板未报成本，请补充。`
-        : '已带出配置、售价和供应商成本，可逐行修改。'
+    prefillNote.value = !seeCost
+      ? form.value.supplierId
+        ? '已按项目类型带出配置和售价；成本由系统按该供应商的成本模板核算。'
+        : '已按项目类型带出配置和售价；请选择供应商，系统按其成本模板核算成本。'
+      : !form.value.supplierId
+        ? '已按项目类型带出配置和售价；选择供应商后带出成本。'
+        : missing
+          ? `已带出配置、售价和供应商成本；${missing} 项该供应商模板未报成本，请补充。`
+          : '已带出配置、售价和供应商成本，可逐行修改。'
   } catch (e) {
     ElMessage.error((e as Error).message)
   } finally {
@@ -327,7 +333,7 @@ async function save() {
         供应商与报价条件
       </div>
       <div class="step-grid four">
-        <el-form-item label="供应商（带出成本）">
+        <el-form-item :label="seeCost ? '供应商（带出成本）' : '供应商'">
           <el-select
             v-model="form.supplierId"
             clearable
@@ -384,7 +390,7 @@ async function save() {
 
       <div class="step-head">
         <span class="step-no">3</span>
-        报价明细与毛利
+        {{ seeCost ? '报价明细与毛利' : '报价明细' }}
         <el-button
           v-if="form.projectTypeId"
           size="small"
@@ -422,22 +428,22 @@ async function save() {
             <el-input-number v-model="row.unitPrice" :min="0" :precision="2" :controls="false" placeholder="必填" />
           </template>
         </el-table-column>
-        <el-table-column label="材料成本" width="116">
+        <el-table-column v-if="seeCost" label="材料成本" width="116">
           <template #default="{ row }">
             <el-input-number v-model="row.materialCost" :min="0" :precision="2" :controls="false" placeholder="—" />
           </template>
         </el-table-column>
-        <el-table-column label="人工成本" width="104">
+        <el-table-column v-if="seeCost" label="人工成本" width="104">
           <template #default="{ row }">
             <el-input-number v-model="row.laborCost" :min="0" :precision="2" :controls="false" placeholder="—" />
           </template>
         </el-table-column>
-        <el-table-column label="财务成本" width="104">
+        <el-table-column v-if="seeCost" label="财务成本" width="104">
           <template #default="{ row }">
             <el-input-number v-model="row.financeCost" :min="0" :precision="2" :controls="false" placeholder="—" />
           </template>
         </el-table-column>
-        <el-table-column label="单台成本" width="104" align="right">
+        <el-table-column v-if="seeCost" label="单台成本" width="104" align="right">
           <template #default="{ row }">
             <span :class="unitCost(row) == null ? 'muted' : ''">
               {{ unitCost(row) == null ? '待补充' : money(unitCost(row)) }}
@@ -447,7 +453,7 @@ async function save() {
         <el-table-column label="销售小计" width="112" align="right">
           <template #default="{ row }">{{ lineAmount(row) == null ? '待补充' : money(lineAmount(row)) }}</template>
         </el-table-column>
-        <el-table-column label="毛利率" width="84" align="right">
+        <el-table-column v-if="seeCost" label="毛利率" width="84" align="right">
           <template #default="{ row }">
             <span :class="lineMargin(row) != null && lineMargin(row)! < 0 ? 'danger-text' : ''">
               {{ lineMargin(row) == null ? '—' : percent(lineMargin(row)) }}
@@ -467,36 +473,36 @@ async function save() {
           <span>报价合计</span>
           <strong>{{ money(total) }}</strong>
         </div>
-        <div>
+        <div v-if="seeCost">
           <span>材料成本</span>
           <strong>{{ money(part('materialCost')) }}</strong>
         </div>
-        <div>
+        <div v-if="seeCost">
           <span>人工成本</span>
           <strong>{{ money(part('laborCost')) }}</strong>
         </div>
-        <div>
+        <div v-if="seeCost">
           <span>财务成本</span>
           <strong>{{ money(part('financeCost')) }}</strong>
         </div>
-        <div>
+        <div v-if="seeCost">
           <span>成本合计</span>
           <strong>{{ cost == null ? '待补充' : money(cost) }}</strong>
         </div>
-        <div>
+        <div v-if="seeCost">
           <span>预计毛利</span>
           <strong :class="profit != null && profit < 0 ? 'danger-text' : ''">
             {{ profit == null ? '待补充' : money(profit) }}
           </strong>
         </div>
-        <div class="mb-main">
+        <div v-if="seeCost" class="mb-main">
           <span>毛利率</span>
           <strong :class="margin != null && margin < 0 ? 'danger-text' : ''">
             {{ margin == null ? '待补充' : percent(margin) }}
           </strong>
         </div>
       </div>
-      <p v-if="!costComplete" class="muted cost-hint">有明细未填成本，毛利与毛利率暂不计算。</p>
+      <p v-if="seeCost && !costComplete" class="muted cost-hint">有明细未填成本，毛利与毛利率暂不计算。</p>
 
       <el-form-item label="对客备注（本单）">
         <el-input

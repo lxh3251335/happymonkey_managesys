@@ -154,8 +154,8 @@ public class CatalogService {
         @NotNull @Size(max = 200) List<@Valid CostLine> items
     ) {}
 
-    /** 同一供应商、同一项目类型只保留一份模板：已存在则更新。 */
-    @PreAuthorize("hasAnyRole('ADMIN','FINANCE')")
+    /** 同一供应商、同一项目类型只保留一份模板：已存在则更新。可包含标准配置以外的产品。 */
+    @PreAuthorize("hasAnyRole('ADMIN','MANAGER','FINANCE')")
     @Transactional
     public String saveSupplierTemplate(@Valid SupplierTemplateInput s) {
         var supplier = db.one("SELECT * FROM partner WHERE id=?", s.supplierId());
@@ -203,6 +203,116 @@ public class CatalogService {
         }
         db.audit("SUPPLIER_TEMPLATE_SAVED", id, supplier.get("name") + " 成本模板，" + s.items().size() + " 项");
         return id;
+    }
+
+    /**
+     * 从历史报价推荐标准配置：取该业务线各门店的报价（已确认的优先，否则最新版本），
+     * 按“产品 + 数量”组合统计出现次数，返回最常见的几种配置；每个产品的售价取该配置下出现最多的单价（并列取最近的）。
+     */
+    public Map<String, Object> suggest(String brand) {
+        String line = business.canonical(brand);
+        var rows = db.jdbc.queryForList(
+            """
+            SELECT p.id AS project_id,q.id AS quote_id,q.status,q.version,q.created_at,
+              i.product_id,i.quantity,i.unit_price,pr.name,pr.specification,pr.model
+            FROM project p JOIN quotation q ON q.project_id=p.id JOIN quotation_item i ON i.quotation_id=q.id
+            JOIN product pr ON pr.id=i.product_id
+            WHERE p.brand=? ORDER BY q.created_at
+            """,
+            line
+        );
+        // 每个门店只取一份报价：已确认的优先，否则版本号最大的
+        var chosen = new HashMap<String, Map<String, Object>>();
+        for (var r : rows) {
+            var cur = chosen.get(r.get("project_id").toString());
+            boolean accepted = "ACCEPTED".equals(r.get("status"));
+            boolean better =
+                cur == null ||
+                (accepted && !"ACCEPTED".equals(cur.get("status"))) ||
+                (accepted == "ACCEPTED".equals(cur.get("status")) &&
+                    ((Number) r.get("version")).intValue() > ((Number) cur.get("version")).intValue());
+            if (better) chosen.put(r.get("project_id").toString(), r);
+        }
+        var quoteIds = new HashSet<String>();
+        for (var c : chosen.values()) quoteIds.add(c.get("quote_id").toString());
+        var lines = new LinkedHashMap<String, List<Map<String, Object>>>();
+        for (var r : rows)
+            if (quoteIds.contains(r.get("quote_id").toString())) lines
+                .computeIfAbsent(r.get("quote_id").toString(), k -> new ArrayList<>())
+                .add(r);
+        // 按配置签名分组
+        var groups = new LinkedHashMap<String, List<List<Map<String, Object>>>>();
+        for (var items : lines.values()) {
+            var sig = items
+                .stream()
+                .map(
+                    i ->
+                        i.get("product_id") +
+                        "x" +
+                        new BigDecimal(i.get("quantity").toString()).stripTrailingZeros().toPlainString()
+                )
+                .sorted()
+                .toList();
+            groups.computeIfAbsent(String.join("|", sig), k -> new ArrayList<>()).add(items);
+        }
+        var ranked = new ArrayList<>(groups.values());
+        ranked.sort((a, b) -> b.size() - a.size());
+        var options = new ArrayList<Map<String, Object>>();
+        for (var g : ranked.subList(0, Math.min(3, ranked.size()))) {
+            var items = new ArrayList<Map<String, Object>>();
+            for (var first : g.get(0)) {
+                String productId = first.get("product_id").toString();
+                // 该配置下此产品各单价出现次数，取最多的；并列取最近的
+                var counts = new LinkedHashMap<String, Integer>();
+                for (var quote : g)
+                    for (var i : quote)
+                        if (productId.equals(i.get("product_id")) && i.get("unit_price") != null) counts.merge(
+                            new BigDecimal(i.get("unit_price").toString()).stripTrailingZeros().toPlainString(),
+                            1,
+                            Integer::sum
+                        );
+                String price = null;
+                int best = 0;
+                for (var e : counts.entrySet())
+                    if (e.getValue() >= best) {
+                        best = e.getValue();
+                        price = e.getKey();
+                    }
+                var item = new LinkedHashMap<String, Object>();
+                item.put("product_id", productId);
+                item.put("name", first.get("name"));
+                item.put("specification", first.get("specification"));
+                item.put("model", first.get("model"));
+                item.put("quantity", first.get("quantity"));
+                item.put("unit_price", price == null ? null : new BigDecimal(price));
+                items.add(item);
+            }
+            var option = new LinkedHashMap<String, Object>();
+            option.put("stores", g.size());
+            option.put("items", items);
+            options.add(option);
+        }
+        var out = new LinkedHashMap<String, Object>();
+        out.put("brand", line);
+        out.put("stores", lines.size());
+        out.put("options", options);
+        return out;
+    }
+
+    /** 供应商成本模板中各产品的成本（产品 ID → 材料 / 人工 / 财务成本）；没有模板返回空。 */
+    public Map<String, Map<String, Object>> supplierCosts(String supplierId, String typeId) {
+        var out = new HashMap<String, Map<String, Object>>();
+        if (supplierId == null || typeId == null) return out;
+        for (var c : db.jdbc.queryForList(
+            """
+            SELECT i.* FROM supplier_template_item i JOIN supplier_template t ON t.id=i.template_id
+            WHERE t.supplier_id=? AND t.project_type_id=? AND t.active=TRUE
+            """,
+            supplierId,
+            typeId
+        ))
+            out.put(c.get("product_id").toString(), c);
+        return out;
     }
 
     /**

@@ -19,6 +19,8 @@ public class SupplierService {
         this.db = db;
     }
 
+    /** 供应商报价属于成本数据：仅系统管理员、管理层、财务可见与维护。 */
+    @PreAuthorize("hasAnyRole('ADMIN','MANAGER','FINANCE')")
     public List<Map<String, Object>> offers() {
         return db.jdbc.queryForList(
             """
@@ -73,6 +75,7 @@ public class SupplierService {
         return Map.of("id", id);
     }
 
+    @PreAuthorize("hasAnyRole('ADMIN','MANAGER','FINANCE')")
     public List<Map<String, Object>> compare(String productId, BigDecimal quantity) {
         if (quantity.signum() <= 0 || quantity.compareTo(new BigDecimal("999999")) > 0) throw new ApiException(
             "请输入有效比价数量"

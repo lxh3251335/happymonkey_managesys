@@ -3,11 +3,9 @@ import { ref, computed, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Plus, Search } from '@element-plus/icons-vue'
 import PageHeader from '../components/PageHeader.vue'
-import ProjectTypeManager from '../components/ProjectTypeManager.vue'
-import SupplierTemplateManager from '../components/SupplierTemplateManager.vue'
 import ProductDrawings from '../components/ProductDrawings.vue'
 import ExcelTools from '../components/ExcelTools.vue'
-import { api, post, put, canWrite, canFinance } from '../api'
+import { api, post, put, canWrite, canSeeCost } from '../api'
 import { dict, loadDictionaries } from '../dictionaries'
 import type { Partner, Product } from '../types'
 import { money, missingInvoiceFields, invoiceText, invoiceTypeName } from '../utils'
@@ -154,17 +152,11 @@ const excel = computed(
       CUSTOMER: { dataset: 'customers', title: '客户资料', canImport: canWrite() },
       SUPPLIER: { dataset: 'suppliers', title: '供应商资料', canImport: canWrite() },
       PRODUCT: { dataset: 'products', title: '标准产品库', canImport: canWrite() },
-      TYPES: { dataset: 'project-types', title: '项目类型', canImport: canWrite() },
-      COSTS: { dataset: 'supplier-templates', title: '供应商成本模板', canImport: canFinance() },
     })[tab.value]!,
 )
-/** 导入后重新挂载项目类型 / 成本模板组件以刷新数据。 */
-const reloadKey = ref(0)
 async function afterImport() {
-  reloadKey.value++
   await load()
 }
-const isConfig = computed(() => tab.value === 'TYPES' || tab.value === 'COSTS')
 const kindName = computed(() => (tab.value === 'PRODUCT' ? '标准产品' : tab.value === 'CUSTOMER' ? '客户' : '供应商'))
 async function save() {
   if (
@@ -193,7 +185,7 @@ onMounted(load)
   <div>
     <PageHeader
       title="基础资料"
-      description="客户、供应商、标准产品、项目类型与供应商成本，报价与经营分析都以此为基础。"
+      description="客户、供应商与标准产品库。项目类型、供应商成本与报价模板在“报价配置”中维护。"
     >
       <ExcelTools
         :key="excel.dataset"
@@ -202,7 +194,7 @@ onMounted(load)
         :can-import="excel.canImport"
         @imported="afterImport"
       />
-      <el-button v-if="canWrite() && !isConfig" type="primary" size="small" @click="open">
+      <el-button v-if="canWrite()" type="primary" size="small" @click="open">
         <el-icon><Plus /></el-icon>
         {{ tab === 'PRODUCT' ? '新增标准产品' : tab === 'CUSTOMER' ? '新增客户' : '新增供应商' }}
       </el-button>
@@ -214,11 +206,9 @@ onMounted(load)
           <el-tab-pane label="客户资料" name="CUSTOMER" />
           <el-tab-pane label="供应商资料" name="SUPPLIER" />
           <el-tab-pane label="标准产品库" name="PRODUCT" />
-          <el-tab-pane label="项目类型" name="TYPES" />
-          <el-tab-pane label="供应商成本模板" name="COSTS" />
         </el-tabs>
         <el-input
-          v-if="!isConfig && tab !== 'PRODUCT'"
+          v-if="tab !== 'PRODUCT'"
           v-model="keyword"
           :prefix-icon="Search"
           :placeholder="tab === 'PRODUCT' ? '搜索名称、规格、型号或供应商' : '搜索名称或联系人'"
@@ -241,9 +231,7 @@ onMounted(load)
         />
         <span class="muted count">共 {{ filteredProducts.length }} 个产品</span>
       </div>
-      <ProjectTypeManager v-if="tab === 'TYPES'" :key="`t${reloadKey}`" :products="products" />
-      <SupplierTemplateManager v-else-if="tab === 'COSTS'" :key="`c${reloadKey}`" />
-      <el-table v-else-if="tab !== 'PRODUCT'" :data="filteredPartners.slice((page - 1) * 12, page * 12)">
+      <el-table v-if="tab !== 'PRODUCT'" :data="filteredPartners.slice((page - 1) * 12, page * 12)">
         <el-table-column :label="tab === 'CUSTOMER' ? '客户名称' : '供应商名称'" prop="name" min-width="220" />
         <el-table-column label="联系人 / 电话" min-width="150">
           <template #default="{ row }">
@@ -302,7 +290,7 @@ onMounted(load)
           <el-table-column label="历史售价参考" align="right" min-width="120">
             <template #default="{ row }">{{ money(row.reference_price) }}</template>
           </el-table-column>
-          <el-table-column label="历史成本参考" align="right" min-width="120">
+          <el-table-column v-if="canSeeCost()" label="历史成本参考" align="right" min-width="120">
             <template #default="{ row }">{{ money(row.reference_cost) }}</template>
           </el-table-column>
           <el-table-column v-if="canWrite()" label="操作" width="150" fixed="right">
@@ -316,7 +304,7 @@ onMounted(load)
           参考价格取最近一笔有记录的报价 / 成本，不代表供应商当前有效报价。报价时请核对配置、时间和税口径。
         </div>
       </template>
-      <div v-if="!isConfig" class="pagination">
+      <div class="pagination">
         <el-pagination
           v-model:current-page="page"
           :total="tab === 'PRODUCT' ? filteredProducts.length : filteredPartners.length"

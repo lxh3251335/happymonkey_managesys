@@ -8,7 +8,7 @@ import StatusTag from '../components/StatusTag.vue'
 import QuoteEditor from '../components/QuoteEditor.vue'
 import QuoteDetail from '../components/QuoteDetail.vue'
 import CostCorrection from '../components/CostCorrection.vue'
-import { api, post, canWrite, canFinance, session } from '../api'
+import { api, post, canWrite, canFinance, canSeeCost, session } from '../api'
 import { activeCompanies, companyLabel, defaultCompany, loadDictionaries } from '../dictionaries'
 import type { Quote, Product, Project } from '../types'
 import { money, percent, statusName, afterDays } from '../utils'
@@ -167,7 +167,11 @@ onMounted(async () => {
     <PageHeader
       eyebrow="CUSTOMER QUOTATIONS"
       title="客户报价"
-      description="保留每一版报价，让销售价格、内部成本和利润清晰可查。"
+      :description="
+        canSeeCost()
+          ? '保留每一版报价，让销售价格、内部成本和利润清晰可查。'
+          : '保留每一版报价；成本由系统按供应商成本模板核算，财务复核。'
+      "
     >
       <el-button v-if="canWrite()" type="primary" @click="create()">
         <el-icon><Plus /></el-icon>
@@ -187,7 +191,7 @@ onMounted(async () => {
         <el-select v-model="status" clearable placeholder="全部状态" @change="page = 1">
           <el-option v-for="(label, key) in statusName" :key="key" :label="label" :value="key" />
         </el-select>
-        <el-checkbox v-model="incomplete" @change="page = 1">仅看待补充</el-checkbox>
+        <el-checkbox v-if="canSeeCost()" v-model="incomplete" @change="page = 1">仅看待补充</el-checkbox>
         <span class="filter-count">{{ filtered.length }} 份报价</span>
       </div>
       <el-table :data="filtered.slice((page - 1) * 12, page * 12)">
@@ -204,15 +208,15 @@ onMounted(async () => {
         <el-table-column label="报价金额" align="right" min-width="135">
           <template #default="{ row }">{{ money(row.amount) }}</template>
         </el-table-column>
-        <el-table-column label="成本" align="right" min-width="125">
+        <el-table-column v-if="canSeeCost()" label="成本" align="right" min-width="125">
           <template #default="{ row }">{{ money(row.cost) }}</template>
         </el-table-column>
-        <el-table-column label="预计利润" align="right" min-width="125">
+        <el-table-column v-if="canSeeCost()" label="预计利润" align="right" min-width="125">
           <template #default="{ row }">
             <span :class="row.profit < 0 ? 'danger-text' : 'profit-text'">{{ money(row.profit) }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="销售毛利率" align="right" width="120">
+        <el-table-column v-if="canSeeCost()" label="销售毛利率" align="right" width="120">
           <template #default="{ row }">{{ percent(row.gross_margin) }}</template>
         </el-table-column>
         <el-table-column label="状态" width="120">
@@ -243,6 +247,17 @@ onMounted(async () => {
       <QuoteDetail v-if="detail" :quote="detail" />
       <template #footer>
         <el-button @click="detailOpen = false">关闭</el-button>
+        <el-button
+          v-if="detail?.contract_no && detail.customer_id"
+          @click="
+            router.push({
+              path: '/cash',
+              query: { tab: 'contracts', customer: detail.customer_id, contract: detail.contract_no },
+            })
+          "
+        >
+          查看合同 {{ detail.contract_no }}
+        </el-button>
         <el-button v-if="canWrite()" @click="create(true)">复制为新版本</el-button>
         <el-button v-if="canFinance() && detail" @click="fixing = true">修正成本</el-button>
         <el-button v-if="detail" :loading="busy" @click="output('quote')">输出报价单</el-button>

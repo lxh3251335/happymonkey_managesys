@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
+import { MagicStick } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { Delete, Plus } from '@element-plus/icons-vue'
 import { api, post, put, canWrite } from '../api'
@@ -58,9 +59,54 @@ async function open(t?: ProjectType) {
         active: true,
         items: [{ productId: '', quantity: 1, unitPrice: undefined }],
       }
+  suggestion.value = null
   dialog.value = true
   if (!quotes.value.length) quotes.value = await api<Quote[]>('/quotes').catch(() => [])
 }
+// ---------- 从历史报价推荐配置 ----------
+interface SuggestItem {
+  product_id: string
+  name: string
+  specification: string
+  model: string
+  quantity: number
+  unit_price: number | null
+}
+interface Suggestion {
+  brand: string
+  stores: number
+  options: { stores: number; items: SuggestItem[] }[]
+}
+const suggestion = ref<Suggestion | null>(null),
+  suggesting = ref(false)
+async function suggest() {
+  suggesting.value = true
+  try {
+    suggestion.value = await api<Suggestion>(`/project-types/suggest?brand=${encodeURIComponent(form.value.brand)}`)
+    if (!suggestion.value.options.length) ElMessage.info('该业务线还没有历史报价，请手动添加产品')
+  } catch (e) {
+    ElMessage.error((e as Error).message)
+  } finally {
+    suggesting.value = false
+  }
+}
+function applySuggestion(items: SuggestItem[]) {
+  form.value.items = items.map((i) => ({
+    productId: i.product_id,
+    quantity: Number(i.quantity),
+    unitPrice: i.unit_price == null ? undefined : Number(i.unit_price),
+  }))
+  suggestion.value = null
+  ElMessage.success(`已带入 ${items.length} 项配置和常用售价，可再调整`)
+}
+/** 从“供应商成本”跳转过来时，直接打开指定类型的编辑。 */
+async function openById(id: string) {
+  if (!types.value.length) await load()
+  const t = types.value.find((x) => x.id === id)
+  if (t) await open(t)
+}
+defineExpose({ openById })
+
 async function copyQuote() {
   if (!copyFrom.value) return
   try {
@@ -147,7 +193,32 @@ async function save() {
             <el-switch v-model="form.active" active-text="启用" inactive-text="停用" />
           </el-form-item>
         </div>
-        <el-form-item label="从已有报价带入配置（可选）">
+        <div class="suggest-box">
+          <div class="suggest-head">
+            <span>不知道怎么填？按「{{ form.brand }}」的历史报价，找出最多门店使用的配置和常用售价。</span>
+            <el-button size="small" type="primary" plain :icon="MagicStick" :loading="suggesting" @click="suggest">
+              从历史报价推荐配置
+            </el-button>
+          </div>
+          <div v-if="suggestion && suggestion.options.length" class="suggest-list">
+            <div class="muted">共分析 {{ suggestion.stores }} 家门店的报价，最常见的配置：</div>
+            <div v-for="(o, i) in suggestion.options" :key="i" class="suggest-option">
+              <span class="suggest-rank">{{ o.stores }} 店</span>
+              <span class="suggest-items">
+                {{
+                  o.items
+                    .map(
+                      (x) =>
+                        `${x.name}×${Number(x.quantity)}（${x.unit_price == null ? '无售价' : money(x.unit_price)}）`,
+                    )
+                    .join('、')
+                }}
+              </span>
+              <el-button size="small" link type="primary" @click="applySuggestion(o.items)">用这个</el-button>
+            </div>
+          </div>
+        </div>
+        <el-form-item label="或从某一份报价带入配置（可选）">
           <div class="copy-row">
             <el-select v-model="copyFrom" filterable clearable placeholder="选择一个同品牌门店的报价">
               <el-option
@@ -181,7 +252,7 @@ async function save() {
           <el-table-column label="小计" width="120" align="right">
             <template #default="{ row }">{{ money(row.quantity * (row.unitPrice || 0)) }}</template>
           </el-table-column>
-          <el-table-column width="50">
+          <el-table-column width="60" align="center">
             <template #default="{ $index }">
               <el-button :icon="Delete" link type="danger" aria-label="删除" @click="form.items.splice($index, 1)" />
             </template>
@@ -212,6 +283,38 @@ async function save() {
   </div>
 </template>
 <style scoped>
+.suggest-box {
+  border: 1px dashed #c9d3c2;
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-bottom: 12px;
+  font-size: 13px;
+}
+.suggest-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.suggest-list {
+  margin-top: 8px;
+}
+.suggest-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 6px 0;
+  border-top: 1px solid #eef1ec;
+}
+.suggest-rank {
+  flex: 0 0 48px;
+  color: #24634f;
+  font-weight: 600;
+}
+.suggest-items {
+  flex: 1;
+  color: #33463e;
+}
 .manager-bar {
   display: flex;
   align-items: center;

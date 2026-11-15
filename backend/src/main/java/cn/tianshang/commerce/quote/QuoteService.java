@@ -1,7 +1,7 @@
 package cn.tianshang.commerce.quote;
 
 import cn.tianshang.commerce.common.*;
-import cn.tianshang.commerce.master.MasterService;
+import cn.tianshang.commerce.project.ProjectService;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -21,30 +21,33 @@ public class QuoteService {
     private final Database db;
     private final QuoteTemplateService templates;
     private final ObjectMapper json;
-    private final MasterService masters;
+    private final ProjectService projects;
     private final Ownership ownership;
     private final cn.tianshang.commerce.dictionary.DictionaryService dictionary;
+    private final cn.tianshang.commerce.catalog.CatalogService catalog;
 
     public QuoteService(
         Database db,
         QuoteTemplateService templates,
         ObjectMapper json,
-        @Lazy MasterService masters,
+        @Lazy ProjectService projects,
         Ownership ownership,
-        cn.tianshang.commerce.dictionary.DictionaryService dictionary
+        cn.tianshang.commerce.dictionary.DictionaryService dictionary,
+        cn.tianshang.commerce.catalog.CatalogService catalog
     ) {
         this.db = db;
         this.templates = templates;
         this.json = json;
-        this.masters = masters;
+        this.projects = projects;
         this.ownership = ownership;
         this.dictionary = dictionary;
+        this.catalog = catalog;
     }
 
     /** 报价列表；商务只看到自己负责门店的报价。 */
     public List<Map<String, Object>> list() {
         String sql = """
-            SELECT q.*,p.name AS project_name,p.brand,p.owner_id,p.contract_no,c.name AS customer_name,
+            SELECT q.*,p.name AS project_name,p.brand,p.owner_id,p.contract_no,p.customer_id,p.code AS project_code,c.name AS customer_name,
               u.display_name AS owner_name,k.name AS company_name
             FROM quotation q JOIN project p ON p.id=q.project_id JOIN partner c ON c.id=p.customer_id
             LEFT JOIN app_user u ON u.id=p.owner_id LEFT JOIN company k ON k.id=q.company_id
@@ -67,7 +70,7 @@ public class QuoteService {
         var q = db.one(
             """
             SELECT q.*,p.name AS project_name,p.brand,p.code AS project_code,p.external_id,
-            p.city,p.contract_no,c.name AS customer_name,c.contact AS customer_contact,c.phone AS customer_phone,
+            p.city,p.contract_no,p.customer_id,c.name AS customer_name,c.contact AS customer_contact,c.phone AS customer_phone,
             c.invoice_title AS customer_invoice_title,c.tax_no AS customer_tax_no,c.address AS customer_address,
             c.invoice_phone AS customer_invoice_phone,c.bank_name AS customer_bank_name,c.bank_account AS customer_bank_account,
             t.name AS template_name,s.name AS supplier_name,pt.name AS project_type_name,
@@ -96,22 +99,21 @@ public class QuoteService {
         if (input.newProject() != null) {
             var n = input.newProject();
             var type = db.one("SELECT * FROM project_type WHERE id=?", n.projectTypeId());
-            projectId = masters
-                .project(
-                    new MasterService.ProjectInput(
-                        n.name(),
-                        type.get("brand").toString(),
-                        n.customerId(),
-                        null,
-                        n.orderDate(),
-                        null,
-                        n.contractNo(),
-                        null,
-                        n.city(),
-                        n.projectTypeId()
-                    )
+            projectId = projects.create(
+                new ProjectService.ProjectInput(
+                    n.name(),
+                    type.get("brand").toString(),
+                    n.customerId(),
+                    null,
+                    n.orderDate(),
+                    null,
+                    n.contractNo(),
+                    n.city(),
+                    n.projectTypeId(),
+                    null,
+                    null
                 )
-                .get("id");
+            );
             if (projectTypeId == null) projectTypeId = n.projectTypeId();
         }
         var project = db.one("SELECT * FROM project WHERE id=? FOR UPDATE", projectId);
@@ -153,7 +155,10 @@ public class QuoteService {
             companyId
         );
         int pos = 0;
-        for (var line : input.items()) {
+        // 看不到成本的角色（业务员）提交的成本一律忽略，按供应商成本模板取成本；模板没有的产品成本待财务补充
+        var templateCosts = Roles.canSeeCost() ? null : catalog.supplierCosts(supplierId, projectTypeId);
+        for (var submitted : input.items()) {
+            var line = templateCosts == null ? submitted : withTemplateCost(submitted, templateCosts);
             var product = db.one("SELECT * FROM product WHERE id=?", line.productId());
             db.jdbc.update(
                 """
@@ -284,6 +289,21 @@ public class QuoteService {
             }
         }
         return withCompany(templates.printable((String) quote.get("template_id")), (String) quote.get("company_id"));
+    }
+
+    private static QuoteInput.Line withTemplateCost(QuoteInput.Line l, Map<String, Map<String, Object>> costs) {
+        var c = costs.get(l.productId());
+        java.util.function.Function<String, BigDecimal> v = k ->
+            c == null || c.get(k) == null ? null : new BigDecimal(c.get(k).toString());
+        return new QuoteInput.Line(
+            l.productId(),
+            l.quantity(),
+            l.unitPrice(),
+            null,
+            v.apply("material_cost"),
+            v.apply("labor_cost"),
+            v.apply("finance_cost")
+        );
     }
 
     /** 报价选择了签约主体时，抬头、税号、地址电话、收款账户使用签约主体的资料。 */

@@ -38,6 +38,13 @@ export interface Project {
   project_type_name: string | null
   owner_id: string | null
   owner_name: string | null
+  shipped_on: string | null
+  expected_ship_on: string | null
+  consignee: string | null
+  consignee_phone: string | null
+  ship_address: string | null
+  courier: string | null
+  tracking_no: string | null
 }
 export interface Product {
   id: string
@@ -99,6 +106,7 @@ export interface Quote {
   outstanding: number
   overdue: boolean
   template_name?: string | null
+  customer_id?: string
   owner_id?: string | null
   owner_name?: string | null
   company_id?: string | null
@@ -122,6 +130,7 @@ export interface Quote {
 }
 export interface Offer {
   id: string
+  supplier_id: string
   supplier_name: string
   product_id: string
   product_name: string
@@ -140,19 +149,6 @@ export interface Offer {
   eligible: boolean
   landed_total: number
   landed_unit: number
-}
-export interface CashEntry {
-  id: string
-  quotation_id: string
-  quote_code: string
-  project_name: string
-  customer_name: string
-  kind: string
-  amount: number
-  paid_on: string
-  reference: string
-  note: string
-  reverses_id: string | null
 }
 export interface ImportBatch {
   id: string
@@ -213,6 +209,22 @@ export interface Dashboard {
   by_city: BizRow[]
   /** 按销售负责人汇总的业绩 */
   by_owner: BizRow[]
+  /** 合同执行概况（当前筛选范围） */
+  execution: {
+    contracts: number
+    draft: number
+    signed: number
+    completed: number
+    terminated: number
+    terminated_amount: number
+    invoiced: number
+    uninvoiced: number
+    invoiced_unreceived: number
+    actual_cost: number
+    actual_cost_contracts: number
+    unarchived: number
+    pending_changes: number
+  }
   by_line: BizRow[]
   /** contract_amount 为该账龄段的未收余额 */
   aging: BizRow[]
@@ -240,6 +252,10 @@ export interface ContractItem {
   quote_code: string
   status: Quote['status']
   shipping_status: string | null
+  shipped_on: string | null
+  expected_ship_on: string | null
+  courier: string | null
+  tracking_no: string | null
   order_date: string | null
   due_date: string | null
   amount: number
@@ -443,6 +459,23 @@ export interface ContractReceipt {
   reverses_id: string | null
   allocations: number
   refunded: number
+}
+/** 回款流水：合同收付款（含门店分摊）或未关联合同的历史门店流水。 */
+export interface ReceiptRow {
+  id: string
+  source: 'CONTRACT' | 'STORE'
+  kind: 'RECEIPT' | 'REFUND'
+  amount: number
+  paid_on: string
+  reference: string
+  note: string | null
+  reverses_id: string | null
+  refunded: number
+  customer_id: string
+  customer_name: string
+  contract_key: string
+  project_name?: string
+  allocations: { project_name: string; project_code: string; amount: number; reference: string }[]
 }
 export interface Audit {
   id: string

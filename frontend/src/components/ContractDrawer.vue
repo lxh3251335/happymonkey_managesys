@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { api, canFinance, canWrite, isAdmin, post, session } from '../api'
+import { api, canApprove, canFinance, canSeeCost, canWrite, post, session } from '../api'
 import StatusTag from './StatusTag.vue'
 import ContractInfoDialog from './ContractInfoDialog.vue'
 import { changeStatusName, contractStatusName, costCategoryName, invoiceStatusName } from '../dictionaries'
 import type { ContractChange, ContractCost, ContractDetail, ContractInvoice, Partner } from '../types'
 import { day, money, percent, today } from '../utils'
+import { useRouter } from 'vue-router'
 
 /** 合同详情：要素、执行（开票 / 到款 / 发货 / 成本）、变更审批与全程操作记录。 */
 const props = defineProps<{ modelValue: boolean; customerId: string; contractKey: string }>()
@@ -37,7 +38,8 @@ async function load() {
     ;[c.value, invoices.value, costs.value] = await Promise.all([
       api<ContractDetail>(`/contracts/detail?${q()}`),
       api<ContractInvoice[]>(`/contracts/invoices?${q()}`),
-      api<ContractCost[]>(`/contracts/costs?${q()}`),
+      // 实际成本仅成本可见角色加载
+      canSeeCost() ? api<ContractCost[]>(`/contracts/costs?${q()}`) : Promise.resolve([] as ContractCost[]),
     ])
   } catch (e) {
     ElMessage.error((e as Error).message)
@@ -63,12 +65,14 @@ async function refresh() {
 defineExpose({ refresh })
 
 const pending = computed(() => c.value?.changes.filter((x) => x.status === 'PENDING') || [])
-const isOwner = computed(() => !!c.value && c.value.owner_id != null && session.user?.id === c.value.owner_id)
-const canCost = computed(() => canFinance() || (session.user?.role === 'SALES' && isOwner.value) || isAdmin())
+/** 实际成本由系统管理员、管理层、财务登记。 */
+const canCost = computed(() => canSeeCost())
 const firstQuote = computed(() => c.value?.items[0]?.quote_id)
 function printContract() {
   if (firstQuote.value) window.open(`/print/${firstQuote.value}/contract`, '_blank', 'noopener')
 }
+
+const router = useRouter()
 
 // ---------- 开票 ----------
 const invoiceOpen = ref(false)
@@ -232,6 +236,10 @@ const eventName: Record<string, string> = {
   CONTRACT_INVOICE_DELETED: '删除发票登记',
   CONTRACT_COST: '登记成本',
   CONTRACT_COST_DELETED: '删除成本登记',
+  PROJECT_DELIVERY: '发货物流',
+  PROJECT_UPDATED: '修改门店',
+  PROJECT_CREATED: '登记门店',
+  PROJECT_OWNER_ASSIGNED: '分配负责人',
   ATTACHMENT_UPLOADED: '上传附件',
   ATTACHMENT_DOWNLOADED: '下载附件',
   ATTACHMENT_DELETED: '删除附件',
@@ -262,7 +270,7 @@ const time = (s: string | null) => (s ? String(s).replace('T', ' ').slice(0, 16)
           </div>
           <div class="actions">
             <el-button v-if="canWrite() || canFinance()" size="small" type="primary" @click="editOpen = true">
-              {{ c.status === 'DRAFT' || isAdmin() ? '编辑合同' : '申请变更' }}
+              {{ c.status === 'DRAFT' || canApprove() ? '编辑合同' : '申请变更' }}
             </el-button>
             <el-button v-if="canFinance()" size="small" @click="openInvoice('INVOICE')">登记开票</el-button>
             <el-button
@@ -314,7 +322,7 @@ const time = (s: string | null) => (s ? String(s).replace('T', ' ').slice(0, 16)
             <strong>{{ c.shipped }} / {{ c.projects }}</strong>
             <small>已发货 / 门店</small>
           </div>
-          <div>
+          <div v-if="canSeeCost()">
             <span>毛利</span>
             <strong :class="c.profit != null && c.profit < 0 ? 'danger-text' : ''">
               {{ c.profit == null ? '—' : money(c.profit) }}
@@ -369,11 +377,34 @@ const time = (s: string | null) => (s ? String(s).replace('T', ' ').slice(0, 16)
               <el-table-column label="下单" width="100">
                 <template #default="{ row }">{{ day(row.order_date) }}</template>
               </el-table-column>
-              <el-table-column label="发货" width="80">
-                <template #default="{ row }">{{ row.shipping_status || '未登记' }}</template>
+              <el-table-column label="发货 / 物流" min-width="170">
+                <template #default="{ row }">
+                  {{ row.shipping_status || '未登记' }}
+                  <small v-if="row.shipped_on" class="cell-secondary">{{ day(row.shipped_on) }} 发出</small>
+                  <small v-else-if="row.expected_ship_on" class="cell-secondary">
+                    预计 {{ day(row.expected_ship_on) }}
+                  </small>
+                  <small v-if="row.tracking_no" class="cell-secondary">
+                    {{ row.courier || '' }} {{ row.tracking_no }}
+                  </small>
+                  <el-button
+                    v-if="canWrite()"
+                    link
+                    type="primary"
+                    class="cell-link"
+                    @click="router.push({ path: '/projects', query: { delivery: row.project_id } })"
+                  >
+                    在项目台账办理发货
+                  </el-button>
+                </template>
               </el-table-column>
-              <el-table-column label="报价" width="100">
-                <template #default="{ row }"><StatusTag :status="row.status" /></template>
+              <el-table-column label="报价" width="120">
+                <template #default="{ row }">
+                  <el-button link type="primary" @click="router.push(`/quotes?detail=${row.quote_id}`)">
+                    {{ row.quote_code }}
+                  </el-button>
+                  <StatusTag :status="row.status" />
+                </template>
               </el-table-column>
               <el-table-column label="金额" align="right" min-width="110">
                 <template #default="{ row }">{{ money(row.amount) }}</template>
@@ -445,7 +476,7 @@ const time = (s: string | null) => (s ? String(s).replace('T', ' ').slice(0, 16)
               <el-button size="small" link @click="emit('refund', c)">登记退款</el-button>
             </div>
           </el-tab-pane>
-          <el-tab-pane :label="`成本 ${costs.length}`" name="costs">
+          <el-tab-pane v-if="canSeeCost()" :label="`成本 ${costs.length}`" name="costs">
             <div class="cost-note muted">
               报价预估成本 {{ c.estimated_cost == null ? '不完整' : money(c.estimated_cost) }} · 已登记实际成本
               {{ money(c.actual_cost) }}。登记了实际成本后，毛利按实际成本核算。
@@ -469,14 +500,7 @@ const time = (s: string | null) => (s ? String(s).replace('T', ' ').slice(0, 16)
               <el-table-column label="登记人" prop="created_by" width="90" />
               <el-table-column label="" width="60">
                 <template #default="{ row }">
-                  <el-button
-                    v-if="canFinance() || row.created_by === session.user?.username"
-                    link
-                    type="danger"
-                    @click="deleteCost(row)"
-                  >
-                    删除
-                  </el-button>
+                  <el-button v-if="canSeeCost()" link type="danger" @click="deleteCost(row)">删除</el-button>
                 </template>
               </el-table-column>
             </el-table>
@@ -491,7 +515,7 @@ const time = (s: string | null) => (s ? String(s).replace('T', ' ').slice(0, 16)
                 <span class="muted">原因：{{ x.reason }}</span>
                 <span class="spacer"></span>
                 <template v-if="x.status === 'PENDING'">
-                  <template v-if="isAdmin()">
+                  <template v-if="canApprove()">
                     <el-button size="small" type="primary" @click="review(x, 'approve')">批准</el-button>
                     <el-button size="small" @click="review(x, 'reject')">驳回</el-button>
                   </template>
@@ -662,7 +686,7 @@ const time = (s: string | null) => (s ? String(s).replace('T', ' ').slice(0, 16)
 }
 .metrics {
   display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
   gap: 1px;
   background: #e4eae0;
   border: 1px solid #e4eae0;
@@ -795,5 +819,11 @@ const time = (s: string | null) => (s ? String(s).replace('T', ' ').slice(0, 16)
 }
 .cell-secondary {
   display: block;
+}
+.cell-link {
+  display: block;
+  height: auto;
+  padding: 0;
+  font-size: 12px;
 }
 </style>

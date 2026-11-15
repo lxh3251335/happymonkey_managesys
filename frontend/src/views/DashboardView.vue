@@ -6,7 +6,7 @@ import PageHeader from '../components/PageHeader.vue'
 import StatusTag from '../components/StatusTag.vue'
 import GroupedBarChart from '../components/GroupedBarChart.vue'
 import ContractTable from '../components/ContractTable.vue'
-import { api, canWrite, session } from '../api'
+import { api, canSeeCost, canWrite, session } from '../api'
 import type { BizRow, BrandLines, Contract, Dashboard, Quote } from '../types'
 import { money, percent, wan, axisWan } from '../utils'
 
@@ -90,8 +90,8 @@ const minorLines = computed(() => (data.value?.line_summary ?? []).filter((l) =>
 const minorNote = computed(
   () =>
     `另有${minorLines.value
-      .map((l) => `${l.name} ${money(l.contract_amount)}（毛利率 ${percent(l.gross_margin)}）`)
-      .join('、')}，未计入以上两条产品线。毛利率只统计报价与成本都完整的明细行。`,
+      .map((l) => `${l.name} ${money(l.contract_amount)}${seeCost ? `（毛利率 ${percent(l.gross_margin)}）` : ''}`)
+      .join('、')}，未计入以上两条产品线。${seeCost ? '毛利率只统计报价与成本都完整的明细行。' : ''}`,
 )
 const lineOf = (row: { lines: BizRow[] }, name: string) => row.lines.find((l) => l.name === name)
 const lineAmountSeries = computed(() =>
@@ -103,6 +103,10 @@ const lineAmountSeries = computed(() =>
 )
 
 const t = computed(() => data.value!.totals)
+/** 成本与毛利只对系统管理员、管理层、财务展示（后端对其他角色已去掉这些字段）。 */
+const seeCost = canSeeCost()
+/** 跳到合同台账并带上快捷筛选。 */
+const goContracts = (quick: string) => router.push({ path: '/cash', query: { tab: 'contracts', quick } })
 const months = computed(() => data.value?.monthly ?? [])
 const multiYear = computed(() => new Set(months.value.map((m) => m.name.slice(0, 4))).size > 1)
 const monthCats = computed(() =>
@@ -187,7 +191,7 @@ const openQuote = (q: Quote) => router.push(`/quotes?detail=${q.id}`)
     </PageHeader>
     <el-alert v-if="error" :title="error" type="error" show-icon :closable="false" />
     <template v-if="data">
-      <section class="metric-grid biz-metrics">
+      <section :class="['metric-grid', 'biz-metrics', { 'no-cost': !seeCost }]">
         <article class="metric-card">
           <div class="metric-label">
             合同额
@@ -231,7 +235,7 @@ const openQuote = (q: Quote) => router.push(`/quotes?detail=${q.id}`)
           <div class="metric-value">{{ wan(t.backlog_amount) }}</div>
           <div class="metric-foot">{{ t.backlog_projects }} 个门店未发货</div>
         </article>
-        <article class="metric-card">
+        <article v-if="seeCost" class="metric-card">
           <div class="metric-label">
             综合毛利率
             <el-icon><TrendCharts /></el-icon>
@@ -240,13 +244,40 @@ const openQuote = (q: Quote) => router.push(`/quotes?detail=${q.id}`)
           <div class="metric-foot">毛利 {{ wan(t.profit) }} · 成本覆盖 {{ percent(t.margin_coverage) }}</div>
         </article>
       </section>
+      <div v-if="data.execution" class="exec-strip panel">
+        <span class="exec-title">合同执行</span>
+        <a @click="goContracts('ALL')">
+          {{ data.execution.contracts }} 份合同
+          <small>
+            拟定 {{ data.execution.draft }} · 已签 {{ data.execution.signed }} · 完结 {{ data.execution.completed }}
+          </small>
+        </a>
+        <a @click="goContracts('UNINVOICED')">
+          已开票 {{ wan(data.execution.invoiced) }}
+          <small>未开 {{ wan(data.execution.uninvoiced) }}</small>
+        </a>
+        <a :class="{ warn: data.execution.invoiced_unreceived > 0 }" @click="goContracts('INV_UNPAID')">
+          开票未到款 {{ wan(data.execution.invoiced_unreceived) }}
+        </a>
+        <a v-if="seeCost" @click="goContracts('ALL')">
+          实际成本 {{ data.execution.actual_cost_contracts }} 份
+          <small>{{ wan(data.execution.actual_cost) }}</small>
+        </a>
+        <a @click="goContracts('UNARCHIVED')">原件未归档 {{ data.execution.unarchived }}</a>
+        <a :class="{ warn: data.execution.pending_changes > 0 }" @click="router.push('/cash?tab=changes')">
+          待审批变更 {{ data.execution.pending_changes }}
+        </a>
+        <span v-if="data.execution.terminated" class="muted">
+          已终止 {{ data.execution.terminated }} 份（{{ wan(data.execution.terminated_amount) }}，不计入）
+        </span>
+      </div>
 
       <div class="dash-row two">
         <section class="panel biz-panel">
           <div class="panel-heading">
             <div>
               <h2>产品线经营 · {{ scopeName }}</h2>
-              <p>电控柜与物联网电箱分别统计合同额、毛利与回款；同一门店订单按明细行拆分</p>
+              <p>电控柜与物联网电箱分别统计合同额{{ seeCost ? '、毛利' : '' }}与回款；同一门店订单按明细行拆分</p>
             </div>
           </div>
           <div class="line-cards panel-body">
@@ -261,13 +292,13 @@ const openQuote = (q: Quote) => router.push(`/quotes?detail=${q.id}`)
                   <span>合同额</span>
                   <strong>{{ wan(l.contract_amount) }}</strong>
                 </div>
-                <div>
+                <div v-if="seeCost">
                   <span>毛利率</span>
                   <strong :class="l.gross_margin != null && l.gross_margin < 0 ? 'danger-text' : ''">
                     {{ percent(l.gross_margin) }}
                   </strong>
                 </div>
-                <div>
+                <div v-if="seeCost">
                   <span>毛利</span>
                   <strong>{{ wan(l.profit) }}</strong>
                 </div>
@@ -278,7 +309,9 @@ const openQuote = (q: Quote) => router.push(`/quotes?detail=${q.id}`)
               <footer>
                 <span>到账 {{ wan(l.received) }} · 回款率 {{ percent(l.collection_rate) }}</span>
                 <span>
-                  {{ Number(l.quantity) }} 台 · {{ l.projects }} 店 · 成本覆盖 {{ percent(l.margin_coverage) }}
+                  {{ Number(l.quantity) }} 台 · {{ l.projects }} 店{{
+                    seeCost ? ` · 成本覆盖 ${percent(l.margin_coverage)}` : ''
+                  }}
                 </span>
               </footer>
             </article>
@@ -292,7 +325,7 @@ const openQuote = (q: Quote) => router.push(`/quotes?detail=${q.id}`)
           <div class="panel-heading">
             <div>
               <h2>业务 × 产品线</h2>
-              <p>各品牌的电控柜与物联网电箱合同额、毛利率对比（全部业务，不随上方筛选变化）</p>
+              <p>各品牌的电控柜与物联网电箱合同额{{ seeCost ? '、毛利率' : '' }}对比（全部业务，不随上方筛选变化）</p>
             </div>
           </div>
           <el-table class="brand-matrix" :data="data.brand_lines" size="small" :row-class-name="brandRowClass">
@@ -314,7 +347,7 @@ const openQuote = (q: Quote) => router.push(`/quotes?detail=${q.id}`)
               <el-table-column label="合同额" align="right" min-width="84">
                 <template #default="{ row }">{{ wan(lineOf(row, n)?.contract_amount ?? 0) }}</template>
               </el-table-column>
-              <el-table-column label="毛利率" align="right" min-width="70">
+              <el-table-column v-if="seeCost" label="毛利率" align="right" min-width="70">
                 <template #default="{ row }">{{ percent(lineOf(row, n)?.gross_margin) }}</template>
               </el-table-column>
             </el-table-column>
@@ -322,7 +355,7 @@ const openQuote = (q: Quote) => router.push(`/quotes?detail=${q.id}`)
               <el-table-column label="合同额" align="right" min-width="84">
                 <template #default="{ row }">{{ wan(row.contract_amount) }}</template>
               </el-table-column>
-              <el-table-column label="综合毛利率" align="right" min-width="80">
+              <el-table-column v-if="seeCost" label="综合毛利率" align="right" min-width="80">
                 <template #default="{ row }">{{ percent(row.gross_margin) }}</template>
               </el-table-column>
             </el-table-column>
@@ -359,7 +392,7 @@ const openQuote = (q: Quote) => router.push(`/quotes?detail=${q.id}`)
           <el-radio-group v-model="trendView" size="small">
             <el-radio-button value="amount">金额</el-radio-button>
             <el-radio-button value="line">产品线</el-radio-button>
-            <el-radio-button value="margin">毛利率</el-radio-button>
+            <el-radio-button v-if="seeCost" value="margin">毛利率</el-radio-button>
             <el-radio-button value="table">表格</el-radio-button>
           </el-radio-group>
         </div>
@@ -374,7 +407,9 @@ const openQuote = (q: Quote) => router.push(`/quotes?detail=${q.id}`)
           >
             <template #tip="{ index }">
               <div class="tip-extra">
-                {{ months[index].projects }} 个门店 · 毛利率 {{ percent(months[index].gross_margin) }}
+                {{ months[index].projects }} 个门店{{
+                  seeCost ? ` · 毛利率 ${percent(months[index].gross_margin)}` : ''
+                }}
               </div>
             </template>
           </GroupedBarChart>
@@ -387,7 +422,7 @@ const openQuote = (q: Quote) => router.push(`/quotes?detail=${q.id}`)
             label="按月电控柜与物联网电箱合同额柱状图"
           >
             <template #tip="{ index }">
-              <div class="tip-extra">
+              <div v-if="seeCost" class="tip-extra">
                 电控柜毛利率 {{ percent(months[index].lines[CABINET]?.gross_margin) }} · 物联网电箱毛利率
                 {{ percent(months[index].lines[IOT]?.gross_margin) }}
               </div>
@@ -415,17 +450,17 @@ const openQuote = (q: Quote) => router.push(`/quotes?detail=${q.id}`)
             <el-table-column label="到账额" align="right">
               <template #default="{ row }">{{ money(row.received) }}</template>
             </el-table-column>
-            <el-table-column label="毛利" align="right">
+            <el-table-column v-if="seeCost" label="毛利" align="right">
               <template #default="{ row }">{{ money(row.profit) }}</template>
             </el-table-column>
-            <el-table-column label="毛利率" align="right" width="100">
+            <el-table-column v-if="seeCost" label="毛利率" align="right" width="100">
               <template #default="{ row }">{{ percent(row.gross_margin) }}</template>
             </el-table-column>
             <el-table-column v-for="n in [CABINET, IOT]" :key="n" :label="n" align="center">
               <el-table-column label="合同额" align="right" min-width="84">
                 <template #default="{ row }">{{ money(row.lines[n]?.contract_amount ?? 0) }}</template>
               </el-table-column>
-              <el-table-column label="毛利率" align="right" width="90">
+              <el-table-column v-if="seeCost" label="毛利率" align="right" width="90">
                 <template #default="{ row }">{{ percent(row.lines[n]?.gross_margin) }}</template>
               </el-table-column>
             </el-table-column>
@@ -468,7 +503,7 @@ const openQuote = (q: Quote) => router.push(`/quotes?detail=${q.id}`)
                 <span>合同额</span>
                 <span>到账额</span>
                 <span>回款率</span>
-                <span>毛利率</span>
+                <span>{{ seeCost ? '毛利率' : '' }}</span>
                 <span>占比</span>
                 <span>{{ dim === 'line' ? '数量' : dim === 'brand' ? '单店均额' : '门店' }}</span>
               </div>
@@ -489,7 +524,7 @@ const openQuote = (q: Quote) => router.push(`/quotes?detail=${q.id}`)
                 <span class="num">{{ wan(r.received) }}</span>
                 <span class="num">{{ percent(r.collection_rate) }}</span>
                 <span :class="['num', r.gross_margin != null && r.gross_margin < 0 ? 'danger-text' : '']">
-                  {{ percent(r.gross_margin) }}
+                  {{ seeCost ? percent(r.gross_margin) : '' }}
                 </span>
                 <span class="num">{{ percent(r.share) }}</span>
                 <span class="num">
@@ -617,7 +652,7 @@ const openQuote = (q: Quote) => router.push(`/quotes?detail=${q.id}`)
           <el-table-column label="报价金额" align="right" min-width="140">
             <template #default="{ row }">{{ money(row.amount) }}</template>
           </el-table-column>
-          <el-table-column label="预计利润" align="right" min-width="130">
+          <el-table-column v-if="seeCost" label="预计利润" align="right" min-width="130">
             <template #default="{ row }">
               <span :class="row.profit < 0 ? 'danger-text' : 'profit-text'">{{ money(row.profit) }}</span>
             </template>
@@ -632,6 +667,35 @@ const openQuote = (q: Quote) => router.push(`/quotes?detail=${q.id}`)
   </div>
 </template>
 <style scoped>
+.exec-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 18px;
+  padding: 9px 18px;
+  margin: 12px 0 18px;
+  font-size: 13px;
+}
+.exec-title {
+  font-weight: 600;
+  color: #253731;
+}
+.exec-strip a {
+  cursor: pointer;
+  color: #33463e;
+  font-variant-numeric: tabular-nums;
+}
+.exec-strip a:hover {
+  color: #24634f;
+  text-decoration: underline;
+}
+.exec-strip a.warn {
+  color: #a0661b;
+}
+.exec-strip small {
+  color: #8a958e;
+  margin-left: 4px;
+}
 .matrix-group {
   display: block;
   color: #8a958e;
@@ -724,6 +788,9 @@ const openQuote = (q: Quote) => router.push(`/quotes?detail=${q.id}`)
 }
 .biz-metrics {
   grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+.biz-metrics.no-cost {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 .biz-metrics .metric-foot {
   font-size: 11px;

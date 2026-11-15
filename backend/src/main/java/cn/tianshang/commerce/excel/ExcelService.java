@@ -32,6 +32,7 @@ public class ExcelService {
         PRODUCTS("products", "标准产品库"),
         PROJECT_TYPES("project-types", "项目类型"),
         SUPPLIER_TEMPLATES("supplier-templates", "供应商成本模板"),
+        PROJECTS("projects", "项目台账"),
         CONTRACTS("contracts", "合同台账"),
         CONTRACT_INVOICES("contract-invoices", "开票记录");
 
@@ -70,6 +71,7 @@ public class ExcelService {
     private final cn.tianshang.commerce.business.BusinessService business;
     private final cn.tianshang.commerce.dictionary.DictionaryService dictionary;
     private final ContractExcel contractExcel;
+    private final ProjectExcel projectExcel;
 
     public ExcelService(
         Database db,
@@ -78,7 +80,8 @@ public class ExcelService {
         Validator validator,
         cn.tianshang.commerce.business.BusinessService business,
         cn.tianshang.commerce.dictionary.DictionaryService dictionary,
-        ContractExcel contractExcel
+        ContractExcel contractExcel,
+        ProjectExcel projectExcel
     ) {
         this.db = db;
         this.masters = masters;
@@ -87,6 +90,7 @@ public class ExcelService {
         this.business = business;
         this.dictionary = dictionary;
         this.contractExcel = contractExcel;
+        this.projectExcel = projectExcel;
     }
 
     /** 业务线下拉选项：启用的业务线 + “未指定”。 */
@@ -100,6 +104,7 @@ public class ExcelService {
 
     List<Column> columns(Dataset d) {
         return switch (d) {
+            case PROJECTS -> projectExcel.columns();
             case CONTRACTS -> contractExcel.contractColumns();
             case CONTRACT_INVOICES -> contractExcel.invoiceColumns();
             case CUSTOMERS, SUPPLIERS -> List.of(
@@ -170,37 +175,54 @@ public class ExcelService {
     // ===================== 导出 =====================
 
     public byte[] export(Dataset d, boolean template) {
+        if (d == Dataset.SUPPLIER_TEMPLATES && !Roles.canSeeCost()) throw new AccessDeniedException(
+            "供应商成本模板仅管理员、管理层、财务可导出"
+        );
         List<Map<String, Object>> rows = template ? List.of() : exportRows(d);
+        // 看不到成本的角色：导出时去掉成本、毛利列
+        var columns = columns(d)
+            .stream()
+            .filter(c -> Roles.canSeeCost() || !CostRedaction.SENSITIVE.contains(c.key()))
+            .toList();
         var notes =
-            d == Dataset.CONTRACTS
+            d == Dataset.PROJECTS
                 ? List.of(
-                      "合同台账 导入说明",
-                      "1. 按“客户 + 合同号”匹配：已有合同更新合同要素，没有的新建合同（合同号以 # 开头的是未填合同号的单店订单）。",
-                      "2. 门店数、订单金额、开票、到款、成本、毛利等统计列只导出、不导入；开票请用“开票记录”导入，到款在系统中登记。",
-                      "3. 导入由管理员执行，每份合同的修改都会记入合同变更记录（原因：Excel 批量导入）。",
-                      "4. 删除不需要更新的列即可保持原值；有任何错误时整批不写入。"
+                      "项目台账 导入说明",
+                      "1. 有“系统编号”的行按编号更新；没有编号的按“客户 + 门店名称”匹配，匹配不到则新增。",
+                      "2. 业务线、城市须在数据字典中；负责人填写账户显示名称；填了运单号即视为已发货。",
+                      "3. 导入由管理员执行；删除不需要更新的列即可保持原值；有任何错误时整批不写入。",
+                      "4. 运单号、电话请保持文本格式，避免 Excel 改成科学计数法。"
                   )
-                : d == Dataset.CONTRACT_INVOICES
+                : d == Dataset.CONTRACTS
                     ? List.of(
-                          "开票记录 导入说明",
-                          "1. 每行一张发票；按发票号码匹配，已登记的发票跳过，不能通过导入修改。",
-                          "2. 红字发票填写“原发票号码”，金额填正数；同一批次内可先蓝字后红字。",
-                          "3. 开票合计不能超过合同金额；有任何错误时整批不写入。",
-                          "4. 发票号码请保持文本格式，避免 Excel 改成科学计数法。"
+                          "合同台账 导入说明",
+                          "1. 按“客户 + 合同号”匹配：已有合同更新合同要素，没有的新建合同（合同号以 # 开头的是未填合同号的单店订单）。",
+                          "2. 门店数、订单金额、开票、到款、成本、毛利等统计列只导出、不导入；开票请用“开票记录”导入，到款在系统中登记。",
+                          "3. 导入由管理员执行，每份合同的修改都会记入合同变更记录（原因：Excel 批量导入）。",
+                          "4. 删除不需要更新的列即可保持原值；有任何错误时整批不写入。"
                       )
-                    : List.of(
-                          d.title + " 导入说明",
-                          "1. 第一张表为数据表，第一行是表头；列名带 * 的为必填。可删除不需要更新的列，缺少的列保持原值。",
-                          "2. 有“系统编号”的行按编号更新；没有编号的按名称匹配，匹配不到则新增。",
-                          "3. 导入前系统会逐行预览新增 / 更新 / 错误；有任何错误时整批不写入。",
-                          "4. 税号、银行账号等长数字请保持文本格式，避免 Excel 改成科学计数法。"
-                      );
+                    : d == Dataset.CONTRACT_INVOICES
+                        ? List.of(
+                              "开票记录 导入说明",
+                              "1. 每行一张发票；按发票号码匹配，已登记的发票跳过，不能通过导入修改。",
+                              "2. 红字发票填写“原发票号码”，金额填正数；同一批次内可先蓝字后红字。",
+                              "3. 开票合计不能超过合同金额；有任何错误时整批不写入。",
+                              "4. 发票号码请保持文本格式，避免 Excel 改成科学计数法。"
+                          )
+                        : List.of(
+                              d.title + " 导入说明",
+                              "1. 第一张表为数据表，第一行是表头；列名带 * 的为必填。可删除不需要更新的列，缺少的列保持原值。",
+                              "2. 有“系统编号”的行按编号更新；没有编号的按名称匹配，匹配不到则新增。",
+                              "3. 导入前系统会逐行预览新增 / 更新 / 错误；有任何错误时整批不写入。",
+                              "4. 税号、银行账号等长数字请保持文本格式，避免 Excel 改成科学计数法。"
+                          );
         db.audit("EXCEL_EXPORT", d.path, d.title + (template ? " 模板" : " " + rows.size() + " 行"));
-        return ExcelIo.write(d.title, columns(d), rows, notes);
+        return ExcelIo.write(d.title, columns, rows, notes);
     }
 
     private List<Map<String, Object>> exportRows(Dataset d) {
         return switch (d) {
+            case PROJECTS -> projectExcel.rows();
             case CONTRACTS -> contractExcel.contractRows();
             case CONTRACT_INVOICES -> contractExcel.invoiceRows();
             case CUSTOMERS, SUPPLIERS -> {
@@ -334,8 +356,9 @@ public class ExcelService {
             .map(a -> a.getAuthority())
             .collect(Collectors.toSet());
         var allowed = switch (d) {
-            case SUPPLIER_TEMPLATES, CONTRACT_INVOICES -> List.of("ROLE_ADMIN", "ROLE_FINANCE");
-            case CONTRACTS -> List.of("ROLE_ADMIN");
+            case SUPPLIER_TEMPLATES -> List.of("ROLE_ADMIN", "ROLE_MANAGER", "ROLE_FINANCE");
+            case CONTRACT_INVOICES -> List.of("ROLE_ADMIN", "ROLE_FINANCE");
+            case CONTRACTS, PROJECTS -> List.of("ROLE_ADMIN");
             default -> List.of("ROLE_ADMIN", "ROLE_SALES");
         };
         if (allowed.stream().noneMatch(roles::contains)) throw new AccessDeniedException("当前角色不能导入" + d.title);
@@ -349,6 +372,7 @@ public class ExcelService {
             case PRODUCTS -> planProducts(sheet);
             case PROJECT_TYPES -> planTypes(sheet);
             case SUPPLIER_TEMPLATES -> planSupplierTemplates(sheet);
+            case PROJECTS -> projectExcel.plan(sheet);
             case CONTRACTS -> contractExcel.planContracts(sheet);
             case CONTRACT_INVOICES -> contractExcel.planInvoices(sheet);
         };

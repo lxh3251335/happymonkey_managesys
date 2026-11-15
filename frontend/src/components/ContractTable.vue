@@ -4,13 +4,16 @@ import { Search } from '@element-plus/icons-vue'
 import type { Contract } from '../types'
 import { money, percent, day } from '../utils'
 import { contractStatusName, invoiceStatusName } from '../dictionaries'
-import { session } from '../api'
+import { canSeeCost, session } from '../api'
 
 /** 合同台账表：快捷筛选 + 条件筛选 + 合计；点击合同打开详情。 */
-const props = withDefaults(defineProps<{ contracts: Contract[]; pageSize?: number; compact?: boolean }>(), {
-  pageSize: 12,
-  compact: false,
-})
+const props = withDefaults(
+  defineProps<{ contracts: Contract[]; pageSize?: number; compact?: boolean; initialQuick?: string }>(),
+  {
+    pageSize: 12,
+    compact: false,
+  },
+)
 const emit = defineEmits<{ open: [Contract] }>()
 
 /** 快捷筛选：名称、条件。 */
@@ -35,7 +38,7 @@ const QUICK: { key: string; label: string; test: (c: Contract) => boolean }[] = 
   },
 ]
 
-const quick = ref('ALL'),
+const quick = ref(props.initialQuick || 'ALL'),
   keyword = ref(''),
   customer = ref(''),
   company = ref(''),
@@ -43,7 +46,7 @@ const quick = ref('ALL'),
   city = ref(''),
   owner = ref(''),
   status = ref(''),
-  months = ref<[string, string] | null>(null),
+  period = ref(''),
   page = ref(1),
   sort = ref<{ prop: string; order: 'ascending' | 'descending' | null }>({ prop: '', order: null })
 
@@ -58,6 +61,29 @@ const owners = computed(() => uniq(props.contracts.map((c) => c.owner_name)))
 
 /** 签订月份（无签订日期按下单月份）。 */
 const monthOf = (c: Contract) => String(c.signed_on || c.order_date || '').slice(0, 7)
+const ym = (y: number, m: number) => `${y}-${String(m).padStart(2, '0')}`
+/** 签订期间：本月、上月、本季度、今年、去年，以及数据中出现的各年份。 */
+const periods = computed(() => {
+  const now = new Date(),
+    y = now.getFullYear(),
+    m = now.getMonth() + 1,
+    q = Math.floor((m - 1) / 3) * 3 + 1
+  const last = m === 1 ? ym(y - 1, 12) : ym(y, m - 1)
+  const out = [
+    { key: 'this-month', label: '本月', from: ym(y, m), to: ym(y, m) },
+    { key: 'last-month', label: '上月', from: last, to: last },
+    { key: 'this-quarter', label: '本季度', from: ym(y, q), to: ym(y, q + 2) },
+    { key: 'this-year', label: '今年', from: ym(y, 1), to: ym(y, 12) },
+    { key: 'last-year', label: '去年', from: ym(y - 1, 1), to: ym(y - 1, 12) },
+  ]
+  const years = [...new Set(props.contracts.map((c) => monthOf(c).slice(0, 4)).filter((x) => /^\d{4}$/.test(x)))]
+    .map(Number)
+    .filter((x) => x < y - 1)
+    .sort((a, b) => b - a)
+  for (const x of years) out.push({ key: `y${x}`, label: `${x} 年`, from: ym(x, 1), to: ym(x, 12) })
+  out.push({ key: 'none', label: '无日期', from: '', to: '' })
+  return out
+})
 
 const base = computed(() =>
   props.contracts.filter((c) => {
@@ -77,9 +103,11 @@ const base = computed(() =>
     if (city.value && !c.cities.includes(city.value)) return false
     if (owner.value && (owner.value === '-' ? c.owner_name : c.owner_name !== owner.value)) return false
     if (status.value && c.status !== status.value) return false
-    if (months.value) {
+    if (period.value) {
+      const range = periods.value.find((p) => p.key === period.value)
       const m = monthOf(c)
-      if (!m || m < months.value[0].slice(0, 7) || m > months.value[1].slice(0, 7)) return false
+      if (!range) return false
+      if (range.key === 'none' ? !!m : !m || m < range.from || m > range.to) return false
     }
     return true
   }),
@@ -101,7 +129,7 @@ const filtered = computed(() => {
     return order === 'ascending' ? r : -r
   })
 })
-watch([quick, keyword, customer, company, brand, city, owner, status, months], () => (page.value = 1))
+watch([quick, keyword, customer, company, brand, city, owner, status, period], () => (page.value = 1))
 const rows = computed(() => filtered.value.slice((page.value - 1) * props.pageSize, page.value * props.pageSize))
 const sum = (k: keyof Contract) => filtered.value.reduce((s, c) => s + Number(c[k] || 0), 0)
 const anyFilter = computed(
@@ -114,13 +142,13 @@ const anyFilter = computed(
       city.value ||
       owner.value ||
       status.value ||
-      months.value
+      period.value
     ) || quick.value !== 'ALL',
 )
 function reset() {
   quick.value = 'ALL'
   keyword.value = customer.value = company.value = brand.value = city.value = owner.value = status.value = ''
-  months.value = null
+  period.value = ''
 }
 const statusClass: Record<string, string> = {
   DRAFT: 'tag-pending',
@@ -166,15 +194,9 @@ defineExpose({ filtered })
       <el-select v-if="!compact" v-model="status" clearable placeholder="合同状态">
         <el-option v-for="(n, k) in contractStatusName" :key="k" :label="n" :value="k" />
       </el-select>
-      <el-date-picker
-        v-model="months"
-        type="monthrange"
-        value-format="YYYY-MM"
-        range-separator="至"
-        start-placeholder="签订月份"
-        end-placeholder="止"
-        class="month-range"
-      />
+      <el-select v-model="period" clearable placeholder="签订期间">
+        <el-option v-for="p in periods" :key="p.key" :label="p.label" :value="p.key" />
+      </el-select>
       <el-button v-if="anyFilter" link type="primary" @click="reset">清除筛选</el-button>
     </div>
     <div class="contract-sum">
@@ -269,7 +291,14 @@ defineExpose({ filtered })
           <small v-if="row.overdue > 0" class="cell-secondary danger-text">逾期 {{ row.overdue_days }} 天</small>
         </template>
       </el-table-column>
-      <el-table-column v-if="!compact" label="毛利率" prop="gross_margin" align="right" width="96" sortable="custom">
+      <el-table-column
+        v-if="!compact && canSeeCost()"
+        label="毛利率"
+        prop="gross_margin"
+        align="right"
+        width="96"
+        sortable="custom"
+      >
         <template #default="{ row }">
           <span :class="row.gross_margin != null && row.gross_margin < 0 ? 'danger-text' : ''">
             {{ row.gross_margin == null ? '—' : percent(row.gross_margin) }}
@@ -295,6 +324,7 @@ defineExpose({ filtered })
 .quick-row {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: 6px;
   padding: 12px 24px 0;
 }
@@ -327,14 +357,10 @@ defineExpose({ filtered })
   gap: 8px;
 }
 .contract-filters .el-input {
-  max-width: 240px;
+  max-width: 230px;
 }
 .contract-filters .el-select {
-  width: 118px;
-}
-.contract-filters :deep(.month-range.el-date-editor) {
-  flex: 0 0 240px;
-  width: 240px;
+  width: 112px;
 }
 .contract-sum {
   display: flex;

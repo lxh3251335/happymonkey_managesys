@@ -29,6 +29,11 @@ public class CatalogController {
         service.saveType(id, input);
     }
 
+    @GetMapping("/project-types/suggest")
+    public Map<String, Object> suggest(@RequestParam String brand) {
+        return service.suggest(brand);
+    }
+
     @GetMapping("/project-types/{id}/prefill")
     public Map<String, Object> prefill(@PathVariable String id, @RequestParam(required = false) String supplierId) {
         return service.prefill(id, supplierId);

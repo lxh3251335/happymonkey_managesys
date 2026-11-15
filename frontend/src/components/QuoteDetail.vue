@@ -2,7 +2,10 @@
 import type { Quote } from '../types'
 import { money, unitMoney, percent, day, taxName } from '../utils'
 import StatusTag from './StatusTag.vue'
+import { canSeeCost } from '../api'
 defineProps<{ quote: Quote }>()
+/** 成本与毛利只对系统管理员、管理层、财务展示（后端对其他角色已去掉这些字段）。 */
+const seeCost = canSeeCost()
 const split = (n: number | null) => (n == null ? '—' : Number(n).toLocaleString('zh-CN', { maximumFractionDigits: 2 }))
 </script>
 <template>
@@ -31,7 +34,9 @@ const split = (n: number | null) => (n == null ? '—' : Number(n).toLocaleStrin
       <span v-if="quote.template_name">报价模板：{{ quote.template_name }}</span>
       <span>应收截止：{{ day(quote.due_date) }}</span>
     </div>
-    <div v-if="!quote.complete" class="inline-note warning">金额或成本缺失，整份报价的利润和利润率暂不计算。</div>
+    <div v-if="seeCost && !quote.complete" class="inline-note warning">
+      金额或成本缺失，整份报价的利润和利润率暂不计算。
+    </div>
     <el-table :data="quote.items">
       <el-table-column label="产品" prop="name" min-width="160" />
       <el-table-column label="规格" prop="specification" min-width="150" />
@@ -42,7 +47,7 @@ const split = (n: number | null) => (n == null ? '—' : Number(n).toLocaleStrin
       <el-table-column label="销售金额" width="125" align="right">
         <template #default="{ row }">{{ money(row.amount) }}</template>
       </el-table-column>
-      <el-table-column label="单台成本（材料 / 人工 / 财务）" min-width="210" align="right">
+      <el-table-column v-if="seeCost" label="单台成本（材料 / 人工 / 财务）" min-width="210" align="right">
         <template #default="{ row }">
           {{ unitMoney(row.unit_cost) }}
           <small
@@ -53,35 +58,35 @@ const split = (n: number | null) => (n == null ? '—' : Number(n).toLocaleStrin
           </small>
         </template>
       </el-table-column>
-      <el-table-column label="成本金额" width="115" align="right">
+      <el-table-column v-if="seeCost" label="成本金额" width="115" align="right">
         <template #default="{ row }">{{ money(row.cost) }}</template>
       </el-table-column>
-      <el-table-column label="毛利率" width="88" align="right">
+      <el-table-column v-if="seeCost" label="毛利率" width="88" align="right">
         <template #default="{ row }">
           {{ row.amount && row.cost != null ? percent((row.amount - row.cost) / row.amount) : '—' }}
         </template>
       </el-table-column>
-      <el-table-column label="数据来源" min-width="140" prop="source" show-overflow-tooltip />
+      <el-table-column v-if="seeCost" label="数据来源" min-width="140" prop="source" show-overflow-tooltip />
     </el-table>
     <div class="quote-summary">
       <div>
         报价合计
         <strong>{{ money(quote.amount) }}</strong>
       </div>
-      <div>
+      <div v-if="seeCost">
         预计利润
         <strong>{{ money(quote.profit) }}</strong>
       </div>
-      <div>
+      <div v-if="seeCost">
         销售毛利率
         <strong>{{ percent(quote.gross_margin) }}</strong>
       </div>
-      <div>
+      <div v-if="seeCost">
         成本利润率
         <strong>{{ percent(quote.cost_margin) }}</strong>
       </div>
     </div>
-    <p class="muted">
+    <p v-if="seeCost" class="muted">
       销售毛利率 = 利润 ÷ 报价；成本利润率 = 利润 ÷
       成本。未包含尚未登记的运输、安装及其他费用。税口径待核实时，仅作历史金额测算。
     </p>

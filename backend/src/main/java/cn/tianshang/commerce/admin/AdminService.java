@@ -31,7 +31,7 @@ public class AdminService {
         @NotBlank @Pattern(regexp = "[a-zA-Z0-9_-]{3,40}") String username,
         @NotBlank @Size(max = 100) String displayName,
         @NotBlank @Size(min = 12, max = 100) String password,
-        @NotNull @Pattern(regexp = "ADMIN|SALES|FINANCE|VIEWER") String role
+        @NotNull @Pattern(regexp = "ADMIN|MANAGER|SALES|FINANCE|VIEWER") String role
     ) {}
 
     @Transactional
@@ -50,7 +50,7 @@ public class AdminService {
 
     public record UserUpdate(
         @NotBlank @Size(max = 100) String displayName,
-        @NotNull @Pattern(regexp = "ADMIN|SALES|FINANCE|VIEWER") String role,
+        @NotNull @Pattern(regexp = "ADMIN|MANAGER|SALES|FINANCE|VIEWER") String role,
         boolean enabled
     ) {}
 

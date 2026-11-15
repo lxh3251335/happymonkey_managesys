@@ -193,6 +193,8 @@ public class ContractExecutionService {
 
     // ===================== 实际成本 =====================
 
+    /** 实际成本属于成本数据：仅系统管理员、管理层、财务可见与登记。 */
+    @PreAuthorize("hasAnyRole('ADMIN','MANAGER','FINANCE')")
     public List<Map<String, Object>> costs(String customerId, String contractKey) {
         ownership.checkContract(customerId, contractKey);
         return db.jdbc.queryForList(
@@ -216,8 +218,8 @@ public class ContractExecutionService {
         @Size(max = 1000) String note
     ) {}
 
-    /** 登记实际成本：管理员、财务，或合同负责人（商务）。 */
-    @PreAuthorize("hasAnyRole('ADMIN','FINANCE','SALES')")
+    /** 登记实际成本：系统管理员、管理层、财务。 */
+    @PreAuthorize("hasAnyRole('ADMIN','MANAGER','FINANCE')")
     @Transactional
     public Map<String, Object> cost(@Valid CostInput in) {
         contracts.contract(in.customerId(), in.contractKey());
@@ -254,8 +256,8 @@ public class ContractExecutionService {
         return Map.of("id", id);
     }
 
-    /** 删除错误登记的成本：管理员、财务或登记人本人。 */
-    @PreAuthorize("hasAnyRole('ADMIN','FINANCE','SALES')")
+    /** 删除错误登记的成本：系统管理员、管理层、财务。 */
+    @PreAuthorize("hasAnyRole('ADMIN','MANAGER','FINANCE')")
     @Transactional
     public void deleteCost(String id, @Valid DeleteInput d) {
         var row = db.one("SELECT * FROM contract_cost WHERE id=? AND deleted_at IS NULL FOR UPDATE", id);

@@ -18,11 +18,12 @@ import { api, session } from '../api'
 import { roleName, today } from '../utils'
 const route = useRoute(),
   router = useRouter()
+/** 菜单；报价配置中的成本相关标签页按角色显示。 */
 const menu = [
   { path: '/', name: '经营总览', icon: DataAnalysis },
   { path: '/projects', name: '项目台账', icon: FolderOpened },
   { path: '/quotes', name: '客户报价', icon: Document },
-  { path: '/offers', name: '供应商比价', icon: Connection },
+  { path: '/quote-setup', name: '报价配置', icon: Connection },
   { path: '/cash', name: '合同台账', icon: Wallet },
   { path: '/masters', name: '基础资料', icon: Grid },
   { path: '/settings', name: '系统管理', icon: Setting },

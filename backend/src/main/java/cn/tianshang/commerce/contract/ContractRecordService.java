@@ -2,7 +2,7 @@ package cn.tianshang.commerce.contract;
 
 import cn.tianshang.commerce.common.*;
 import cn.tianshang.commerce.dictionary.DictionaryService;
-import cn.tianshang.commerce.master.MasterService;
+import cn.tianshang.commerce.project.ProjectService;
 import cn.tianshang.commerce.quote.QuoteService;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
@@ -53,7 +53,7 @@ public class ContractRecordService {
     private final Database db;
     private final ContractService contracts;
     private final QuoteService quotes;
-    private final MasterService masters;
+    private final ProjectService projects;
     private final DictionaryService dictionary;
     private final Ownership ownership;
     private final ObjectMapper json;
@@ -62,7 +62,7 @@ public class ContractRecordService {
         Database db,
         ContractService contracts,
         QuoteService quotes,
-        MasterService masters,
+        ProjectService projects,
         DictionaryService dictionary,
         Ownership ownership,
         ObjectMapper json
@@ -70,7 +70,7 @@ public class ContractRecordService {
         this.db = db;
         this.contracts = contracts;
         this.quotes = quotes;
-        this.masters = masters;
+        this.projects = projects;
         this.dictionary = dictionary;
         this.ownership = ownership;
         this.json = json;
@@ -125,7 +125,7 @@ public class ContractRecordService {
             0
         ) throw new ApiException("合同 " + no + " 已存在，请在合同台账中修改");
         var values = normalize(c.info(), null);
-        values.put("owner_id", masters.ownerForNew((String) values.get("owner_id")));
+        values.put("owner_id", projects.ownerForNew((String) values.get("owner_id")));
         if (values.get("status") == null) values.put("status", "DRAFT");
         String id = insert(c.customerId(), no, values);
         record(id, "DIRECT", diff(Map.of(), values), "新建合同", Ownership.username());
@@ -165,7 +165,7 @@ public class ContractRecordService {
         if (no.startsWith("#")) throw new ApiException("合同号不能以 # 开头");
         var existing = row(customerId, no);
         if (
-            current == null && existing != null && !"DRAFT".equals(existing.get("status")) && !Ownership.isAdmin()
+            current == null && existing != null && !"DRAFT".equals(existing.get("status")) && !Roles.canApprove()
         ) throw new ApiException("合同 " + no + " 已签订，新增门店属于合同变更，请联系管理员处理");
         if (!"ACCEPTED".equals(status)) {
             if (in.dueDate() == null) throw new ApiException("请填写应收截止日期");
@@ -186,7 +186,7 @@ public class ContractRecordService {
             values.put("payment_terms", Contracts.blankToNull(in.paymentTerms()));
             values.put(
                 "owner_id",
-                project.get("owner_id") != null ? project.get("owner_id") : masters.ownerForNew(null)
+                project.get("owner_id") != null ? project.get("owner_id") : projects.ownerForNew(null)
             );
             values.put("archived", false);
             id = insert(customerId, no, values);
@@ -207,7 +207,7 @@ public class ContractRecordService {
     /**
      * 修改合同要素。返回 applied=true 表示已生效；pending=true 表示已提交变更申请，等待管理员批准。
      */
-    @PreAuthorize("hasAnyRole('ADMIN','SALES','FINANCE')")
+    @PreAuthorize("hasAnyRole('ADMIN','MANAGER','SALES','FINANCE')")
     @Transactional
     public Map<String, Object> update(String customerId, String contractKey, @Valid UpdateInput u) {
         ownership.checkContract(customerId, contractKey);
@@ -216,8 +216,8 @@ public class ContractRecordService {
         var values = normalize(u.info(), current);
         var changes = diff(current, values);
         if (changes.isEmpty()) throw new ApiException("没有需要保存的修改");
-        boolean admin = Ownership.isAdmin();
-        if (changes.containsKey("owner_id") && !admin) throw new ApiException("调整合同负责人须由管理员办理");
+        boolean admin = Roles.canApprove();
+        if (changes.containsKey("owner_id") && !admin) throw new ApiException("调整合同负责人须由管理层或管理员办理");
         String reason = Contracts.blankToNull(u.reason());
         boolean draft = "DRAFT".equals(current.get("status"));
         if (admin || draft) {
@@ -243,7 +243,7 @@ public class ContractRecordService {
 
     public record ReviewInput(@Size(max = 500) String note) {}
 
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasAnyRole('ADMIN','MANAGER')")
     @Transactional
     public void approve(String changeId, @Valid ReviewInput r) {
         var change = pending(changeId);
@@ -267,7 +267,7 @@ public class ContractRecordService {
         db.audit("CONTRACT_CHANGE_APPROVED", id, describe(changes));
     }
 
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasAnyRole('ADMIN','MANAGER')")
     @Transactional
     public void reject(String changeId, @Valid ReviewInput r) {
         var change = pending(changeId);
@@ -306,7 +306,7 @@ public class ContractRecordService {
             WHERE x.status='PENDING' ORDER BY x.requested_at
             """
         );
-        if (!Ownership.isAdmin()) rows = rows
+        if (!Roles.canApprove()) rows = rows
             .stream()
             .filter(r -> Ownership.username().equals(r.get("requested_by")))
             .toList();
@@ -346,14 +346,26 @@ public class ContractRecordService {
                     contractKey
                 )
             );
+        // 门店的发货登记、合同号调整等也属于合同执行轨迹
+        entityIds.addAll(
+            db.jdbc.queryForList(
+                "SELECT id FROM project WHERE customer_id=? AND (contract_no=? OR '#'||code=?)",
+                String.class,
+                customerId,
+                contractKey,
+                contractKey
+            )
+        );
         String marks = String.join(",", Collections.nCopies(entityIds.size(), "?"));
         out.put(
             "events",
-            db.jdbc.queryForList(
-                "SELECT a.*,u.display_name AS actor_name FROM audit_log a LEFT JOIN app_user u ON u.username=a.actor WHERE a.entity_id IN (" +
-                    marks +
-                    ") ORDER BY a.created_at DESC",
-                entityIds.toArray()
+            visibleEvents(
+                db.jdbc.queryForList(
+                    "SELECT a.*,u.display_name AS actor_name FROM audit_log a LEFT JOIN app_user u ON u.username=a.actor WHERE a.entity_id IN (" +
+                        marks +
+                        ") ORDER BY a.created_at DESC",
+                    entityIds.toArray()
+                )
             )
         );
         out.put(
@@ -368,6 +380,18 @@ public class ContractRecordService {
             )
         );
         return out;
+    }
+
+    /** 看不到成本的角色不显示成本登记、成本修正类操作记录（其说明含金额）。 */
+    private static List<Map<String, Object>> visibleEvents(List<Map<String, Object>> events) {
+        if (Roles.canSeeCost()) return events;
+        return events
+            .stream()
+            .filter(e -> {
+                String a = Objects.toString(e.get("action"), "");
+                return !a.startsWith("CONTRACT_COST") && !a.startsWith("QUOTE_COST");
+            })
+            .toList();
     }
 
     /** 预览修改（不写入）：返回有变化的字段（中文名 → 原值/新值），校验失败抛出业务异常。 */

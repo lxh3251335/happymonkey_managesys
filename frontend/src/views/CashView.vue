@@ -6,78 +6,62 @@ import ContractAttachments from '../components/ContractAttachments.vue'
 import ContractDrawer from '../components/ContractDrawer.vue'
 import ContractInfoDialog from '../components/ContractInfoDialog.vue'
 import ExcelTools from '../components/ExcelTools.vue'
+import ReceiptLedger from '../components/ReceiptLedger.vue'
 import { changeStatusName } from '../dictionaries'
 import { ElMessage } from 'element-plus'
 import { Plus, Search } from '@element-plus/icons-vue'
 import PageHeader from '../components/PageHeader.vue'
-import { api, post, canFinance, canWrite, isAdmin } from '../api'
-import type { CashEntry, Contract, ContractChange, ContractInvoice, ContractReceipt, Quote } from '../types'
+import { api, post, canApprove, canFinance, canSeeCost, canWrite, isAdmin } from '../api'
+import type { Contract, ContractChange, ContractInvoice, ReceiptRow } from '../types'
 import { money, today, day, afterDays } from '../utils'
-const entries = ref<CashEntry[]>([]),
-  balances = ref<Quote[]>([]),
-  keyword = ref(''),
-  route = useRoute(),
-  tab = ref(String(route.query.tab || 'contracts')),
+
+/** 合同台账：合同、开票、回款流水、变更审批。回款统一按合同登记，系统按门店剩余应收自动分摊。 */
+const route = useRoute(),
+  legacyTabs: Record<string, string> = { receipts: 'ledger', balances: 'ledger', entries: 'ledger' },
+  tab = ref(legacyTabs[String(route.query.tab)] || String(route.query.tab || 'contracts')),
   contracts = ref<Contract[]>([]),
-  receipts = ref<ContractReceipt[]>([]),
+  ledger = ref<ReceiptRow[]>([]),
   invoices = ref<ContractInvoice[]>([]),
   changes = ref<ContractChange[]>([]),
   drawerOpen = ref(false),
   drawerKey = ref({ customerId: '', contractKey: '' }),
   createOpen = ref(false),
   drawer = ref<InstanceType<typeof ContractDrawer>>(),
-  dialog = ref(false),
   attachDialog = ref(false),
   attachContract = ref<Contract>(),
   busy = ref(false),
   error = ref('')
-const fresh = () => ({
-  quotationId: '',
-  kind: 'RECEIPT',
-  amount: 0,
-  paidOn: today(),
-  reference: '',
-  note: '',
-  reversesId: null as string | null,
-})
-const form = ref(fresh())
-const filteredBalances = computed(() =>
-  balances.value.filter((q) => `${q.project_name}${q.customer_name}${q.code}`.includes(keyword.value)),
-)
-const filteredEntries = computed(() =>
-  entries.value.filter((q) => `${q.project_name}${q.customer_name}${q.reference}`.includes(keyword.value)),
-)
-const refundable = computed(() =>
-  entries.value.filter((e) => e.kind === 'RECEIPT' && e.quotation_id === form.value.quotationId),
-)
 async function load() {
   try {
-    ;[entries.value, balances.value, contracts.value, receipts.value, invoices.value, changes.value] =
-      await Promise.all([
-        api<CashEntry[]>('/cash'),
-        api<Quote[]>('/cash/balances'),
-        api<Contract[]>('/contracts'),
-        api<ContractReceipt[]>('/contracts/receipts'),
-        api<ContractInvoice[]>('/contracts/invoices'),
-        api<ContractChange[]>('/contracts/changes/pending'),
-      ])
+    ;[contracts.value, ledger.value, invoices.value, changes.value] = await Promise.all([
+      api<Contract[]>('/contracts'),
+      api<ReceiptRow[]>('/cash/ledger'),
+      api<ContractInvoice[]>('/contracts/invoices'),
+      api<ContractChange[]>('/contracts/changes/pending'),
+    ])
     error.value = ''
   } catch (e) {
     error.value = (e as Error).message
   }
 }
-function open(id = '') {
-  form.value = { ...fresh(), quotationId: id }
-  dialog.value = true
+
+// 历史门店流水：只能关联退款冲正
+const legacyOpen = ref(false),
+  legacyRow = ref<ReceiptRow>(),
+  legacy = ref({ amount: 0, paidOn: today(), reference: '', note: '' })
+function openLegacyRefund(r: ReceiptRow) {
+  legacyRow.value = r
+  legacy.value = { amount: Number(r.amount) - Number(r.refunded), paidOn: today(), reference: '', note: '' }
+  legacyOpen.value = true
 }
-async function save() {
-  if (!form.value.quotationId || !form.value.reference.trim() || form.value.amount <= 0)
-    return ElMessage.warning('请选择订单，填写正数金额及流水号')
+async function saveLegacyRefund() {
+  if (!legacyRow.value || legacy.value.amount <= 0 || !legacy.value.reference.trim())
+    return ElMessage.warning('请填写正数金额及凭证号')
   busy.value = true
   try {
-    await post('/cash', form.value)
-    dialog.value = false
-    ElMessage.success('收付款流水已登记')
+    await post('/cash/legacy-refund', { ...legacy.value, reversesId: legacyRow.value.id })
+    legacyOpen.value = false
+    ElMessage.success('已登记退款冲正')
     await load()
   } catch (e) {
     ElMessage.error((e as Error).message)
@@ -100,15 +84,31 @@ const freshContract = () => ({
 })
 const cform = ref(freshContract())
 const contractRefundable = computed(() =>
-  receipts.value.filter(
+  ledger.value.filter(
     (r) =>
+      r.source === 'CONTRACT' &&
       r.kind === 'RECEIPT' &&
       active.value &&
       r.customer_id === active.value.customer_id &&
-      r.contract_no === active.value.contract_key &&
+      r.contract_key === active.value.contract_key &&
       Number(r.amount) > Number(r.refunded),
   ),
 )
+/** 页面上直接登记回款：先选合同（仅已确认应收、仍有未收的合同）。 */
+const receivable = computed(() => contracts.value.filter((c) => Number(c.outstanding) > 0))
+const pickKey = ref('')
+function openReceipt() {
+  active.value = undefined
+  pickKey.value = ''
+  cform.value = freshContract()
+  contractDialog.value = true
+}
+function pickContract(key: string) {
+  const c = receivable.value.find((x) => `${x.customer_id}::${x.contract_key}` === key)
+  if (!c) return
+  active.value = c
+  cform.value.amount = Number(c.outstanding)
+}
 function openConfirm(c: Contract) {
   active.value = c
   dueDate.value = afterDays(30)
@@ -116,6 +116,7 @@ function openConfirm(c: Contract) {
 }
 function openContract(c: Contract, kind: 'RECEIPT' | 'REFUND') {
   active.value = c
+  pickKey.value = ''
   cform.value = { ...freshContract(), kind, amount: kind === 'RECEIPT' ? Number(c.outstanding) : 0 }
   contractDialog.value = true
 }
@@ -158,6 +159,11 @@ async function saveContract() {
   }
 }
 const csum = (k: keyof Contract) => contracts.value.reduce((s, c) => s + Number(c[k] || 0), 0)
+/** 毛利率分母：只算成本已知（有毛利）的合同。 */
+const marginBase = computed(() =>
+  contracts.value.filter((c) => c.profit != null).reduce((s, c) => s + Number(c.amount || 0), 0),
+)
+const ratio = (a: number, b: number) => (b ? `${((a / b) * 100).toFixed(1)}%` : '—')
 function openDrawer(customerId: string, contractKey: string) {
   drawerKey.value = { customerId, contractKey }
   drawerOpen.value = true
@@ -189,59 +195,58 @@ onMounted(async () => {
     <PageHeader
       eyebrow="CONTRACTS & EXECUTION"
       title="合同台账"
-      description="合同要素、开票、到款、发货与成本一处追踪；已签订合同的修改须管理员批准。"
+      description="合同要素、开票、到款、发货与成本一处追踪；已签订合同的修改须管理层批准。"
     >
       <el-button v-if="canWrite()" type="primary" @click="createOpen = true">
         <el-icon><Plus /></el-icon>
         新建合同
       </el-button>
-      <el-button v-if="canFinance()" @click="open()">登记门店回款</el-button>
+      <el-button v-if="canFinance()" @click="openReceipt">登记合同回款</el-button>
     </PageHeader>
     <el-alert v-if="error" :title="error" type="error" :closable="false" />
-    <div class="cash-metrics contract-metrics">
-      <div class="panel compact-metric">
-        <span>合同总额</span>
+    <div class="metric-strip panel">
+      <div>
+        <span>合同额</span>
         <strong>{{ money(csum('amount')) }}</strong>
-        <small>{{ contracts.length }} 份合同 · 拟定中 {{ contracts.filter((c) => c.status === 'DRAFT').length }}</small>
+        <small>{{ contracts.length }} 份 · 拟定中 {{ contracts.filter((c) => c.status === 'DRAFT').length }}</small>
       </div>
-      <div class="panel compact-metric">
+      <div>
         <span>已开票</span>
         <strong>{{ money(csum('invoiced')) }}</strong>
-        <small>未开票 {{ money(csum('uninvoiced')) }}</small>
+        <small>{{ ratio(csum('invoiced'), csum('amount')) }} · 未开 {{ money(csum('uninvoiced')) }}</small>
       </div>
-      <div class="panel compact-metric">
+      <div>
         <span>已到款</span>
         <strong>{{ money(csum('received')) }}</strong>
-        <small>开票未到款 {{ money(csum('invoiced_unreceived')) }}</small>
+        <small>回款率 {{ ratio(csum('received'), csum('amount')) }}</small>
       </div>
-      <div class="panel compact-metric">
+      <div>
         <span>未收应收</span>
         <strong :class="csum('overdue') > 0 ? 'danger-text' : ''">{{ money(csum('outstanding')) }}</strong>
-        <small>逾期 {{ money(csum('overdue')) }} · {{ contracts.filter((c) => c.overdue > 0).length }} 份合同</small>
+        <small :class="csum('overdue') > 0 ? 'danger-text' : ''">逾期 {{ money(csum('overdue')) }}</small>
       </div>
-      <div class="panel compact-metric">
+      <div v-if="canSeeCost()">
+        <span>毛利</span>
+        <strong>{{ money(csum('profit')) }}</strong>
+        <small>{{ ratio(csum('profit'), marginBase) }} · 成本已知合同</small>
+      </div>
+      <button type="button" :class="['strip-action', { hot: changes.length }]" @click="tab = 'changes'">
         <span>待审批变更</span>
-        <strong>
-          {{ changes.length }}
-          <em>项</em>
-        </strong>
-        <small>{{ isAdmin() ? '已签订合同的修改申请' : '我提交的申请' }}</small>
-      </div>
+        <strong>{{ changes.length }}</strong>
+      </button>
     </div>
     <section class="panel">
       <div class="filter-bar">
         <el-tabs v-model="tab" class="table-tabs">
           <el-tab-pane label="合同台账" name="contracts" />
           <el-tab-pane label="开票记录" name="invoices" />
+          <el-tab-pane label="回款流水" name="ledger" />
           <el-tab-pane name="changes">
             <template #label>
               变更审批
               <el-badge v-if="changes.length" :value="changes.length" type="warning" class="tab-badge" />
             </template>
           </el-tab-pane>
-          <el-tab-pane label="合同收款" name="receipts" />
-          <el-tab-pane label="门店应收" name="balances" />
-          <el-tab-pane label="收付款流水" name="entries" />
         </el-tabs>
         <ExcelTools
           v-if="tab === 'contracts'"
@@ -254,16 +259,13 @@ onMounted(async () => {
           <el-input v-model="invoiceKeyword" clearable :prefix-icon="Search" placeholder="搜索发票号、客户或合同号" />
           <ExcelTools dataset="contract-invoices" title="开票记录" :can-import="canFinance()" @imported="load" />
         </template>
-        <el-input
-          v-if="tab === 'balances' || tab === 'entries'"
-          v-model="keyword"
-          clearable
-          :prefix-icon="Search"
-          placeholder="搜索客户、项目或流水号"
-        />
       </div>
       <template v-if="tab === 'contracts'">
-        <ContractTable :contracts="contracts" @open="(c) => openDrawer(c.customer_id, c.contract_key)" />
+        <ContractTable
+          :contracts="contracts"
+          :initial-quick="String(route.query.quick || '')"
+          @open="(c) => openDrawer(c.customer_id, c.contract_key)"
+        />
         <div class="panel-bottom-note">
           点击合同查看详情、开票、到款、成本与变更记录。按合同整笔登记回款时，系统按各门店剩余应收比例自动分摊到门店订单。
         </div>
@@ -306,7 +308,7 @@ onMounted(async () => {
       <template v-else-if="tab === 'changes'">
         <div class="inline-note changes-note">
           {{
-            isAdmin()
+            canApprove()
               ? '已签订合同的修改申请，批准后立即生效。点击打开合同查看完整对比后审批。'
               : '你提交的待审批变更申请。'
           }}
@@ -344,131 +346,39 @@ onMounted(async () => {
           </el-table-column>
         </el-table>
       </template>
-      <el-table v-else-if="tab === 'receipts'" :data="receipts">
-        <el-table-column label="收付款日期" width="125">
-          <template #default="{ row }">{{ day(row.paid_on) }}</template>
-        </el-table-column>
-        <el-table-column label="合同号 / 客户" min-width="220">
-          <template #default="{ row }">
-            {{ row.contract_no.startsWith('#') ? '未填合同号' : row.contract_no }}
-            <small class="cell-secondary">{{ row.customer_name }}</small>
-          </template>
-        </el-table-column>
-        <el-table-column label="类型" width="100">
-          <template #default="{ row }">
-            <span :class="row.kind === 'RECEIPT' ? 'profit-text' : 'danger-text'">
-              {{ row.kind === 'RECEIPT' ? '合同回款' : '合同退款' }}
-            </span>
-          </template>
-        </el-table-column>
-        <el-table-column label="金额" align="right" width="150">
-          <template #default="{ row }">{{ money(row.amount) }}</template>
-        </el-table-column>
-        <el-table-column label="分摊门店" align="right" width="95" prop="allocations" />
-        <el-table-column label="凭证号" prop="reference" min-width="160" show-overflow-tooltip />
-        <el-table-column label="备注" prop="note" min-width="160" show-overflow-tooltip />
-      </el-table>
-      <template v-else-if="tab === 'balances'">
-        <el-table :data="filteredBalances">
-          <el-table-column label="项目" prop="project_name" min-width="260" show-overflow-tooltip />
-          <el-table-column label="客户" prop="customer_name" min-width="115" />
-          <el-table-column label="确认金额" align="right" min-width="140">
-            <template #default="{ row }">{{ money(row.amount) }}</template>
-          </el-table-column>
-          <el-table-column label="净回款" align="right" min-width="140">
-            <template #default="{ row }">{{ money(row.received) }}</template>
-          </el-table-column>
-          <el-table-column label="剩余应收" align="right" min-width="140">
-            <template #default="{ row }">
-              <strong>{{ money(row.outstanding) }}</strong>
-            </template>
-          </el-table-column>
-          <el-table-column label="应收截止" width="130">
-            <template #default="{ row }">
-              <span :class="row.overdue ? 'danger-text' : ''">
-                {{ day(row.due_date) }}{{ row.overdue ? ' 逾期' : '' }}
-              </span>
-            </template>
-          </el-table-column>
-          <el-table-column v-if="canFinance()" label="操作" width="95">
-            <template #default="{ row }">
-              <el-button link type="primary" @click="open(row.id)">登记回款</el-button>
-            </template>
-          </el-table-column>
-        </el-table>
+      <template v-else-if="tab === 'ledger'">
+        <ReceiptLedger
+          :rows="ledger"
+          @open="(r) => openDrawer(r.customer_id, r.contract_key)"
+          @refund-legacy="openLegacyRefund"
+        />
         <div class="panel-bottom-note">
-          历史报价和已发货状态不自动构成应收。请先在客户报价中确认订单、金额及应收日期。
+          回款统一按合同登记（合同详情或右上角“登记合同回款”），系统按各门店剩余应收比例自动分摊。早期按门店登记的流水标为“历史”，只能关联退款冲正。
         </div>
       </template>
-      <el-table v-else-if="tab === 'entries'" :data="filteredEntries">
-        <el-table-column label="收付款日期" width="125">
-          <template #default="{ row }">{{ day(row.paid_on) }}</template>
-        </el-table-column>
-        <el-table-column label="项目 / 客户" min-width="270">
-          <template #default="{ row }">
-            {{ row.project_name }}
-            <small class="cell-secondary">{{ row.customer_name }}</small>
-          </template>
-        </el-table-column>
-        <el-table-column label="类型" width="110">
-          <template #default="{ row }">
-            <span :class="row.kind === 'RECEIPT' ? 'profit-text' : 'danger-text'">
-              {{ row.kind === 'RECEIPT' ? '客户回款' : '客户退款' }}
-            </span>
-          </template>
-        </el-table-column>
-        <el-table-column label="金额" align="right" width="150">
-          <template #default="{ row }">{{ money(row.amount) }}</template>
-        </el-table-column>
-        <el-table-column label="凭证 / 流水号" prop="reference" min-width="170" show-overflow-tooltip />
-        <el-table-column label="备注" prop="note" min-width="180" show-overflow-tooltip />
-      </el-table>
     </section>
-    <el-dialog v-model="dialog" title="登记客户收付款" width="600px">
+    <el-dialog v-model="legacyOpen" title="历史门店流水 · 退款冲正" width="520px">
+      <p v-if="legacyRow" class="dialog-lead">
+        {{ legacyRow.project_name }} · 原流水 {{ legacyRow.reference }} · 可退
+        {{ money(Number(legacyRow.amount) - Number(legacyRow.refunded)) }}
+      </p>
       <el-form label-position="top">
-        <el-form-item label="已确认订单" required>
-          <el-select v-model="form.quotationId" filterable @change="form.reversesId = null">
-            <el-option
-              v-for="q in balances"
-              :key="q.id"
-              :value="q.id"
-              :label="`${q.project_name} / ${q.customer_name} / 余 ${money(q.outstanding)}`"
-            />
-          </el-select>
-        </el-form-item>
         <div class="form-grid">
-          <el-form-item label="流水类型">
-            <el-select v-model="form.kind">
-              <el-option label="客户回款" value="RECEIPT" />
-              <el-option label="客户退款" value="REFUND" />
-            </el-select>
+          <el-form-item label="退款金额（元）" required>
+            <el-input-number v-model="legacy.amount" :min="0.01" :max="99999999999" :precision="2" :controls="false" />
           </el-form-item>
-          <el-form-item label="金额（元）" required>
-            <el-input-number v-model="form.amount" :min="0.01" :max="99999999999" :precision="2" :controls="false" />
-          </el-form-item>
-          <el-form-item label="收付款日期" required>
-            <el-date-picker v-model="form.paidOn" type="date" value-format="YYYY-MM-DD" />
+          <el-form-item label="退款日期" required>
+            <el-date-picker v-model="legacy.paidOn" type="date" value-format="YYYY-MM-DD" />
           </el-form-item>
           <el-form-item label="凭证 / 银行流水号" required>
-            <el-input v-model="form.reference" maxlength="150" />
+            <el-input v-model="legacy.reference" maxlength="150" />
           </el-form-item>
         </div>
-        <el-form-item v-if="form.kind === 'REFUND'" label="关联原收款流水" required>
-          <el-select v-model="form.reversesId" filterable>
-            <el-option
-              v-for="e in refundable"
-              :key="e.id"
-              :value="e.id"
-              :label="`${e.reference} / ${money(e.amount)}`"
-            />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="备注"><el-input v-model="form.note" type="textarea" maxlength="1000" /></el-form-item>
-        <div class="inline-note">已入账流水保留历史。错误收款请通过关联退款进行冲正，不直接修改或删除原流水。</div>
+        <el-form-item label="备注"><el-input v-model="legacy.note" maxlength="1000" /></el-form-item>
       </el-form>
       <template #footer>
-        <el-button @click="dialog = false">取消</el-button>
-        <el-button type="primary" :loading="busy" @click="save">登记流水</el-button>
+        <el-button @click="legacyOpen = false">取消</el-button>
+        <el-button type="primary" :loading="busy" @click="saveLegacyRefund">登记冲正</el-button>
       </template>
     </el-dialog>
     <el-dialog v-model="confirmDialog" title="确认合同应收" width="520px">
@@ -495,6 +405,18 @@ onMounted(async () => {
       :title="cform.kind === 'RECEIPT' ? '登记合同回款' : '登记合同退款'"
       width="600px"
     >
+      <el-form v-if="!active || pickKey" label-position="top">
+        <el-form-item label="合同" required>
+          <el-select v-model="pickKey" filterable placeholder="选择仍有未收应收的合同" @change="pickContract">
+            <el-option
+              v-for="c in receivable"
+              :key="`${c.customer_id}::${c.contract_key}`"
+              :value="`${c.customer_id}::${c.contract_key}`"
+              :label="`${c.contract_no || '未填合同号'} / ${c.customer_name} / 未收 ${money(c.outstanding)}`"
+            />
+          </el-select>
+        </el-form-item>
+      </el-form>
       <template v-if="active">
         <p class="dialog-lead">
           {{ active.contract_no || '未填合同号' }} · {{ active.customer_name }} · {{ active.projects }} 个门店 ·
@@ -551,12 +473,61 @@ onMounted(async () => {
   </div>
 </template>
 <style scoped>
-.contract-metrics {
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+.metric-strip {
+  display: flex;
+  align-items: stretch;
+  margin-bottom: 12px;
+  padding: 0;
+  overflow: hidden;
 }
-@media (max-width: 1100px) {
-  .contract-metrics {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+.metric-strip > div,
+.strip-action {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 9px 16px;
+  border-right: 1px solid #edf1ea;
+}
+.metric-strip span {
+  font-size: 12px;
+  color: #6b7a72;
+}
+.metric-strip strong {
+  font-size: 17px;
+  line-height: 22px;
+  color: #253731;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.metric-strip small {
+  font-size: 11px;
+  color: #8a958e;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.strip-action {
+  flex: 0 0 104px;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+}
+.strip-action:hover {
+  background: #f6f9f4;
+}
+.strip-action.hot strong {
+  color: #a0661b;
+}
+@media (max-width: 1000px) {
+  .metric-strip {
+    flex-wrap: wrap;
+  }
+  .metric-strip > div {
+    flex: 1 1 33%;
   }
 }
 .invoice-sum {

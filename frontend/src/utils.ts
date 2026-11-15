@@ -33,7 +33,13 @@ export const statusName: Record<string, string> = {
   HISTORICAL: '历史报价',
 }
 export const taxName: Record<string, string> = { INCLUDED: '含税', EXCLUDED: '未税', UNKNOWN: '税口径待核实' }
-export const roleName: Record<string, string> = { ADMIN: '管理员', SALES: '商务', FINANCE: '财务', VIEWER: '只读' }
+export const roleName: Record<string, string> = {
+  ADMIN: '系统管理员',
+  MANAGER: '管理层',
+  FINANCE: '财务',
+  SALES: '业务员',
+  VIEWER: '只读',
+}
 /** 金额以“万元”紧凑显示，用于指标卡和图表坐标。 */
 export const wan = (n: number | null | undefined, digits = 2) =>
   n == null
@@ -125,3 +131,32 @@ export function invoiceText(p: {
   ].join('\n')
 }
 export const invoiceTypeName: Record<string, string> = { SPECIAL: '增值税专用发票', NORMAL: '增值税普通发票' }
+
+/** 邮寄信息文本（一键复制）：门店、收货人、电话、地址，已发货时附快递与运单号。 */
+export function deliveryText(p: {
+  name: string
+  consignee?: string | null
+  consignee_phone?: string | null
+  ship_address?: string | null
+  courier?: string | null
+  tracking_no?: string | null
+}): string {
+  const lines = [
+    `门店：${p.name}`,
+    `收货人：${p.consignee || ''}`,
+    `电话：${p.consignee_phone || ''}`,
+    `地址：${p.ship_address || ''}`,
+  ]
+  if (p.tracking_no) lines.push(`快递：${p.courier || ''} ${p.tracking_no}`)
+  return lines.join('\n')
+}
+
+/** 复制文本到剪贴板，返回是否成功（浏览器未授权时返回 false）。 */
+export async function copyText(text: string): Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(text)
+    return true
+  } catch {
+    return false
+  }
+}

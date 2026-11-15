@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
-import { api, isAdmin, post } from '../api'
+import { api, canApprove, post } from '../api'
 import { companyLabel, contractStatusName, defaultCompany, dict, loadDictionaries } from '../dictionaries'
 import type { ContractDetail, Partner } from '../types'
 import { today } from '../utils'
@@ -40,7 +40,7 @@ const form = ref(fresh())
 const creating = computed(() => !props.contract)
 const established = computed(() => !!props.contract && props.contract.status !== 'DRAFT')
 /** 非管理员修改已建立的合同 → 提交审批。 */
-const needsApproval = computed(() => established.value && !isAdmin())
+const needsApproval = computed(() => established.value && !canApprove())
 const needsReason = computed(() => established.value)
 
 watch(
@@ -216,7 +216,7 @@ async function save() {
           />
         </el-form-item>
         <el-form-item label="销售负责人">
-          <el-select v-model="form.ownerId" clearable filterable :disabled="!isAdmin()" placeholder="未分配">
+          <el-select v-model="form.ownerId" clearable filterable :disabled="!canApprove()" placeholder="未分配">
             <el-option
               v-for="o in dict.owners.filter((x) => x.enabled || x.id === form.ownerId)"
               :key="o.id"

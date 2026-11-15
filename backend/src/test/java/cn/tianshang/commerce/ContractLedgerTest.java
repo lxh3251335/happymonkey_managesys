@@ -59,6 +59,24 @@ class ContractLedgerTest extends ApiTestSupport {
         var q = new HashMap<String, Object>(quoteInput(project, product, "300"));
         q.put("items", List.of(line));
         String quote = ok(as(user, "SALES", "POST", "/api/quotes", q)).path("id").asText();
+        // 业务员看不到也不能填成本：由财务修正成本（单台 300）
+        String item = ok(as("finance", "FINANCE", "GET", "/api/quotes/" + quote, null))
+            .path("items")
+            .get(0)
+            .path("id")
+            .asText();
+        var fix = new HashMap<String, Object>();
+        fix.put("itemId", item);
+        fix.put("unitCost", "300");
+        ok(
+            as(
+                "finance",
+                "FINANCE",
+                "PUT",
+                "/api/quotes/" + quote + "/costs",
+                Map.of("reason", "按采购价", "items", List.of(fix))
+            )
+        );
         ok(as(user, "SALES", "POST", "/api/quotes/" + quote + "/issue", Map.of()));
         return new String[] { customer, project, quote };
     }
@@ -376,9 +394,11 @@ class ContractLedgerTest extends ApiTestSupport {
             "incurredOn",
             LocalDate.now().toString()
         );
-        as("sales2", "SALES", "POST", "/api/contracts/costs", cost).andExpect(status().isForbidden());
-        ok(as("sales1", "SALES", "POST", "/api/contracts/costs", cost));
-        c = contract("sales1", "SALES", s[0], key);
+        as("sales1", "SALES", "POST", "/api/contracts/costs", cost).andExpect(status().isForbidden());
+        ok(as("finance", "FINANCE", "POST", "/api/contracts/costs", cost));
+        // 业务员看不到毛利
+        assertThat(contract("sales1", "SALES", s[0], key).has("profit")).isFalse();
+        c = contract("finance", "FINANCE", s[0], key);
         assertThat(c.path("cost_source").asText()).isEqualTo("ACTUAL");
         assertThat(c.path("profit").decimalValue()).isEqualByComparingTo("300");
         assertThat(c.path("gross_margin").decimalValue()).isEqualByComparingTo(new BigDecimal("0.3"));
@@ -464,6 +484,82 @@ class ContractLedgerTest extends ApiTestSupport {
         assertThat(
             upload("contract-invoices", "preview", inv, "finance", "FINANCE").path("unchanged").asInt()
         ).isEqualTo(2);
+    }
+
+    @Test
+    void dashboardAnalysesContractsAndShippingIsTracked() throws Exception {
+        var s = salesQuote("sales1");
+        String key = ok(
+            as(
+                "sales1",
+                "SALES",
+                "POST",
+                "/api/contracts/from-quote/" + s[2],
+                Map.of("dueDate", LocalDate.now().plusDays(30).toString(), "signedOn", LocalDate.now().toString())
+            )
+        )
+            .path("contractKey")
+            .asText();
+        java.util.function.Function<JsonNode, JsonNode> mine = d -> {
+            for (var r : d.path("by_owner")) if (r.path("name").asText().equals("sales1")) return r;
+            return null;
+        };
+        var row = mine.apply(ok(as("admin", "ADMIN", "GET", "/api/dashboard", null)));
+        assertThat(row.path("contract_amount").decimalValue()).isEqualByComparingTo("1000");
+        assertThat(row.path("profit").decimalValue()).isEqualByComparingTo("400");
+        // 签约金额 1200：经营分析按签约金额，成本仍为报价预估 600
+        String infoPath = "/api/contracts/info?customerId=" + s[0] + "&contractKey=" + key;
+        var info = info(contract("admin", "ADMIN", s[0], key));
+        info.put("signedAmount", "1200");
+        ok(as("admin", "ADMIN", "PUT", infoPath, Map.of("info", info, "reason", "补充协议")));
+        row = mine.apply(ok(as("admin", "ADMIN", "GET", "/api/dashboard", null)));
+        assertThat(row.path("contract_amount").decimalValue()).isEqualByComparingTo("1200");
+        assertThat(row.path("profit").decimalValue()).isEqualByComparingTo("600");
+        // 实际成本 900 替代预估成本
+        ok(
+            as(
+                "finance",
+                "FINANCE",
+                "POST",
+                "/api/contracts/costs",
+                Map.of(
+                    "customerId",
+                    s[0],
+                    "contractKey",
+                    key,
+                    "category",
+                    "MATERIAL",
+                    "amount",
+                    "900",
+                    "incurredOn",
+                    LocalDate.now().toString()
+                )
+            )
+        );
+        var dash = ok(as("admin", "ADMIN", "GET", "/api/dashboard", null));
+        assertThat(mine.apply(dash).path("profit").decimalValue()).isEqualByComparingTo("300");
+        assertThat(dash.path("execution").path("actual_cost_contracts").asInt()).isGreaterThanOrEqualTo(1);
+        // 发货：负责人登记，记录日期并进入合同轨迹；其他销售不能登记
+        as("sales2", "SALES", "PUT", "/api/projects/" + s[1] + "/delivery", Map.of("status", "已发货")).andExpect(
+            status().isForbidden()
+        );
+        ok(as("sales1", "SALES", "PUT", "/api/projects/" + s[1] + "/delivery", Map.of("status", "已发货")));
+        var c = contract("sales1", "SALES", s[0], key);
+        assertThat(c.path("shipped").asInt()).isEqualTo(1);
+        assertThat(c.path("items").get(0).path("shipped_on").asText()).startsWith(LocalDate.now().toString());
+        assertThat(c.path("events").toString()).contains("PROJECT_DELIVERY");
+        // 报价详情带出客户，可跳转到合同
+        var q = ok(as("sales1", "SALES", "GET", "/api/quotes/" + s[2], null));
+        assertThat(q.path("customer_id").asText()).isEqualTo(s[0]);
+        assertThat(q.path("contract_no").asText()).isEqualTo(key);
+        // 已终止的合同不计入经营分析
+        info = info(contract("admin", "ADMIN", s[0], key));
+        info.put("status", "TERMINATED");
+        info.put("signedAmount", "1200");
+        ok(as("admin", "ADMIN", "PUT", infoPath, Map.of("info", info, "reason", "客户解约")));
+        dash = ok(as("admin", "ADMIN", "GET", "/api/dashboard", null));
+        assertThat(mine.apply(dash)).isNull();
+        assertThat(dash.path("execution").path("terminated").asInt()).isGreaterThanOrEqualTo(1);
     }
 
     private JsonNode upload(String dataset, String action, byte[] body, String user, String role) throws Exception {

@@ -24,18 +24,11 @@ public class Ownership {
     }
 
     public static boolean hasRole(String role) {
-        var auth = SecurityContextHolder.getContext().getAuthentication();
-        return (
-            auth != null &&
-            auth
-                .getAuthorities()
-                .stream()
-                .anyMatch(a -> a.getAuthority().equals("ROLE_" + role))
-        );
+        return Roles.has(role);
     }
 
     public static boolean isAdmin() {
-        return hasRole("ADMIN");
+        return Roles.isAdmin();
     }
 
     /** 当前用户是否只能看自己的数据。 */

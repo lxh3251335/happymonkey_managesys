@@ -2,7 +2,6 @@
 import { ref, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import PageHeader from '../components/PageHeader.vue'
-import TemplateManager from '../components/TemplateManager.vue'
 import BusinessManager from '../components/BusinessManager.vue'
 import DictionaryManager from '../components/DictionaryManager.vue'
 import CompanyManager from '../components/CompanyManager.vue'
@@ -114,7 +113,6 @@ onMounted(load)
           <el-tab-pane label="用户与角色" name="users" />
           <el-tab-pane label="数据字典" name="business" />
           <el-tab-pane label="签约主体" name="companies" />
-          <el-tab-pane label="报价模板" name="templates" />
           <el-tab-pane label="操作审计" name="audit" />
           <el-tab-pane label="历史数据导入" name="imports" />
         </template>
@@ -134,7 +132,7 @@ onMounted(load)
       </div>
       <div v-if="tab === 'users'">
         <div class="inline-note">
-          管理员：全部操作；商务：项目、基础资料与报价；财务：回款登记；只读：内部经营资料查询。所有角色均为公司内部人员。
+          系统管理员：全部操作及系统配置；管理层：查看全部经营与成本数据、审批合同变更、分配负责人；财务：开票、回款、成本，查看成本；业务员：只看和办理自己负责的门店、报价与合同，看不到成本与毛利；只读：查看经营数据，看不到成本。
         </div>
         <el-button type="primary" class="section-gap" @click="dialog = true">新增用户</el-button>
         <el-table :data="users">
@@ -155,7 +153,6 @@ onMounted(load)
           </el-table-column>
         </el-table>
       </div>
-      <TemplateManager v-if="tab === 'templates'" />
       <template v-if="tab === 'business'">
         <el-radio-group v-model="dictTab" size="small" class="dict-switch">
           <el-radio-button value="business">客户集团与业务线</el-radio-button>
