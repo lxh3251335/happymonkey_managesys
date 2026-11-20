@@ -7,6 +7,7 @@
     "dev": "vite --configLoader native --host 127.0.0.1",
     "build": "vue-tsc -b && vite build --configLoader native",
     "preview": "vite preview --configLoader native --host 127.0.0.1 --port 5173 --strictPort",
+    "format": "prettier --write src vite.config.ts",
     "format:check": "prettier --check src vite.config.ts",
     "test:unit": "node --test \"tests/*.test.ts\"",
     "test:smoke": "node ../tools/browser-check.mjs",

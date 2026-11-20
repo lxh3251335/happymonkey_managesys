@@ -103,7 +103,7 @@ npm run format:check
 npm run format:java:check
 ```
 
-已配置 GitHub Actions：前端构建、H2 测试及 PostgreSQL 测试。未推送到远端时，CI 尚未实际运行。
+已配置 GitHub Actions：前端构建与识别规则测试、H2 测试及 PostgreSQL 测试，每次推送和合并请求都会运行。多人协作的分支、合并和约定见 [协作说明](CONTRIBUTING.md)。
 
 云部署参见 [部署说明](docs/deployment.md)，设计边界参见 [架构约定](docs/architecture.md)，验收与下一阶段参见 [迭代记录](docs/roadmap.md)。
 
