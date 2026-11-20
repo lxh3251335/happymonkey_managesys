@@ -5,6 +5,8 @@ import PageHeader from '../components/PageHeader.vue'
 import BusinessManager from '../components/BusinessManager.vue'
 import DictionaryManager from '../components/DictionaryManager.vue'
 import CompanyManager from '../components/CompanyManager.vue'
+import BotBinding from '../components/BotBinding.vue'
+import WecomBotSettings from '../components/WecomBotSettings.vue'
 import { api, post, put, session } from '../api'
 import type { User, Audit, ImportBatch } from '../types'
 import { actionName, dateTime, day, roleName } from '../utils'
@@ -109,6 +111,7 @@ onMounted(load)
           <el-tab-pane label="用户与角色" name="users" />
           <el-tab-pane label="数据字典" name="business" />
           <el-tab-pane label="签约主体" name="companies" />
+          <el-tab-pane label="企业微信机器人" name="wecom" />
           <el-tab-pane label="操作审计" name="audit" />
           <el-tab-pane label="历史数据导入" name="imports" />
         </template>
@@ -125,6 +128,7 @@ onMounted(load)
           </el-form-item>
           <el-button type="primary" :loading="busy" @click="changePassword">更新密码</el-button>
         </el-form>
+        <BotBinding />
       </div>
       <div v-if="tab === 'users'">
         <el-button type="primary" class="section-gap" @click="dialog = true">新增用户</el-button>
@@ -156,6 +160,7 @@ onMounted(load)
         <DictionaryManager v-else :key="dictTab" :kind="dictTab" />
       </template>
       <CompanyManager v-if="tab === 'companies'" />
+      <WecomBotSettings v-if="tab === 'wecom'" />
       <el-table v-if="tab === 'audit'" :data="audits" max-height="600">
         <el-table-column label="时间" width="150">
           <template #default="{ row }">{{ dateTime(row.created_at) }}</template>
