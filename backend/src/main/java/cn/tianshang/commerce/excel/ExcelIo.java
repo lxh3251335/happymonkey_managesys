@@ -14,7 +14,14 @@ public final class ExcelIo {
 
     public static final int MAX_ROWS = 5000;
     public static final long MAX_BYTES = 10L * 1024 * 1024;
-    private static final Map<String, String> HEADER_ALIASES = Map.of("品牌", "业务线");
+    private static final Map<String, String> HEADER_ALIASES = Map.of(
+        "品牌",
+        "业务线",
+        "接单日期",
+        "下单日期",
+        "团队人工",
+        "人工成本"
+    );
 
     /** 列定义。text=true 的列设置为文本格式，避免长数字（税号、账号）被 Excel 改成科学计数。 */
     public record Column(
@@ -165,7 +172,7 @@ public final class ExcelIo {
             if (head == null) throw new ApiException("Excel 第一张表没有表头");
             var byHeader = new HashMap<String, Column>();
             for (var col : columns) byHeader.put(normalizeHeader(col.header()), col);
-            // 旧版表头别名：早期导出文件中“业务线”列名为“品牌”
+            // 旧版表头别名：早期导出文件的列名（品牌、接单日期、团队人工）仍可导入
             for (var e : HEADER_ALIASES.entrySet())
                 if (byHeader.containsKey(e.getValue())) byHeader.putIfAbsent(e.getKey(), byHeader.get(e.getValue()));
             var colIndex = new LinkedHashMap<Integer, Column>();

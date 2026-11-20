@@ -64,9 +64,6 @@ async function save() {
 </script>
 <template>
   <div>
-    <div class="inline-note">
-      维护我方签合同、开发票的公司。新建报价和合同时选择签约主体（默认取“默认”标记的公司），报价单和合同打印其抬头、税号、地址电话和收款账户。
-    </div>
     <el-button type="primary" size="small" class="section-gap" @click="open()">
       <el-icon><Plus /></el-icon>
       新增签约主体
@@ -84,8 +81,8 @@ async function save() {
       <el-table-column label="开户行 / 账号" min-width="240" show-overflow-tooltip>
         <template #default="{ row }">{{ [row.bank_name, row.bank_account].filter(Boolean).join(' ') || '—' }}</template>
       </el-table-column>
-      <el-table-column label="合同" prop="contracts" width="70" align="right" />
-      <el-table-column label="报价" prop="quotes" width="70" align="right" />
+      <el-table-column label="合同数" prop="contracts" width="76" align="right" />
+      <el-table-column label="报价数" prop="quotes" width="76" align="right" />
       <el-table-column label="操作" width="70">
         <template #default="{ row }">
           <el-button link type="primary" @click="open(row)">编辑</el-button>

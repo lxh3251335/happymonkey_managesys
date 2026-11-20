@@ -34,7 +34,7 @@ onMounted(load)
 const setPrice = (t: ProjectType) => t.items.reduce((s, i) => s + Number(i.quantity) * Number(i.unit_price || 0), 0)
 const formTotal = computed(() => form.value.items.reduce((s, i) => s + i.quantity * (i.unitPrice || 0), 0))
 const label = (p: Product) => `${p.scenario} / ${p.name} / ${p.specification}${p.model ? ' / ' + p.model : ''}`
-/** 同品牌的最近报价可作为配置来源。 */
+/** 同业务线的最近报价可作为配置来源。 */
 const sourceQuotes = computed(() => quotes.value.filter((q) => q.brand === form.value.brand).slice(0, 300))
 
 async function open(t?: ProjectType) {
@@ -146,7 +146,6 @@ async function save() {
 <template>
   <div>
     <div class="manager-bar">
-      <span class="muted">每种门店的标准配置和对客标准售价。新建报价选择项目类型后自动带出，报价中可逐行修改。</span>
       <el-button v-if="canWrite()" type="primary" size="small" @click="open()">新增项目类型</el-button>
     </div>
     <el-table :data="types">
@@ -168,8 +167,8 @@ async function save() {
       <el-table-column label="整套标准售价" width="130" align="right">
         <template #default="{ row }">{{ row.items.length ? money(setPrice(row)) : '—' }}</template>
       </el-table-column>
-      <el-table-column label="供应商模板" prop="supplier_templates" width="100" align="right" />
-      <el-table-column label="门店" prop="projects" width="70" align="right" />
+      <el-table-column label="成本模板数" prop="supplier_templates" width="100" align="right" />
+      <el-table-column label="使用门店数" prop="projects" width="100" align="right" />
       <el-table-column v-if="canWrite()" label="操作" width="80" fixed="right">
         <template #default="{ row }"><el-button link type="primary" @click="open(row)">编辑</el-button></template>
       </el-table-column>
@@ -220,7 +219,7 @@ async function save() {
         </div>
         <el-form-item label="或从某一份报价带入配置（可选）">
           <div class="copy-row">
-            <el-select v-model="copyFrom" filterable clearable placeholder="选择一个同品牌门店的报价">
+            <el-select v-model="copyFrom" filterable clearable placeholder="选择一个同业务线门店的报价">
               <el-option
                 v-for="q in sourceQuotes"
                 :key="q.id"
@@ -288,7 +287,7 @@ async function save() {
   border-radius: 8px;
   padding: 10px 12px;
   margin-bottom: 12px;
-  font-size: 13px;
+  font-size: 14px;
 }
 .suggest-head {
   display: flex;
@@ -319,7 +318,7 @@ async function save() {
   margin-left: 6px;
 }
 .config-list {
-  font-size: 12px;
+  font-size: 13px;
   color: #4a5a52;
 }
 .type-grid {
@@ -340,7 +339,7 @@ async function save() {
   justify-content: space-between;
   align-items: center;
   margin: 10px 0 14px;
-  font-size: 13px;
+  font-size: 14px;
 }
 .type-foot strong {
   font-size: 16px;

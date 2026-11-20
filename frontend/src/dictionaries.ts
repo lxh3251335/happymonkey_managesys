@@ -59,7 +59,7 @@ export const contractStatusName: Record<string, string> = {
 export const invoiceStatusName: Record<string, string> = { NONE: '未开票', PARTIAL: '部分开票', FULL: '已开足' }
 export const costCategoryName: Record<string, string> = {
   MATERIAL: '材料采购',
-  LABOR: '团队人工',
+  LABOR: '人工成本',
   INSTALL: '安装调试',
   FREIGHT: '运输物流',
   FINANCE: '财务成本',

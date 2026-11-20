@@ -144,7 +144,7 @@ async function remove(d: ProductDrawing) {
 <style scoped>
 .sub {
   margin: -8px 0 12px;
-  font-size: 12px;
+  font-size: 13px;
 }
 .upload-row {
   display: flex;
@@ -160,7 +160,7 @@ async function remove(d: ProductDrawing) {
   border: 1px dashed #c9d3c2;
   border-radius: 4px;
   color: #5d6d58;
-  font-size: 13px;
+  font-size: 14px;
   cursor: pointer;
   overflow: hidden;
   white-space: nowrap;
@@ -183,7 +183,7 @@ async function remove(d: ProductDrawing) {
   border-radius: 3px;
   background: #eef2ea;
   color: #4a5f50;
-  font-size: 10px;
+  font-size: 12px;
   text-align: center;
 }
 .gap {

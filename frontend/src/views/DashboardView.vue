@@ -10,7 +10,7 @@ import { api, canSeeCost, canWrite, session } from '../api'
 import type { BizRow, BrandLines, Contract, Dashboard, Quote } from '../types'
 import { money, percent, wan, axisWan } from '../utils'
 
-/** 两个系列颜色已通过色觉差异校验（合同额 / 到账额）。 */
+/** 两个系列颜色已通过色觉差异校验（合同额 / 回款额）。 */
 const CONTRACT = '#14805e',
   RECEIVED = '#c27c0e'
 /** 产品线身份色（已校验色觉差异）：电控柜蓝、物联网电箱橙。 */
@@ -124,7 +124,7 @@ const yearSpan = computed(() => {
 })
 const amountSeries = computed(() => [
   { name: '合同额', color: CONTRACT, values: months.value.map((m) => m.contract_amount) },
-  { name: '到账额', color: RECEIVED, values: months.value.map((m) => m.received) },
+  { name: '回款额', color: RECEIVED, values: months.value.map((m) => m.received) },
 ])
 const marginSeries = computed(() =>
   [CABINET, IOT].map((n) => ({
@@ -173,7 +173,7 @@ const openQuote = (q: Quote) => router.push(`/quotes?detail=${q.id}`)
         <strong>{{ t.projects }}</strong>
         个门店 ·
         <strong>{{ data.concentration.customer_count }}</strong>
-        家客户 · 合同额按下单月、到账按收款日
+        家客户 · 合同额按下单月、回款按回款日期
       </template>
       <div class="biz-switch" role="group" aria-label="按业务筛选">
         <el-select v-model="scope" size="small" class="scope-select" :disabled="loading || !data">
@@ -205,7 +205,7 @@ const openQuote = (q: Quote) => router.push(`/quotes?detail=${q.id}`)
         </article>
         <article class="metric-card">
           <div class="metric-label">
-            到账额
+            回款额
             <el-icon><Wallet /></el-icon>
           </div>
           <div class="metric-value">{{ wan(t.received) }}</div>
@@ -257,7 +257,7 @@ const openQuote = (q: Quote) => router.push(`/quotes?detail=${q.id}`)
           <small>未开 {{ wan(data.execution.uninvoiced) }}</small>
         </a>
         <a :class="{ warn: data.execution.invoiced_unreceived > 0 }" @click="goContracts('INV_UNPAID')">
-          开票未到款 {{ wan(data.execution.invoiced_unreceived) }}
+          开票未回款 {{ wan(data.execution.invoiced_unreceived) }}
         </a>
         <a v-if="seeCost" @click="goContracts('ALL')">
           实际成本 {{ data.execution.actual_cost_contracts }} 份
@@ -307,7 +307,7 @@ const openQuote = (q: Quote) => router.push(`/quotes?detail=${q.id}`)
                 <i :style="{ width: `${Math.min(100, (l.share || 0) * 100)}%`, background: LINE_COLOR[l.name] }"></i>
               </div>
               <footer>
-                <span>到账 {{ wan(l.received) }} · 回款率 {{ percent(l.collection_rate) }}</span>
+                <span>回款 {{ wan(l.received) }} · 回款率 {{ percent(l.collection_rate) }}</span>
                 <span>
                   {{ Number(l.quantity) }} 台 · {{ l.projects }} 店{{
                     seeCost ? ` · 成本覆盖 ${percent(l.margin_coverage)}` : ''
@@ -325,11 +325,11 @@ const openQuote = (q: Quote) => router.push(`/quotes?detail=${q.id}`)
           <div class="panel-heading">
             <div>
               <h2>业务 × 产品线</h2>
-              <p>各品牌的电控柜与物联网电箱合同额{{ seeCost ? '、毛利率' : '' }}对比（全部业务，不随上方筛选变化）</p>
+              <p>各业务线的电控柜与物联网电箱合同额{{ seeCost ? '、毛利率' : '' }}对比（全部业务，不随上方筛选变化）</p>
             </div>
           </div>
           <el-table class="brand-matrix" :data="data.brand_lines" size="small" :row-class-name="brandRowClass">
-            <el-table-column label="业务线" min-width="110">
+            <el-table-column label="业务线" min-width="100">
               <template #default="{ row }">
                 <el-button link @click="scope = row.brand === brand ? '' : `l:${row.brand}`">
                   {{ brandName(row.brand) }}
@@ -355,7 +355,7 @@ const openQuote = (q: Quote) => router.push(`/quotes?detail=${q.id}`)
               <el-table-column label="合同额" align="right" min-width="84">
                 <template #default="{ row }">{{ wan(row.contract_amount) }}</template>
               </el-table-column>
-              <el-table-column v-if="seeCost" label="综合毛利率" align="right" min-width="80">
+              <el-table-column v-if="seeCost" label="综合毛利率" align="right" min-width="94">
                 <template #default="{ row }">{{ percent(row.gross_margin) }}</template>
               </el-table-column>
             </el-table-column>
@@ -366,10 +366,10 @@ const openQuote = (q: Quote) => router.push(`/quotes?detail=${q.id}`)
 
       <div v-if="t.pending_amount > 0" class="data-note">
         <span class="note-dot"></span>
-        <strong>{{ wan(t.pending_amount) }} 合同额尚未确认应收</strong>
-        <span>历史记录有合同号的计入合同额；确认合同应收后才能登记到账并计算账龄。</span>
+        <strong>{{ wan(t.pending_amount) }} 合同额尚未产生应收</strong>
+        <span>这些门店订单所在的合同还在拟定中、客户尚未确认；合同签订后自动计入应收。</span>
         <router-link to="/cash?tab=contracts">
-          去确认合同
+          查看合同
           <el-icon><ArrowRight /></el-icon>
         </router-link>
       </div>
@@ -385,7 +385,7 @@ const openQuote = (q: Quote) => router.push(`/quotes?detail=${q.id}`)
                   ? '电控柜与物联网电箱每月合同额'
                   : trendView === 'margin'
                     ? '两条产品线每月毛利率'
-                    : '每月合同额与到账额'
+                    : '每月合同额与回款额'
               }}
             </p>
           </div>
@@ -403,7 +403,7 @@ const openQuote = (q: Quote) => router.push(`/quotes?detail=${q.id}`)
             :series="amountSeries"
             :format="(n) => money(n)"
             :axis-format="axisWan"
-            label="按月合同额与到账额柱状图"
+            label="按月合同额与回款额柱状图"
           >
             <template #tip="{ index }">
               <div class="tip-extra">
@@ -447,7 +447,7 @@ const openQuote = (q: Quote) => router.push(`/quotes?detail=${q.id}`)
             <el-table-column label="合同额" align="right">
               <template #default="{ row }">{{ money(row.contract_amount) }}</template>
             </el-table-column>
-            <el-table-column label="到账额" align="right">
+            <el-table-column label="回款额" align="right">
               <template #default="{ row }">{{ money(row.received) }}</template>
             </el-table-column>
             <el-table-column v-if="seeCost" label="毛利" align="right">
@@ -475,7 +475,7 @@ const openQuote = (q: Quote) => router.push(`/quotes?detail=${q.id}`)
           <div class="panel-heading">
             <div>
               <h2>经营分布</h2>
-              <p>合同额、到账额、回款率与毛利，按{{ dimName }}汇总</p>
+              <p>合同额、回款额、回款率与毛利，按{{ dimName }}汇总</p>
             </div>
             <el-radio-group v-model="dim" size="small">
               <el-radio-button value="customer">客户</el-radio-button>
@@ -493,7 +493,7 @@ const openQuote = (q: Quote) => router.push(`/quotes?detail=${q.id}`)
               </span>
               <span>
                 <i :style="{ background: RECEIVED }"></i>
-                到账额
+                回款额
               </span>
             </div>
             <div class="dist-table">
@@ -501,7 +501,7 @@ const openQuote = (q: Quote) => router.push(`/quotes?detail=${q.id}`)
                 <span>{{ dimName }}</span>
                 <span></span>
                 <span>合同额</span>
-                <span>到账额</span>
+                <span>回款额</span>
                 <span>回款率</span>
                 <span>{{ seeCost ? '毛利率' : '' }}</span>
                 <span>占比</span>
@@ -509,7 +509,7 @@ const openQuote = (q: Quote) => router.push(`/quotes?detail=${q.id}`)
               </div>
               <div v-for="r in dimRows" :key="r.name" class="dist-row">
                 <strong>{{ dim === 'brand' ? brandName(r.name) : r.name }}</strong>
-                <div class="dist-bars" :title="`合同额 ${money(r.contract_amount)} · 到账额 ${money(r.received)}`">
+                <div class="dist-bars" :title="`合同额 ${money(r.contract_amount)} · 回款额 ${money(r.received)}`">
                   <i
                     :style="{ width: `${Math.max(0.5, (r.contract_amount / dimMax) * 100)}%`, background: CONTRACT }"
                   ></i>
@@ -549,14 +549,14 @@ const openQuote = (q: Quote) => router.push(`/quotes?detail=${q.id}`)
               {{ showAllDims ? '收起' : `展开其余 ${allDimRows.length - DIM_LIMIT} 个${dimName}` }}
             </el-button>
           </div>
-          <p v-if="dim === 'line'" class="panel-bottom-note">产品线按品名归类；到账额按门店订单内明细金额比例分摊。</p>
+          <p v-if="dim === 'line'" class="panel-bottom-note">产品线按品名归类；回款额按门店订单内明细金额比例分摊。</p>
         </section>
         <div class="dash-col">
           <section class="panel">
             <div class="panel-heading">
               <div>
                 <h2>应收账龄</h2>
-                <p>已确认应收的未收余额，按应收截止日计算</p>
+                <p>已签合同的未收余额，按应收截止日计算；未设截止日的算未到期</p>
               </div>
               <strong class="panel-figure">{{ wan(t.receivable) }}</strong>
             </div>
@@ -575,7 +575,7 @@ const openQuote = (q: Quote) => router.push(`/quotes?detail=${q.id}`)
                 <small>{{ a.projects }} 店</small>
               </div>
             </div>
-            <el-empty v-else :image-size="60" description="暂无已确认应收。确认合同并登记回款后显示账龄。" />
+            <el-empty v-else :image-size="60" description="暂无未收应收。合同签订并设置截止日后显示账龄。" />
           </section>
           <section class="panel">
             <div class="panel-heading">
@@ -614,7 +614,7 @@ const openQuote = (q: Quote) => router.push(`/quotes?detail=${q.id}`)
         <div class="panel-heading">
           <div>
             <h2>合同明细</h2>
-            <p>每个合同号一行，点击在合同台账中查看详情、开票、到款与成本。</p>
+            <p>每个合同号一行，点击在合同台账中查看详情、开票、回款与成本。</p>
           </div>
           <el-button link type="primary" @click="router.push('/cash?tab=contracts')">
             去办理
@@ -652,7 +652,7 @@ const openQuote = (q: Quote) => router.push(`/quotes?detail=${q.id}`)
           <el-table-column label="报价金额" align="right" min-width="140">
             <template #default="{ row }">{{ money(row.amount) }}</template>
           </el-table-column>
-          <el-table-column v-if="seeCost" label="预计利润" align="right" min-width="130">
+          <el-table-column v-if="seeCost" label="毛利" align="right" min-width="130">
             <template #default="{ row }">
               <span :class="row.profit < 0 ? 'danger-text' : 'profit-text'">{{ money(row.profit) }}</span>
             </template>
@@ -674,7 +674,7 @@ const openQuote = (q: Quote) => router.push(`/quotes?detail=${q.id}`)
   gap: 6px 18px;
   padding: 9px 18px;
   margin: 12px 0 18px;
-  font-size: 13px;
+  font-size: 14px;
 }
 .exec-title {
   font-weight: 600;
@@ -693,13 +693,13 @@ const openQuote = (q: Quote) => router.push(`/quotes?detail=${q.id}`)
   color: #a0661b;
 }
 .exec-strip small {
-  color: #8a958e;
+  color: #66716a;
   margin-left: 4px;
 }
 .matrix-group {
   display: block;
-  color: #8a958e;
-  font-size: 11px;
+  color: #66716a;
+  font-size: 12px;
   line-height: 1.2;
 }
 .scope-select {
@@ -736,7 +736,7 @@ const openQuote = (q: Quote) => router.push(`/quotes?detail=${q.id}`)
 }
 .line-card header .muted {
   margin-left: auto;
-  font-size: 12px;
+  font-size: 13px;
 }
 .line-figures {
   display: grid;
@@ -747,8 +747,8 @@ const openQuote = (q: Quote) => router.push(`/quotes?detail=${q.id}`)
 }
 .line-figures span {
   display: block;
-  font-size: 11px;
-  color: #6b7a72;
+  font-size: 12px;
+  color: #5d6a63;
 }
 .line-figures strong {
   font-size: clamp(16px, 1.3vw, 20px);
@@ -774,8 +774,8 @@ const openQuote = (q: Quote) => router.push(`/quotes?detail=${q.id}`)
   justify-content: space-between;
   gap: 4px 12px;
   margin-top: 10px;
-  font-size: 11px;
-  color: #6b7a72;
+  font-size: 12px;
+  color: #5d6a63;
   font-variant-numeric: tabular-nums;
 }
 .line-head {
@@ -793,10 +793,10 @@ const openQuote = (q: Quote) => router.push(`/quotes?detail=${q.id}`)
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 .biz-metrics .metric-foot {
-  font-size: 11px;
+  font-size: 12px;
 }
 .biz-metrics .metric-badge {
-  font-size: 11px;
+  font-size: 12px;
 }
 .biz-panel {
   margin-top: 18px;
@@ -811,8 +811,9 @@ const openQuote = (q: Quote) => router.push(`/quotes?detail=${q.id}`)
   margin-top: 18px;
   align-items: start;
 }
+/* 右侧“业务 × 产品线”对比表有 7 列，至少留 610px，笔记本宽度下才不用横向滚动 */
 .dash-row.two {
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr);
+  grid-template-columns: minmax(0, 1fr) minmax(610px, 1.2fr);
 }
 .dash-row.two > :only-child {
   grid-column: 1 / -1;
@@ -840,7 +841,7 @@ const openQuote = (q: Quote) => router.push(`/quotes?detail=${q.id}`)
 .dash-row.split .dist-row {
   grid-template-columns: minmax(72px, 1.1fr) minmax(50px, 1fr) repeat(4, minmax(58px, 0.75fr));
   gap: 8px;
-  font-size: 12px;
+  font-size: 13px;
 }
 .dash-row.split .dist-row > :nth-child(n + 7) {
   display: none;
@@ -872,14 +873,14 @@ const openQuote = (q: Quote) => router.push(`/quotes?detail=${q.id}`)
   margin-top: 4px;
   padding-top: 6px;
   border-top: 1px solid #edf0eb;
-  color: #6b7a72;
+  color: #5d6a63;
 }
 .dist-legend {
   display: flex;
   gap: 18px;
   margin: 2px 0 10px;
   color: #53645b;
-  font-size: 12px;
+  font-size: 13px;
 }
 .dist-legend span {
   display: inline-flex;
@@ -898,11 +899,11 @@ const openQuote = (q: Quote) => router.push(`/quotes?detail=${q.id}`)
   gap: 12px;
   padding: 9px 4px;
   border-bottom: 1px solid #f0f3ee;
-  font-size: 13px;
+  font-size: 14px;
 }
 .dist-head {
-  color: #8a958e;
-  font-size: 12px;
+  color: #66716a;
+  font-size: 13px;
   border-bottom-color: #e5eae3;
 }
 .dist-head span:nth-child(n + 3),
@@ -923,6 +924,8 @@ const openQuote = (q: Quote) => router.push(`/quotes?detail=${q.id}`)
   border-radius: 0 4px 4px 0;
 }
 .panel-figure {
+  white-space: nowrap;
+  flex: none;
   font-size: 20px;
   color: #2b4531;
   font-variant-numeric: tabular-nums;
@@ -933,13 +936,13 @@ const openQuote = (q: Quote) => router.push(`/quotes?detail=${q.id}`)
   align-items: center;
   gap: 12px;
   padding: 8px 0;
-  font-size: 13px;
+  font-size: 14px;
 }
 .aging-row .num {
   text-align: right;
 }
 .aging-row small {
-  color: #8a958e;
+  color: #66716a;
   text-align: right;
 }
 .aging-track {
@@ -965,7 +968,7 @@ const openQuote = (q: Quote) => router.push(`/quotes?detail=${q.id}`)
   color: #2b4531;
 }
 .backlog-row small {
-  color: #8a958e;
+  color: #66716a;
 }
 .concentration {
   display: grid;
@@ -982,8 +985,8 @@ const openQuote = (q: Quote) => router.push(`/quotes?detail=${q.id}`)
   background: #f7f9f5;
 }
 .concentration span {
-  color: #8a958e;
-  font-size: 12px;
+  color: #66716a;
+  font-size: 13px;
 }
 .concentration em {
   font-style: normal;

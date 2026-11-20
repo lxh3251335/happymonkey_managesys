@@ -140,11 +140,7 @@ public class SourceImporter {
         var rows = db.jdbc.queryForList("SELECT id FROM partner WHERE kind='CUSTOMER' AND name=?", name);
         if (!rows.isEmpty()) return rows.get(0).get("id").toString();
         String id = db.id();
-        db.jdbc.update(
-            "INSERT INTO partner(id,name,kind,note) VALUES(?,?,'CUSTOMER','来源于历史客户工作表')",
-            id,
-            name
-        );
+        db.jdbc.update("INSERT INTO partner(id,name,kind) VALUES(?,?,'CUSTOMER')", id, name);
         return id;
     }
 }

@@ -11,7 +11,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * 报价配置：项目类型（门店标准配置 + 对客标准售价）与供应商成本模板（材料 + 团队人工 + 财务成本）。
+ * 报价配置：项目类型（门店标准配置 + 对客标准售价）与供应商成本模板（材料 + 人工成本 + 财务成本）。
  *
  * <p>新建报价时选项目类型和供应商，按类型带出产品、数量、售价，按供应商模板带出成本；报价中可逐行修改。
  */
@@ -219,7 +219,7 @@ public class CatalogService {
               i.product_id,i.quantity,i.unit_price,pr.name,pr.specification,pr.model
             FROM project p JOIN quotation q ON q.project_id=p.id JOIN quotation_item i ON i.quotation_id=q.id
             JOIN product pr ON pr.id=i.product_id
-            WHERE p.brand=? AND q.status<>'LOST' ORDER BY q.created_at
+            WHERE p.brand=? AND q.status NOT IN ('LOST','SUPERSEDED') ORDER BY q.created_at
             """,
             line
         );

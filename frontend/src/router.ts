@@ -23,7 +23,7 @@ export const router = createRouter({
           component: () => import('./views/QuoteSetupView.vue'),
           meta: { title: '报价配置' },
         },
-        { path: 'offers', redirect: '/quote-setup?tab=offers' },
+        { path: 'offers', redirect: '/quote-setup?tab=costs' },
         { path: 'cash', component: () => import('./views/CashView.vue'), meta: { title: '合同台账' } },
         { path: 'masters', component: () => import('./views/MastersView.vue'), meta: { title: '基础资料' } },
         { path: 'settings', component: () => import('./views/SettingsView.vue'), meta: { title: '系统管理' } },

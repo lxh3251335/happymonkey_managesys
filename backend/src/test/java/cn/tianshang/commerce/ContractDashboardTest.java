@@ -99,7 +99,11 @@ class ContractDashboardTest extends ApiTestSupport {
         assertThat(c.path("contract_no").asText()).isEqualTo("HT-001");
         assertThat(c.path("projects").asInt()).isEqualTo(2);
         assertThat(c.path("amount").decimalValue()).isEqualByComparingTo("300.00");
-        assertThat(c.path("confirmation").asText()).isEqualTo("PENDING");
+        // 有合同号即视为已签订：签订就有应收，不需要再“确认应收”；没有截止日期的不计逾期
+        assertThat(c.path("confirmation").asText()).isEqualTo("CONFIRMED");
+        assertThat(c.path("outstanding").decimalValue()).isEqualByComparingTo("300.00");
+        assertThat(c.path("undated").asInt()).isEqualTo(2);
+        assertThat(c.path("overdue").decimalValue()).isEqualByComparingTo("0");
         assertThat(c.path("shipped").asInt()).isEqualTo(1);
 
         var receipt = new HashMap<String, Object>(
@@ -118,14 +122,14 @@ class ContractDashboardTest extends ApiTestSupport {
                 "HT-BANK-1"
             )
         );
-        expectBadRequest("/api/contracts/receipts", receipt); // 未确认合同不能收款
-
+        // 补上应收截止日期后才计逾期；已有截止日期的不能重复设置
         String due = LocalDate.now().minusDays(40).toString();
-        assertThat(
-            postJson("/api/contracts/confirm", Map.of("customerId", customer, "contractKey", "HT-001", "dueDate", due))
-                .path("confirmed")
-                .asInt()
-        ).isEqualTo(2);
+        var dueInput = Map.of("customerId", customer, "contractKey", "HT-001", "dueDate", due);
+        assertThat(postJson("/api/contracts/confirm", dueInput).path("confirmed").asInt()).isEqualTo(2);
+        expectBadRequest("/api/contracts/confirm", dueInput);
+        c = contract(customer);
+        assertThat(c.path("undated").asInt()).isZero();
+        assertThat(c.path("overdue").decimalValue()).isEqualByComparingTo("300.00");
         var allocated = postJson("/api/contracts/receipts", receipt);
         assertThat(allocated.path("allocations").asInt()).isEqualTo(2);
         c = contract(customer);
@@ -190,7 +194,7 @@ class ContractDashboardTest extends ApiTestSupport {
     }
 
     @Test
-    void historicalContractsCountWithoutReceivablesAndLegacyNotesBackfill() throws Exception {
+    void historicalContractsCarryReceivablesAndLegacyNotesBackfill() throws Exception {
         Path seed = directory.resolve("source.json");
         Files.writeString(
             seed,
@@ -208,8 +212,9 @@ class ContractDashboardTest extends ApiTestSupport {
         importer.importSeed(seed);
         var d = getJson("/api/dashboard");
         assertThat(d.path("totals").path("contract_amount").decimalValue()).isEqualByComparingTo("7000");
-        assertThat(d.path("totals").path("pending_amount").decimalValue()).isEqualByComparingTo("7000");
-        assertThat(d.path("totals").path("receivable").decimalValue()).isEqualByComparingTo("0");
+        // 历史合同有合同号即已签订：直接计入应收，不再有“待确认”金额
+        assertThat(d.path("totals").path("pending_amount").decimalValue()).isEqualByComparingTo("0");
+        assertThat(d.path("totals").path("receivable").decimalValue()).isEqualByComparingTo("7000");
         assertThat(d.path("totals").path("backlog_amount").decimalValue()).isEqualByComparingTo("7000");
         assertThat(d.path("by_line").get(0).path("name").asText()).isEqualTo("物联网电箱");
 

@@ -6,10 +6,10 @@ import StatusTag from './StatusTag.vue'
 import ContractInfoDialog from './ContractInfoDialog.vue'
 import { changeStatusName, contractStatusName, costCategoryName, invoiceStatusName } from '../dictionaries'
 import type { ContractChange, ContractCost, ContractDetail, ContractInvoice, Partner } from '../types'
-import { day, money, percent, today } from '../utils'
+import { actionName, dateTime, day, money, percent, today } from '../utils'
 import { useRouter } from 'vue-router'
 
-/** 合同详情：要素、执行（开票 / 到款 / 发货 / 成本）、变更审批与全程操作记录。 */
+/** 合同详情：要素、执行（开票 / 回款 / 发货 / 成本）、变更审批与全程操作记录。 */
 const props = defineProps<{ modelValue: boolean; customerId: string; contractKey: string }>()
 const emit = defineEmits<{
   'update:modelValue': [boolean]
@@ -219,32 +219,6 @@ async function review(x: ContractChange, action: 'approve' | 'reject' | 'withdra
     ElMessage.error((e as Error).message)
   }
 }
-
-const eventName: Record<string, string> = {
-  CONTRACT_CREATED: '建立合同',
-  CONTRACT_FROM_QUOTE: '由报价生成合同',
-  CONTRACT_UPDATED: '修改合同',
-  CONTRACT_CHANGE_REQUESTED: '提交变更申请',
-  CONTRACT_CHANGE_APPROVED: '批准变更',
-  CONTRACT_CHANGE_REJECTED: '驳回变更',
-  CONTRACT_CHANGE_WITHDRAWN: '撤回变更',
-  CONTRACT_CONFIRMED: '确认应收',
-  CONTRACT_RECEIPT: '登记回款',
-  CONTRACT_REFUND: '登记退款',
-  CONTRACT_INVOICE: '登记开票',
-  CONTRACT_INVOICE_RED: '登记红字发票',
-  CONTRACT_INVOICE_DELETED: '删除发票登记',
-  CONTRACT_COST: '登记成本',
-  CONTRACT_COST_DELETED: '删除成本登记',
-  PROJECT_DELIVERY: '发货物流',
-  PROJECT_UPDATED: '修改门店',
-  PROJECT_CREATED: '登记门店',
-  PROJECT_OWNER_ASSIGNED: '分配负责人',
-  ATTACHMENT_UPLOADED: '上传附件',
-  ATTACHMENT_DOWNLOADED: '下载附件',
-  ATTACHMENT_DELETED: '删除附件',
-}
-const time = (s: string | null) => (s ? String(s).replace('T', ' ').slice(0, 16) : '')
 </script>
 <template>
   <el-drawer
@@ -274,11 +248,11 @@ const time = (s: string | null) => (s ? String(s).replace('T', ' ').slice(0, 16)
             </el-button>
             <el-button v-if="canFinance()" size="small" @click="openInvoice('INVOICE')">登记开票</el-button>
             <el-button
-              v-if="(canWrite() || canFinance()) && c.projects && c.confirmation !== 'CONFIRMED'"
+              v-if="(canWrite() || canFinance()) && c.projects && (c.confirmation !== 'CONFIRMED' || c.undated > 0)"
               size="small"
               @click="emit('confirm', c)"
             >
-              确认应收
+              设置应收截止日
             </el-button>
             <el-button v-if="canFinance() && Number(c.outstanding) > 0" size="small" @click="emit('receipt', c)">
               登记回款
@@ -302,7 +276,7 @@ const time = (s: string | null) => (s ? String(s).replace('T', ' ').slice(0, 16)
             <small>{{ invoiceStatusName[c.invoice_status] }} · 未开 {{ money(c.uninvoiced) }}</small>
           </div>
           <div>
-            <span>已到款</span>
+            <span>已回款</span>
             <strong>{{ money(c.received) }}</strong>
             <small>回款率 {{ percent(c.collection_rate) }}</small>
           </div>
@@ -313,7 +287,7 @@ const time = (s: string | null) => (s ? String(s).replace('T', ' ').slice(0, 16)
               {{
                 c.overdue > 0
                   ? `逾期 ${money(c.overdue)}（${c.overdue_days} 天）`
-                  : `开票未到款 ${money(c.invoiced_unreceived)}`
+                  : `开票未回款 ${money(c.invoiced_unreceived)}`
               }}
             </small>
           </div>
@@ -339,28 +313,19 @@ const time = (s: string | null) => (s ? String(s).replace('T', ' ').slice(0, 16)
         <el-tabs v-model="tab">
           <el-tab-pane label="合同信息" name="overview">
             <el-descriptions :column="3" border size="small">
-              <el-descriptions-item label="合同状态">{{ contractStatusName[c.status] }}</el-descriptions-item>
               <el-descriptions-item label="签订日期">{{ day(c.info?.signed_on) }}</el-descriptions-item>
               <el-descriptions-item label="签约金额">
                 {{ c.info?.signed_amount == null ? '按门店订单' : money(c.info.signed_amount) }}
               </el-descriptions-item>
               <el-descriptions-item label="我方签约主体">{{ c.info?.company_name || '未指定' }}</el-descriptions-item>
               <el-descriptions-item label="销售负责人">{{ c.owner_name || '未分配' }}</el-descriptions-item>
-              <el-descriptions-item label="客户签约人">{{ c.info?.customer_signer || '—' }}</el-descriptions-item>
-              <el-descriptions-item label="履约期限">
-                {{ c.info?.start_on || c.info?.end_on ? `${day(c.info?.start_on)} 至 ${day(c.info?.end_on)}` : '—' }}
-              </el-descriptions-item>
-              <el-descriptions-item label="质保">
+              <el-descriptions-item label="质保期">
                 {{ c.info?.warranty_months != null ? `${c.info.warranty_months} 个月` : '—' }}
-                {{ c.info?.retention_amount != null ? ` · 质保金 ${money(c.info.retention_amount)}` : '' }}
               </el-descriptions-item>
               <el-descriptions-item label="原件归档">
                 {{ c.info?.archived ? `已归档 ${c.info.archive_no || ''}` : '未归档' }}
               </el-descriptions-item>
               <el-descriptions-item label="合同名称" :span="3">{{ c.info?.title || '—' }}</el-descriptions-item>
-              <el-descriptions-item label="合同内容" :span="3">
-                <span class="pre">{{ c.info?.content || '—' }}</span>
-              </el-descriptions-item>
               <el-descriptions-item label="付款条款" :span="3">
                 <span class="pre">{{ c.info?.payment_terms || '—' }}</span>
               </el-descriptions-item>
@@ -372,12 +337,12 @@ const time = (s: string | null) => (s ? String(s).replace('T', ' ').slice(0, 16)
           </el-tab-pane>
           <el-tab-pane :label="`门店订单 ${c.projects}`" name="items">
             <el-table :data="c.items" size="small" empty-text="尚未关联门店订单（在项目台账中为门店填写该合同号）">
-              <el-table-column label="门店" prop="project_name" min-width="220" show-overflow-tooltip />
-              <el-table-column label="城市" prop="city" width="70" />
-              <el-table-column label="下单" width="100">
+              <el-table-column label="门店" prop="project_name" min-width="180" show-overflow-tooltip />
+              <el-table-column label="城市" prop="city" width="64" />
+              <el-table-column label="下单日期" width="98">
                 <template #default="{ row }">{{ day(row.order_date) }}</template>
               </el-table-column>
-              <el-table-column label="发货 / 物流" min-width="170">
+              <el-table-column label="发货 / 物流" min-width="150">
                 <template #default="{ row }">
                   {{ row.shipping_status || '未登记' }}
                   <small v-if="row.shipped_on" class="cell-secondary">{{ day(row.shipped_on) }} 发出</small>
@@ -398,7 +363,7 @@ const time = (s: string | null) => (s ? String(s).replace('T', ' ').slice(0, 16)
                   </el-button>
                 </template>
               </el-table-column>
-              <el-table-column label="报价" width="120">
+              <el-table-column label="报价" width="126">
                 <template #default="{ row }">
                   <el-button link type="primary" @click="router.push(`/quotes?detail=${row.quote_id}`)">
                     {{ row.quote_code }}
@@ -406,16 +371,18 @@ const time = (s: string | null) => (s ? String(s).replace('T', ' ').slice(0, 16)
                   <StatusTag :status="row.status" />
                 </template>
               </el-table-column>
-              <el-table-column label="金额" align="right" min-width="110">
+              <el-table-column label="金额" align="right" min-width="98">
                 <template #default="{ row }">{{ money(row.amount) }}</template>
               </el-table-column>
-              <el-table-column label="已到账" align="right" min-width="110">
+              <el-table-column label="已回款" align="right" min-width="98">
                 <template #default="{ row }">{{ money(row.received) }}</template>
               </el-table-column>
-              <el-table-column label="未收 / 截止" align="right" min-width="120">
+              <el-table-column label="未收" align="right" min-width="98">
+                <template #default="{ row }">{{ money(row.outstanding) }}</template>
+              </el-table-column>
+              <el-table-column label="应收截止日" width="100">
                 <template #default="{ row }">
-                  {{ money(row.outstanding) }}
-                  <small class="cell-secondary">{{ day(row.due_date) }}</small>
+                  <span :class="row.due_date ? '' : 'muted'">{{ row.due_date ? day(row.due_date) : '未设' }}</span>
                 </template>
               </el-table-column>
             </el-table>
@@ -445,7 +412,7 @@ const time = (s: string | null) => (s ? String(s).replace('T', ' ').slice(0, 16)
               <el-table-column label="税率" width="70">
                 <template #default="{ row }">{{ row.tax_rate == null ? '—' : percent(row.tax_rate) }}</template>
               </el-table-column>
-              <el-table-column label="开票方" prop="company_name" min-width="140" show-overflow-tooltip />
+              <el-table-column label="签约主体" prop="company_name" min-width="140" show-overflow-tooltip />
               <el-table-column label="备注" prop="note" min-width="120" show-overflow-tooltip />
               <el-table-column v-if="canFinance()" label="" width="60">
                 <template #default="{ row }">
@@ -454,8 +421,8 @@ const time = (s: string | null) => (s ? String(s).replace('T', ' ').slice(0, 16)
               </el-table-column>
             </el-table>
           </el-tab-pane>
-          <el-tab-pane :label="`到款 ${c.receipts.length}`" name="receipts">
-            <el-table :data="c.receipts" size="small" empty-text="暂无到款记录">
+          <el-tab-pane :label="`回款 ${c.receipts.length}`" name="receipts">
+            <el-table :data="c.receipts" size="small" empty-text="暂无回款记录">
               <el-table-column label="日期" width="100">
                 <template #default="{ row }">{{ day(row.paid_on) }}</template>
               </el-table-column>
@@ -479,7 +446,7 @@ const time = (s: string | null) => (s ? String(s).replace('T', ' ').slice(0, 16)
           <el-tab-pane v-if="canSeeCost()" :label="`成本 ${costs.length}`" name="costs">
             <div class="cost-note muted">
               报价预估成本 {{ c.estimated_cost == null ? '不完整' : money(c.estimated_cost) }} · 已登记实际成本
-              {{ money(c.actual_cost) }}。登记了实际成本后，毛利按实际成本核算。
+              {{ money(c.actual_cost) }}
             </div>
             <div v-if="canCost" class="tab-actions">
               <el-button size="small" type="primary" @click="openCost">登记成本</el-button>
@@ -495,7 +462,7 @@ const time = (s: string | null) => (s ? String(s).replace('T', ' ').slice(0, 16)
               <el-table-column label="金额" align="right" min-width="110">
                 <template #default="{ row }">{{ money(row.amount) }}</template>
               </el-table-column>
-              <el-table-column label="单据号" prop="reference" min-width="120" />
+              <el-table-column label="凭证号" prop="reference" min-width="120" />
               <el-table-column label="备注" prop="note" min-width="140" show-overflow-tooltip />
               <el-table-column label="登记人" prop="created_by" width="90" />
               <el-table-column label="" width="60">
@@ -511,7 +478,7 @@ const time = (s: string | null) => (s ? String(s).replace('T', ' ').slice(0, 16)
               <div class="change-head">
                 <span :class="['badge', x.status.toLowerCase()]">{{ changeStatusName[x.status] }}</span>
                 <strong>{{ x.requester_name || x.requested_by }}</strong>
-                <span class="muted">{{ time(x.requested_at) }}</span>
+                <span class="muted">{{ dateTime(x.requested_at) }}</span>
                 <span class="muted">原因：{{ x.reason }}</span>
                 <span class="spacer"></span>
                 <template v-if="x.status === 'PENDING'">
@@ -538,7 +505,7 @@ const time = (s: string | null) => (s ? String(s).replace('T', ' ').slice(0, 16)
                 </tr>
               </table>
               <div v-if="x.reviewed_by && x.status !== 'DIRECT'" class="muted review">
-                {{ changeStatusName[x.status] }}：{{ x.reviewer_name || x.reviewed_by }} {{ time(x.reviewed_at) }}
+                {{ changeStatusName[x.status] }}：{{ x.reviewer_name || x.reviewed_by }} {{ dateTime(x.reviewed_at) }}
                 {{ x.review_note ? `· ${x.review_note}` : '' }}
               </div>
             </div>
@@ -546,13 +513,13 @@ const time = (s: string | null) => (s ? String(s).replace('T', ' ').slice(0, 16)
           <el-tab-pane :label="`操作记录 ${c.events.length}`" name="events">
             <el-table :data="c.events" size="small" max-height="460" empty-text="暂无操作记录">
               <el-table-column label="时间" width="140">
-                <template #default="{ row }">{{ time(row.created_at) }}</template>
+                <template #default="{ row }">{{ dateTime(row.created_at) }}</template>
               </el-table-column>
               <el-table-column label="操作人" width="100">
                 <template #default="{ row }">{{ row.actor_name || row.actor }}</template>
               </el-table-column>
               <el-table-column label="操作" width="130">
-                <template #default="{ row }">{{ eventName[row.action] || row.action }}</template>
+                <template #default="{ row }">{{ actionName[row.action] || row.action }}</template>
               </el-table-column>
               <el-table-column label="说明" prop="detail" min-width="300" show-overflow-tooltip />
             </el-table>
@@ -630,7 +597,7 @@ const time = (s: string | null) => (s ? String(s).replace('T', ' ').slice(0, 16)
           <el-form-item label="发生日期" required>
             <el-date-picker v-model="cost.incurredOn" type="date" value-format="YYYY-MM-DD" />
           </el-form-item>
-          <el-form-item label="单据号"><el-input v-model="cost.reference" maxlength="150" /></el-form-item>
+          <el-form-item label="凭证号"><el-input v-model="cost.reference" maxlength="150" /></el-form-item>
         </div>
         <el-form-item label="备注"><el-input v-model="cost.note" maxlength="1000" /></el-form-item>
       </el-form>
@@ -660,14 +627,14 @@ const time = (s: string | null) => (s ? String(s).replace('T', ' ').slice(0, 16)
 }
 .head p {
   margin: 0;
-  font-size: 13px;
+  font-size: 14px;
 }
 .eyebrow {
-  font-size: 12px;
-  color: #6b7a72;
+  font-size: 13px;
+  color: #5d6a63;
 }
 .status {
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 500;
   color: #24634f;
   background: #e6f0ea;
@@ -703,8 +670,8 @@ const time = (s: string | null) => (s ? String(s).replace('T', ' ').slice(0, 16)
   min-width: 0;
 }
 .metrics span {
-  font-size: 12px;
-  color: #6b7a72;
+  font-size: 13px;
+  color: #5d6a63;
 }
 .metrics strong {
   font-size: 16px;
@@ -712,8 +679,8 @@ const time = (s: string | null) => (s ? String(s).replace('T', ' ').slice(0, 16)
   color: #253731;
 }
 .metrics small {
-  font-size: 11px;
-  color: #8a958e;
+  font-size: 12px;
+  color: #66716a;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -729,7 +696,7 @@ const time = (s: string | null) => (s ? String(s).replace('T', ' ').slice(0, 16)
   margin: 4px 0 10px;
 }
 .cost-note {
-  font-size: 12px;
+  font-size: 13px;
   margin-bottom: 6px;
 }
 .pre {
@@ -756,14 +723,14 @@ const time = (s: string | null) => (s ? String(s).replace('T', ' ').slice(0, 16)
   display: flex;
   align-items: center;
   gap: 10px;
-  font-size: 13px;
+  font-size: 14px;
   flex-wrap: wrap;
 }
 .spacer {
   flex: 1;
 }
 .badge {
-  font-size: 12px;
+  font-size: 13px;
   padding: 1px 8px;
   border-radius: 10px;
   background: #eef1ec;
@@ -785,12 +752,12 @@ const time = (s: string | null) => (s ? String(s).replace('T', ' ').slice(0, 16)
   width: 100%;
   margin-top: 8px;
   border-collapse: collapse;
-  font-size: 12px;
+  font-size: 13px;
 }
 .diff th {
   width: 110px;
   text-align: left;
-  color: #6b7a72;
+  color: #5d6a63;
   font-weight: 500;
   padding: 3px 0;
   vertical-align: top;
@@ -802,19 +769,19 @@ const time = (s: string | null) => (s ? String(s).replace('T', ' ').slice(0, 16)
   word-break: break-all;
 }
 .diff .before {
-  color: #8a958e;
+  color: #66716a;
   text-decoration: line-through;
   width: 40%;
 }
 .diff .arrow {
-  color: #8a958e;
+  color: #66716a;
   width: 16px;
 }
 .diff .after {
   color: #253731;
 }
 .review {
-  font-size: 12px;
+  font-size: 13px;
   margin-top: 6px;
 }
 .cell-secondary {
@@ -824,6 +791,6 @@ const time = (s: string | null) => (s ? String(s).replace('T', ' ').slice(0, 16)
   display: block;
   height: auto;
   padding: 0;
-  font-size: 12px;
+  font-size: 13px;
 }
 </style>

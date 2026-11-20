@@ -15,7 +15,7 @@ import org.springframework.stereotype.Component;
  * 合同台账与开票记录的 Excel 导入导出。
  *
  * <p>合同台账：按“客户 + 合同号”匹配，更新合同要素（签约主体、合同内容、签订日期、签约金额、条款、负责人等），
- * 匹配不到则新建合同；门店订单、开票、到款等统计列只导出、不导入。导入由管理员执行，每份合同的修改记入合同变更记录。
+ * 匹配不到则新建合同；门店订单、开票、回款等统计列只导出、不导入。导入由管理员执行，每份合同的修改记入合同变更记录。
  * 开票记录：按发票号码匹配，只新增未登记的发票，已登记的发票不能通过导入修改。
  */
 @Component
@@ -72,16 +72,11 @@ public class ContractExcel {
                 .note("在系统管理 → 签约主体中维护；可填名称或简称")
                 .options(companies),
             Column.of("title", "合同名称", 26),
-            Column.of("content", "合同内容", 36).note("标的、供货范围等摘要"),
             Column.of("signed_on", "签订日期", 12).note("如 2026-01-05"),
             Column.of("signed_amount", "签约金额", 14).number().note("留空则以门店订单合计作为合同金额"),
             Column.of("payment_terms", "付款条款", 30),
-            Column.of("start_on", "履约开始", 12),
-            Column.of("end_on", "履约结束", 12),
             Column.of("warranty_months", "质保期（月）", 10).number(),
-            Column.of("retention_amount", "质保金", 12).number(),
             Column.of("owner", "销售负责人", 12).note("填写账户显示名称"),
-            Column.of("customer_signer", "客户签约人", 12),
             Column.of("archived", "原件已归档", 10).options("是", "否"),
             Column.of("archive_no", "归档编号", 14),
             Column.of("note", "备注", 24),
@@ -92,7 +87,7 @@ public class ContractExcel {
             Column.of("order_amount", "门店订单金额", 14).number().note(STATS),
             Column.of("amount", "合同金额", 14).number().note(STATS),
             Column.of("invoiced", "已开票", 14).number().note(STATS),
-            Column.of("received", "已到款", 14).number().note(STATS),
+            Column.of("received", "已回款", 14).number().note(STATS),
             Column.of("outstanding", "未收应收", 14).number().note(STATS),
             Column.of("overdue", "逾期金额", 12).number().note(STATS),
             Column.of("cost", "成本", 14).number().note(STATS + "；有实际成本用实际成本，否则用报价预估成本"),
@@ -114,7 +109,7 @@ public class ContractExcel {
             Column.of("amount", "价税合计", 14).required().number(),
             Column.of("tax_rate", "税率", 8).note("如 13% 或 0.13"),
             Column.of("note", "备注", 24),
-            Column.of("company", "开票方", 22).note(STATS)
+            Column.of("company", "签约主体", 22).note(STATS)
         );
     }
 

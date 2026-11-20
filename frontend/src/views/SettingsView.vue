@@ -7,7 +7,7 @@ import DictionaryManager from '../components/DictionaryManager.vue'
 import CompanyManager from '../components/CompanyManager.vue'
 import { api, post, put, session } from '../api'
 import type { User, Audit, ImportBatch } from '../types'
-import { roleName, day } from '../utils'
+import { actionName, dateTime, day, roleName } from '../utils'
 const tab = ref('account'),
   users = ref<User[]>([]),
   audits = ref<Audit[]>([]),
@@ -100,11 +100,7 @@ onMounted(load)
 </script>
 <template>
   <div>
-    <PageHeader
-      eyebrow="WORKSPACE SETTINGS"
-      title="系统管理"
-      description="维护账户和角色，保留业务操作记录与历史导入凭据。"
-    />
+    <PageHeader eyebrow="WORKSPACE SETTINGS" title="系统管理" />
     <el-alert v-if="error" :title="error" type="error" :closable="false" />
     <section class="panel settings-panel">
       <el-tabs v-model="tab">
@@ -131,9 +127,6 @@ onMounted(load)
         </el-form>
       </div>
       <div v-if="tab === 'users'">
-        <div class="inline-note">
-          系统管理员：全部操作及系统配置；管理层：查看全部经营与成本数据、审批合同变更、分配负责人；财务：开票、回款、成本，查看成本；业务员：只看和办理自己负责的门店、报价与合同，看不到成本与毛利；只读：查看经营数据，看不到成本。
-        </div>
         <el-button type="primary" class="section-gap" @click="dialog = true">新增用户</el-button>
         <el-table :data="users">
           <el-table-column label="用户名" prop="username" />
@@ -164,20 +157,17 @@ onMounted(load)
       </template>
       <CompanyManager v-if="tab === 'companies'" />
       <el-table v-if="tab === 'audit'" :data="audits" max-height="600">
-        <el-table-column label="日期" width="120">
-          <template #default="{ row }">{{ day(row.created_at) }}</template>
+        <el-table-column label="时间" width="150">
+          <template #default="{ row }">{{ dateTime(row.created_at) }}</template>
         </el-table-column>
         <el-table-column label="操作人" prop="actor" width="130" />
-        <el-table-column label="操作" prop="action" min-width="220" />
-        <el-table-column label="记录 ID" prop="entity_id" min-width="230" show-overflow-tooltip />
-        <el-table-column label="说明" prop="detail" min-width="300" show-overflow-tooltip />
+        <el-table-column label="操作" min-width="180">
+          <template #default="{ row }">{{ actionName[row.action] || row.action }}</template>
+        </el-table-column>
+        <el-table-column label="说明" prop="detail" min-width="420" show-overflow-tooltip />
       </el-table>
       <div v-if="tab === 'imports'">
-        <div class="inline-note">
-          本轮导入保留历史报价快照及原始行号。批量备货隔离，缺失金额和成本保持空值，客户回款需另行登记。原表和对比分析表不重复入账。
-        </div>
         <el-table :data="imports">
-          <el-table-column label="导入批次" prop="id" width="230" />
           <el-table-column label="时间" width="130">
             <template #default="{ row }">{{ day(row.created_at) }}</template>
           </el-table-column>
@@ -219,7 +209,6 @@ onMounted(load)
         <el-form-item label="重置密码（留空则不修改，至少12位）">
           <el-input v-model="edit.password" type="password" show-password autocomplete="new-password" />
         </el-form-item>
-        <div class="inline-note">停用账户或修改角色后，该用户已登录的会话会立即失效，需要重新登录。</div>
       </el-form>
       <template #footer>
         <el-button @click="editDialog = false">取消</el-button>

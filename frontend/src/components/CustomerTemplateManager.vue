@@ -52,26 +52,23 @@ function open(t?: CustomerTemplate) {
   <div>
     <div class="manager-bar">
       <el-input v-model="keyword" clearable :prefix-icon="Search" placeholder="搜索客户或项目类型" class="search" />
-      <span class="muted">
-        客户有模板时，新建报价按模板带出产品、数量和协议价；没有模板的客户按项目类型的标准配置带出。
-      </span>
       <el-button v-if="canWrite()" type="primary" size="small" @click="open()">新增客户报价模板</el-button>
     </div>
     <el-table :data="filtered" empty-text="还没有客户报价模板">
-      <el-table-column label="客户" prop="customer_name" min-width="160" show-overflow-tooltip />
-      <el-table-column label="项目类型" prop="project_type_name" min-width="130" />
-      <el-table-column label="产品" width="80" align="right">
+      <el-table-column label="客户" prop="customer_name" min-width="140" show-overflow-tooltip />
+      <el-table-column label="项目类型" prop="project_type_name" min-width="112" show-overflow-tooltip />
+      <el-table-column label="产品" width="68" align="right">
         <template #default="{ row }">{{ row.items.length }} 项</template>
       </el-table-column>
-      <el-table-column label="整套协议价" width="118" align="right">
+      <el-table-column label="整套协议价" min-width="108" align="right">
         <template #default="{ row }">{{ money(setPrice(row)) }}</template>
       </el-table-column>
-      <el-table-column label="按标准售价" width="118" align="right">
+      <el-table-column label="按标准售价" min-width="108" align="right">
         <template #default="{ row }">
           <span class="muted">{{ standardPrice(row) == null ? '—' : money(standardPrice(row)) }}</span>
         </template>
       </el-table-column>
-      <el-table-column label="与标准价相差" width="118" align="right">
+      <el-table-column label="与标准价相差" min-width="116" align="right">
         <template #default="{ row }">
           <template v-if="standardPrice(row) != null">
             <span :class="setPrice(row) < standardPrice(row)! ? 'danger-text' : ''">
@@ -81,16 +78,16 @@ function open(t?: CustomerTemplate) {
           <span v-else class="muted">—</span>
         </template>
       </el-table-column>
-      <el-table-column label="备注" prop="note" min-width="110" show-overflow-tooltip />
-      <el-table-column label="状态" width="80">
+      <el-table-column label="备注" prop="note" min-width="90" show-overflow-tooltip />
+      <el-table-column label="状态" width="72">
         <template #default="{ row }">
           <el-tag :type="row.active ? 'success' : 'info'" size="small">{{ row.active ? '启用' : '停用' }}</el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="更新" width="105">
+      <el-table-column label="更新" width="104">
         <template #default="{ row }">{{ day(row.updated_at) }}</template>
       </el-table-column>
-      <el-table-column v-if="canWrite()" label="操作" width="80" fixed="right">
+      <el-table-column v-if="canWrite()" label="操作" width="66" fixed="right">
         <template #default="{ row }"><el-button link type="primary" @click="open(row)">编辑</el-button></template>
       </el-table-column>
     </el-table>

@@ -115,7 +115,7 @@ public class QuoteService {
     public Map<String, Object> reference(String projectId) {
         ownership.checkProject(projectId);
         var quotes = db.jdbc.queryForList(
-            "SELECT id,status,version FROM quotation WHERE project_id=? AND status<>'LOST' ORDER BY version DESC",
+            "SELECT id,status,version FROM quotation WHERE project_id=? AND status NOT IN ('LOST','SUPERSEDED') ORDER BY version DESC",
             projectId
         );
         if (quotes.isEmpty()) throw new ApiException("该项目还没有报价，无法参考");
@@ -163,6 +163,7 @@ public class QuoteService {
             !List.of("NONE", "DRAFT").contains(projects.contractState(projectId)) &&
             !Roles.canApprove()
         ) throw new ApiException("该门店的合同已签订，新增报价版本属于合同变更，请联系管理层办理");
+        if (input.newProject() == null) pinContractBasis(projectId);
         // 只有明确选择签约主体时才覆盖报价模板的公司抬头
         String companyId = blank(input.companyId()) == null ? null : dictionary.company(input.companyId(), null);
         if (projectTypeId == null && project.get("project_type_id") != null) projectTypeId = project
@@ -199,10 +200,93 @@ public class QuoteService {
             projectTypeId,
             companyId
         );
+        writeItems(id, input.items(), supplierId, projectTypeId);
+        db.audit("QUOTE_CREATED", id, "新建报价版本 V" + version);
+        return id;
+    }
+
+    /**
+     * 修改报价草稿：只有还没出具的草稿可以改，报价条件与明细整体替换，版本号不变。
+     * 已出具的报价客户已经看到，不能修改，只能复制为新版本。门店不能在这里更换。
+     */
+    @Transactional
+    public void update(String id, QuoteInput input) {
+        ownership.checkQuote(id);
+        var quote = db.one("SELECT * FROM quotation WHERE id=? FOR UPDATE", id);
+        requireDraft(quote, "修改");
+        String projectId = quote.get("project_id").toString();
+        if (
+            !List.of("NONE", "DRAFT").contains(projects.contractState(projectId)) && !Roles.canApprove()
+        ) throw new ApiException("该门店的合同已签订，报价由管理层办理");
+        if (input.validUntil().isBefore(LocalDate.now())) throw new ApiException("报价有效期不能早于今天");
+        if (!input.taxBasis().equals("UNKNOWN") && input.taxRate() == null) throw new ApiException("请填写税率");
+        String projectTypeId = blank(input.projectTypeId());
+        if (projectTypeId != null) db.one("SELECT id FROM project_type WHERE id=?", projectTypeId);
+        String supplierId = blank(input.supplierId());
+        if (
+            supplierId != null &&
+            !"SUPPLIER".equals(db.one("SELECT kind FROM partner WHERE id=?", supplierId).get("kind"))
+        ) throw new ApiException("请选择供应商");
+        String companyId = blank(input.companyId()) == null ? null : dictionary.company(input.companyId(), null);
+        db.jdbc.update(
+            """
+            UPDATE quotation SET tax_basis=?,tax_rate=?,valid_until=?,note=?,template_id=?,supplier_id=?,
+              project_type_id=?,company_id=? WHERE id=?
+            """,
+            input.taxBasis(),
+            input.taxRate(),
+            input.validUntil(),
+            input.note(),
+            templates.resolveForNewQuote(input.templateId()),
+            supplierId,
+            projectTypeId,
+            companyId,
+            id
+        );
+        db.jdbc.update("DELETE FROM quotation_item WHERE quotation_id=?", id);
+        writeItems(id, input.items(), supplierId, projectTypeId);
+        db.audit(
+            "QUOTE_UPDATED",
+            id,
+            "修改报价草稿 V" + quote.get("version") + "，" + input.items().size() + " 项明细"
+        );
+    }
+
+    /**
+     * 删除报价草稿：只有还没出具的草稿可以删；已出具的报价留痕，谈不成请标记未成交。
+     * withStore 为真时，一并删除只为这份报价登记、没有其他报价和合同的门店。
+     */
+    @Transactional
+    public void delete(String id, boolean withStore) {
+        ownership.checkQuote(id);
+        var quote = db.one("SELECT * FROM quotation WHERE id=? FOR UPDATE", id);
+        requireDraft(quote, "删除");
+        String projectId = quote.get("project_id").toString();
+        // 连门店一起删时，先确认门店可删，避免报价删了、门店却删不掉
+        if (withStore) projects.requireUnused(projectId, id);
+        Object amount = detail(id).get("known_amount");
+        db.jdbc.update("DELETE FROM quotation_item WHERE quotation_id=?", id);
+        db.jdbc.update("DELETE FROM quotation WHERE id=?", id);
+        db.audit(
+            "QUOTE_DELETED",
+            id,
+            "删除报价草稿 " + quote.get("code") + " V" + quote.get("version") + "，金额 " + amount
+        );
+        if (withStore) projects.deleteUnused(projectId);
+    }
+
+    private static void requireDraft(Map<String, Object> quote, String action) {
+        if (!"DRAFT".equals(quote.get("status"))) throw new ApiException(
+            "只有草稿可以" + action + "；已出具的报价请复制为新版本，或标记未成交"
+        );
+    }
+
+    /** 写入报价明细。看不到成本的角色（业务员）提交的成本一律忽略，按供应商成本模板取成本。 */
+    private void writeItems(String id, List<QuoteInput.Line> items, String supplierId, String projectTypeId) {
         int pos = 0;
         // 看不到成本的角色（业务员）提交的成本一律忽略，按供应商成本模板取成本；模板没有的产品成本待财务补充
         var templateCosts = Roles.canSeeCost() ? null : catalog.supplierCosts(supplierId, projectTypeId);
-        for (var submitted : input.items()) {
+        for (var submitted : items) {
             var line = templateCosts == null ? submitted : withTemplateCost(submitted, templateCosts);
             var product = db.one("SELECT * FROM product WHERE id=?", line.productId());
             db.jdbc.update(
@@ -228,8 +312,6 @@ public class QuoteService {
                 line.financeCost()
             );
         }
-        db.audit("QUOTE_CREATED", id, "新建报价版本 V" + version);
-        return id;
     }
 
     @Transactional
@@ -253,6 +335,14 @@ public class QuoteService {
             );
         } else if (action.equals("accept")) {
             if (!List.of("ISSUED", "HISTORICAL").contains(status)) throw new ApiException("仅已出具或历史报价可确认");
+            var current = db.jdbc.queryForList(
+                "SELECT version FROM quotation WHERE project_id=? AND status='ACCEPTED' AND id<>?",
+                quote.get("project_id"),
+                id
+            );
+            if (!current.isEmpty()) throw new ApiException(
+                "该门店已有已确认的报价 V" + current.get(0).get("version") + "，新版本请使用“确认并取代原报价”"
+            );
             if (dueDate == null) throw new ApiException("请填写应收截止日期");
             if (detail(id).get("amount") == null) throw new ApiException("报价金额不完整，无法确认应收");
             db.one("SELECT id FROM project WHERE id=? FOR UPDATE", quote.get("project_id"));
@@ -263,6 +353,87 @@ public class QuoteService {
             );
         } else throw new ApiException("不支持此操作");
         db.audit("QUOTE_" + action.toUpperCase(), id, "状态变更自 " + status);
+    }
+
+    /** 补写或修改已确认报价的应收截止日期。 */
+    @Transactional
+    public void dueDate(String id, LocalDate dueDate) {
+        ownership.checkQuote(id);
+        var quote = db.one("SELECT status FROM quotation WHERE id=? FOR UPDATE", id);
+        if (!"ACCEPTED".equals(quote.get("status"))) throw new ApiException("只有已确认的报价可以设置应收截止日期");
+        db.jdbc.update("UPDATE quotation SET due_date=? WHERE id=?", dueDate, id);
+        db.audit("QUOTE_DUE_DATE", id, "应收截止日期设为 " + dueDate);
+    }
+
+    /**
+     * 合同已签订的门店出新报价版本前，把现有的合同依据固定下来：门店还没有已确认报价时，
+     * 把当前生效的那份（最新的已出具 / 历史报价）记为已确认。这样新版本在被确认取代之前不会影响合同金额与应收。
+     */
+    private void pinContractBasis(String projectId) {
+        if (List.of("NONE", "DRAFT").contains(projects.contractState(projectId))) return;
+        var quotes = db.jdbc.queryForList(
+            "SELECT id,status,version FROM quotation WHERE project_id=? AND status NOT IN ('LOST','SUPERSEDED') ORDER BY version DESC",
+            projectId
+        );
+        if (quotes.isEmpty() || quotes.stream().anyMatch(q -> "ACCEPTED".equals(q.get("status")))) return;
+        var basis = quotes.get(0);
+        if (!List.of("ISSUED", "HISTORICAL").contains(basis.get("status"))) return;
+        db.jdbc.update(
+            "UPDATE quotation SET status='ACCEPTED',accepted_project=project_id WHERE id=?",
+            basis.get("id")
+        );
+        db.audit(
+            "QUOTE_PINNED",
+            basis.get("id").toString(),
+            "门店合同已签订，出新版本前将 V" + basis.get("version") + " 记为合同依据"
+        );
+    }
+
+    /**
+     * 新版本取代门店原已确认的报价：原版本标记为“已被取代”并保留备查，新版本成为已确认报价。
+     * 截止日期未指定时沿用原版本的。权限、回款与开票的校验由合同模块在调用前完成。
+     *
+     * @return 原版本与新版本的版本号、金额，用于变更记录
+     */
+    @Transactional
+    public Map<String, Object> supersede(String newId, LocalDate dueDate) {
+        ownership.checkQuote(newId);
+        var next = db.one("SELECT * FROM quotation WHERE id=? FOR UPDATE", newId);
+        if (!List.of("ISSUED", "HISTORICAL").contains(next.get("status"))) throw new ApiException(
+            "请先出具新版本的报价单，再确认取代"
+        );
+        var olds = db.jdbc.queryForList(
+            "SELECT * FROM quotation WHERE project_id=? AND status='ACCEPTED' AND id<>? FOR UPDATE",
+            next.get("project_id"),
+            newId
+        );
+        if (olds.isEmpty()) throw new ApiException("该门店没有已确认的报价，请直接办理客户确认");
+        var old = olds.get(0);
+        if (
+            ((Number) next.get("version")).intValue() < ((Number) old.get("version")).intValue()
+        ) throw new ApiException("只能用更新的版本取代已确认的报价");
+        Object amount = detail(newId).get("amount"),
+            oldAmount = detail(old.get("id").toString()).get("amount");
+        if (amount == null) throw new ApiException("报价金额不完整，无法确认");
+        // 先释放原版本占用的“门店已确认报价”，再确认新版本
+        db.jdbc.update(
+            "UPDATE quotation SET status='SUPERSEDED',accepted_project=NULL,superseded_by=? WHERE id=?",
+            newId,
+            old.get("id")
+        );
+        db.jdbc.update(
+            "UPDATE quotation SET status='ACCEPTED',accepted_project=project_id,due_date=? WHERE id=?",
+            dueDate != null ? dueDate : old.get("due_date"),
+            newId
+        );
+        db.audit("QUOTE_SUPERSEDED", old.get("id").toString(), "被 V" + next.get("version") + " 取代");
+        db.audit("QUOTE_ACCEPT", newId, "确认并取代 V" + old.get("version"));
+        var out = new LinkedHashMap<String, Object>();
+        out.put("old_version", old.get("version"));
+        out.put("old_amount", oldAmount);
+        out.put("new_version", next.get("version"));
+        out.put("new_amount", amount);
+        return out;
     }
 
     /**
@@ -276,6 +447,7 @@ public class QuoteService {
         String status = quote.get("status").toString(),
             projectId = quote.get("project_id").toString();
         if ("LOST".equals(status)) throw new ApiException("该报价已标记为未成交");
+        if ("SUPERSEDED".equals(status)) throw new ApiException("该报价已被新版本取代，无需再标记");
         boolean hasContract = !"NONE".equals(projects.contractState(projectId));
         if ("ACCEPTED".equals(status)) {
             if (hasContract) throw new ApiException("该报价已生成合同，请在合同台账中办理合同终止");

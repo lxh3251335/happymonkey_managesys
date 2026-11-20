@@ -33,6 +33,7 @@ export interface Project {
   order_date: string | null
   note: string
   quote_count: number
+  created_at?: string
   contract_no: string | null
   shipping_status: string | null
   city: string | null
@@ -94,7 +95,9 @@ export interface Quote {
   brand: string
   customer_name: string
   version: number
-  status: 'DRAFT' | 'ISSUED' | 'ACCEPTED' | 'HISTORICAL' | 'LOST'
+  status: 'DRAFT' | 'ISSUED' | 'ACCEPTED' | 'HISTORICAL' | 'LOST' | 'SUPERSEDED'
+  /** 该门店已确认报价的版本号；没有则为空。 */
+  accepted_version?: number | null
   /** 跟进阶段：由报价状态与门店合同状态共同决定，见 utils.stageName。 */
   stage: QuoteStage
   contract_state?: string
@@ -118,6 +121,7 @@ export interface Quote {
   outstanding: number
   overdue: boolean
   template_name?: string | null
+  template_id?: string | null
   customer_id?: string
   owner_id?: string | null
   owner_name?: string | null
@@ -167,7 +171,7 @@ export interface ImportBatch {
   detail: string
   created_at: string
 }
-/** 经营分组：合同额按下单月份，到账额按收款日期（收款减退款）。 */
+/** 经营分组：合同额按下单月份，回款额按回款日期（回款减退款）。 */
 export interface BizRow {
   name: string
   contract_amount: number
@@ -298,6 +302,8 @@ export interface Contract {
   projects: number
   shipped: number
   confirmed_projects: number
+  /** 已有应收但没有截止日期的门店数（这部分应收不计逾期）。 */
+  undated: number
   confirmation: 'PENDING' | 'PARTIAL' | 'CONFIRMED'
   /** 门店订单合计 */
   order_amount: number
@@ -636,4 +642,19 @@ export interface BusinessGroup {
   sort: number
   active: boolean
   lines: BusinessLine[]
+}
+
+/** 回款单：银行到账的一笔钱，分到同一客户的若干份合同；unallocated 为还没分配的余额。 */
+export interface ReceiptBatch {
+  id: string
+  customer_id: string
+  customer_name: string
+  amount: number
+  allocated: number
+  unallocated: number
+  paid_on: string
+  reference: string
+  payer: string | null
+  note: string | null
+  items: { id: string; contract_no: string; kind: string; amount: number; reference: string }[]
 }

@@ -155,7 +155,7 @@ svg {
   gap: 18px;
   margin-bottom: 8px;
   color: #53645b;
-  font-size: 12px;
+  font-size: 13px;
 }
 .gbc-legend span {
   display: inline-flex;
@@ -179,7 +179,7 @@ svg {
 .gbc-grid text,
 .gbc-x text {
   fill: #8a958e;
-  font-size: 11px;
+  font-size: 12px;
   font-variant-numeric: tabular-nums;
 }
 .gbc-hover {
@@ -200,7 +200,7 @@ svg {
   border-radius: 8px;
   box-shadow: 0 6px 20px rgb(37 55 49 / 12%);
   color: #253731;
-  font-size: 12px;
+  font-size: 13px;
   pointer-events: none;
 }
 .gbc-tip strong {

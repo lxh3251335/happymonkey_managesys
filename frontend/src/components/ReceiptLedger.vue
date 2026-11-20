@@ -6,7 +6,7 @@ import { day, money } from '../utils'
 import { canFinance } from '../api'
 
 /**
- * 回款流水：合同收款 / 退款（展开看分摊到的门店）+ 未关联合同的历史门店流水。
+ * 回款流水：合同回款 / 退款（展开看分摊到的门店）+ 未关联合同的历史门店流水。
  * 回款统一按合同登记；历史门店流水只能关联退款冲正。
  */
 const props = defineProps<{ rows: ReceiptRow[] }>()
@@ -67,7 +67,7 @@ const typeName = (r: ReceiptRow) =>
         <el-option v-for="m in months" :key="m" :label="m" :value="m" />
       </el-select>
       <span class="ledger-sum">
-        {{ filtered.length }} 笔 · 收款
+        {{ filtered.length }} 笔 · 回款
         <strong>{{ money(sum('RECEIPT')) }}</strong>
         · 退款
         <strong>{{ money(sum('REFUND')) }}</strong>
@@ -89,7 +89,7 @@ const typeName = (r: ReceiptRow) =>
             </template>
             <div v-else class="muted">
               {{
-                row.source === 'STORE' ? `门店：${row.project_name}（早期按门店登记，未关联合同收款）` : '无分摊明细'
+                row.source === 'STORE' ? `门店：${row.project_name}（早期按门店登记，未关联合同回款）` : '无分摊明细'
               }}
             </div>
           </div>
@@ -112,14 +112,12 @@ const typeName = (r: ReceiptRow) =>
         </template>
       </el-table-column>
       <el-table-column label="金额" align="right" width="140">
-        <template #default="{ row }">{{ row.kind === 'REFUND' ? '-' : '' }}{{ money(row.amount) }}</template>
-      </el-table-column>
-      <el-table-column label="已退" align="right" width="110">
         <template #default="{ row }">
-          <span v-if="row.kind === 'RECEIPT' && Number(row.refunded) > 0" class="danger-text">
-            {{ money(row.refunded) }}
-          </span>
-          <span v-else class="muted">—</span>
+          {{ row.kind === 'REFUND' ? '-' : '' }}{{ money(row.amount) }}
+          <!-- 有退款的回款在金额下注明已退金额 -->
+          <small v-if="row.kind === 'RECEIPT' && Number(row.refunded) > 0" class="cell-secondary danger-text">
+            已退 {{ money(row.refunded) }}
+          </small>
         </template>
       </el-table-column>
       <el-table-column label="凭证号" prop="reference" min-width="150" show-overflow-tooltip />
@@ -160,8 +158,8 @@ const typeName = (r: ReceiptRow) =>
 }
 .ledger-sum {
   margin-left: auto;
-  font-size: 12px;
-  color: #6b7a72;
+  font-size: 13px;
+  color: #5d6a63;
 }
 .ledger-sum strong {
   color: #253731;
@@ -169,10 +167,10 @@ const typeName = (r: ReceiptRow) =>
 }
 .alloc {
   padding: 4px 24px 8px 60px;
-  font-size: 13px;
+  font-size: 14px;
 }
 .alloc-title {
-  color: #6b7a72;
+  color: #5d6a63;
   margin-bottom: 4px;
 }
 .alloc-line {

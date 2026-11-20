@@ -106,10 +106,6 @@ async function run(action: 'preview' | 'import') {
     </el-button>
   </span>
   <el-dialog v-model="open" :title="`导入${title}`" width="860px" :close-on-click-modal="false" append-to-body>
-    <div class="inline-note">
-      建议先“导出 Excel”，在导出的表里修改或追加行后再导入：带“系统编号”的行按编号更新，其余按名称匹配，匹配不到则新增。
-      表中删掉的列保持原值。导入前先预览，有错误时整批不写入。
-    </div>
     <div class="pick-row">
       <label class="file-pick">
         <input ref="input" type="file" accept=".xlsx" @change="pick" />
@@ -177,7 +173,7 @@ async function run(action: 'preview' | 'import') {
   border: 1px dashed #c9d3c2;
   border-radius: 4px;
   color: #5d6d58;
-  font-size: 13px;
+  font-size: 14px;
   cursor: pointer;
   overflow: hidden;
   white-space: nowrap;
@@ -191,14 +187,14 @@ async function run(action: 'preview' | 'import') {
 }
 .loading {
   padding: 12px 0;
-  font-size: 13px;
+  font-size: 14px;
 }
 .summary {
   display: flex;
   align-items: center;
   gap: 14px;
   margin-bottom: 10px;
-  font-size: 13px;
+  font-size: 14px;
 }
 .view-switch {
   margin-left: auto;
@@ -207,7 +203,7 @@ async function run(action: 'preview' | 'import') {
   display: inline-block;
   padding: 0 7px;
   border-radius: 10px;
-  font-size: 12px;
+  font-size: 13px;
   line-height: 20px;
 }
 .a-create {
@@ -217,7 +213,7 @@ async function run(action: 'preview' | 'import') {
   color: #3b5f8a;
 }
 .a-same {
-  color: #8a958e;
+  color: #66716a;
 }
 .a-error {
   color: #b23b2e;
@@ -236,6 +232,6 @@ async function run(action: 'preview' | 'import') {
 }
 .footer-note {
   margin-right: 12px;
-  font-size: 12px;
+  font-size: 13px;
 }
 </style>

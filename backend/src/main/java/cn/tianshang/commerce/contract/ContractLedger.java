@@ -48,14 +48,29 @@ public class ContractLedger {
         String ownerName,
         LocalDate shippedOn,
         /** 应收口径的订单金额（经营分析按签约金额调整 amount 时，应收仍按确认的订单金额）。 */
-        BigDecimal orderAmount
+        BigDecimal orderAmount,
+        /** 门店所属合同的状态：NONE 没有合同；有合同号但没有合同记录的历史门店为 SIGNED。 */
+        String contractState
     ) {
-        public boolean confirmed() {
+        /** 客户已确认这份报价。 */
+        public boolean accepted() {
             return "ACCEPTED".equals(quoteStatus);
         }
 
+        /**
+         * 已建立应收：客户已确认报价，或门店所属合同已签订（含已完结）。
+         * 合同签订即产生应收，不需要再单独“确认应收”；只是没有截止日期的应收不计逾期。
+         */
+        public boolean confirmed() {
+            return (
+                accepted() ||
+                (List.of("SIGNED", "COMPLETED").contains(contractState) &&
+                    List.of("HISTORICAL", "ISSUED").contains(quoteStatus))
+            );
+        }
+
         public boolean contracted() {
-            return confirmed() || (contractNo != null && List.of("HISTORICAL", "ISSUED").contains(quoteStatus));
+            return accepted() || (contractNo != null && List.of("HISTORICAL", "ISSUED").contains(quoteStatus));
         }
 
         public BigDecimal outstanding() {
@@ -79,8 +94,10 @@ public class ContractLedger {
     /** 当前用户可见的经营事实：商务只含自己负责的门店。 */
     public List<Fact> facts() {
         String sql = """
-            SELECT p.*,c.name AS customer_name,u.display_name AS owner_name
+            SELECT p.*,c.name AS customer_name,u.display_name AS owner_name,
+              CASE WHEN p.contract_no IS NULL OR p.contract_no='' THEN 'NONE' ELSE COALESCE(k.status,'SIGNED') END AS contract_state
             FROM project p JOIN partner c ON c.id=p.customer_id LEFT JOIN app_user u ON u.id=p.owner_id
+            LEFT JOIN contract k ON k.customer_id=p.customer_id AND k.contract_no=p.contract_no
             """;
         var projects = ownership.restricted()
             ? db.jdbc.queryForList(
@@ -89,7 +106,9 @@ public class ContractLedger {
               )
             : db.jdbc.queryForList(sql + " ORDER BY p.order_date,p.code");
         var quotes = new HashMap<String, Map<String, Object>>();
-        for (var q : db.jdbc.queryForList("SELECT * FROM quotation WHERE status<>'LOST' ORDER BY version")) {
+        for (var q : db.jdbc.queryForList(
+            "SELECT * FROM quotation WHERE status NOT IN ('LOST','SUPERSEDED') ORDER BY version"
+        )) {
             String key = q.get("project_id").toString();
             var current = quotes.get(key);
             boolean accepted = "ACCEPTED".equals(q.get("status"));
@@ -110,14 +129,15 @@ public class ContractLedger {
                         decimal(i.get("cost"))
                     )
                 );
+        // 回款按门店汇总：报价换版本后，旧版本名下的流水仍算在这个门店上
         var received = new HashMap<String, BigDecimal>();
         for (var e : db.jdbc.queryForList(
             """
-            SELECT quotation_id,SUM(CASE WHEN kind='RECEIPT' THEN amount ELSE -amount END) AS net
-            FROM cash_entry GROUP BY quotation_id
+            SELECT q.project_id,SUM(CASE WHEN e.kind='RECEIPT' THEN e.amount ELSE -e.amount END) AS net
+            FROM cash_entry e JOIN quotation q ON q.id=e.quotation_id GROUP BY q.project_id
             """
         ))
-            received.put(e.get("quotation_id").toString(), decimal(e.get("net")));
+            received.put(e.get("project_id").toString(), decimal(e.get("net")));
 
         var out = new ArrayList<Fact>();
         for (var p : projects) {
@@ -149,13 +169,14 @@ public class ContractLedger {
                     q.get("status").toString(),
                     date(q.get("due_date")),
                     amount,
-                    received.getOrDefault(quoteId, BigDecimal.ZERO),
+                    received.getOrDefault(p.get("id").toString(), BigDecimal.ZERO),
                     lines,
                     Contracts.blankToNull((String) p.get("city")),
                     (String) p.get("owner_id"),
                     (String) p.get("owner_name"),
                     date(p.get("shipped_on")),
-                    amount
+                    amount,
+                    p.get("contract_state").toString()
                 )
             );
         }
@@ -234,7 +255,8 @@ public class ContractLedger {
                         f.ownerId(),
                         f.ownerName(),
                         f.shippedOn(),
-                        f.amount()
+                        f.amount(),
+                        f.contractState()
                     )
                 );
             }
@@ -288,7 +310,8 @@ public class ContractLedger {
                     (String) h.get("owner_id"),
                     (String) h.get("owner_name"),
                     null,
-                    BigDecimal.ZERO
+                    BigDecimal.ZERO,
+                    h.get("status").toString()
                 )
             );
         }
@@ -301,11 +324,11 @@ public class ContractLedger {
         return value.multiply(part).divide(whole, 2, java.math.RoundingMode.HALF_UP);
     }
 
-    static BigDecimal decimal(Object value) {
+    public static BigDecimal decimal(Object value) {
         return value == null ? null : new BigDecimal(value.toString());
     }
 
-    static LocalDate date(Object value) {
+    public static LocalDate date(Object value) {
         if (value == null) return null;
         String text = value.toString();
         return LocalDate.parse(text.length() > 10 ? text.substring(0, 10) : text);

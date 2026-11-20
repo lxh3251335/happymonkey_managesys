@@ -71,10 +71,6 @@ async function saveLine() {
 </script>
 <template>
   <div>
-    <div class="inline-note">
-      客户集团（如美团、京东、阿里巴巴）下设业务线（如小象前置仓、快乐猴超市、京东折扣店、盒马鲜生）。项目、项目类型、经营总览都按业务线归类。
-      业务线改名会同步到所有项目；不再使用的业务线请停用（已有项目保留原值，新项目不能再选）。简称用于录入和导入时识别，如“小象”。
-    </div>
     <el-button type="primary" size="small" class="section-gap" @click="openGroup()">
       <el-icon><Plus /></el-icon>
       新增客户集团
@@ -97,9 +93,9 @@ async function saveLine() {
         </el-table-column>
         <el-table-column label="简称" prop="short_name" width="110" />
         <el-table-column label="说明" prop="note" min-width="200" show-overflow-tooltip />
-        <el-table-column label="项目" prop="projects" width="70" align="right" />
-        <el-table-column label="项目类型" prop="project_types" width="90" align="right" />
-        <el-table-column label="排序" prop="sort" width="60" align="right" />
+        <el-table-column label="使用项目数" prop="projects" width="100" align="right" />
+        <el-table-column label="项目类型数" prop="project_types" width="100" align="right" />
+        <el-table-column label="显示顺序" prop="sort" width="86" align="right" />
         <el-table-column label="操作" width="80">
           <template #default="{ row }">
             <el-button link type="primary" @click="openLine(g, row)">编辑</el-button>
@@ -127,7 +123,6 @@ async function saveLine() {
     </el-dialog>
 
     <el-dialog v-model="lineDialog" :title="lineId ? '编辑业务线' : '新增业务线'" width="520px">
-      <div v-if="lineId" class="inline-note">修改名称会同步更新所有使用该业务线的项目和项目类型。</div>
       <el-form label-position="top">
         <el-form-item label="所属客户集团" required>
           <el-select v-model="lineForm.groupId">
@@ -168,7 +163,7 @@ async function saveLine() {
   gap: 10px;
   padding: 10px 14px;
   background: #f6f9f4;
-  font-size: 13px;
+  font-size: 14px;
 }
 .group-head strong {
   font-size: 14px;

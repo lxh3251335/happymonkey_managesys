@@ -66,6 +66,18 @@ public class QuoteController {
         return Map.of("id", service.create(input));
     }
 
+    @PutMapping("/{id}")
+    @PreAuthorize("hasAnyRole('ADMIN','MANAGER','SALES')")
+    public void update(@PathVariable String id, @Valid @RequestBody QuoteInput input) {
+        service.update(id, input);
+    }
+
+    @DeleteMapping("/{id}")
+    @PreAuthorize("hasAnyRole('ADMIN','MANAGER','SALES')")
+    public void delete(@PathVariable String id, @RequestParam(defaultValue = "false") boolean withStore) {
+        service.delete(id, withStore);
+    }
+
     public record LostInput(@NotBlank @Size(max = 300) String reason) {}
 
     @PostMapping("/{id}/lose")

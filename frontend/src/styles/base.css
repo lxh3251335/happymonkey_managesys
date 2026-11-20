@@ -6,13 +6,14 @@
 
 :root {
   font-family: 'Bahnschrift', 'Microsoft YaHei UI', 'PingFang SC', sans-serif;
-  color: #253731;
-  background: #f4f6f3;
+  color: #1f2f29;
+  /* 页面底色比卡片略深，白色卡片与表格才分得清；正文、次要文字对白底的对比度都在 5:1 以上 */
+  background: #edf0ec;
   font-synthesis: none;
   --forest: #194f40;
-  --ink: #253731;
-  --muted: #7f8a84;
-  --line: #e8ece7;
+  --ink: #1f2f29;
+  --muted: #5f6c65;
+  --line: #dde3dc;
   --el-color-primary: #24634f;
   --el-color-primary-light-3: #608f7c;
   --el-color-primary-light-5: #8baf9d;
@@ -20,15 +21,31 @@
   --el-color-primary-light-8: #d9e5de;
   --el-color-primary-light-9: #edf4ef;
   --el-color-primary-dark-2: #194f40;
-  --el-border-color: #dfe5de;
-  --el-border-color-lighter: #edf0eb;
-  --el-text-color-primary: #253731;
-  --el-text-color-regular: #53645b;
+  --el-border-color: #d3dbd3;
+  --el-border-color-lighter: #e3e8e2;
+  --el-text-color-primary: #1f2f29;
+  --el-text-color-regular: #33443b;
+  --el-text-color-secondary: #5f6c65;
+  --el-text-color-placeholder: #6b7770;
+  /* “信息”类标签和文字按钮的灰色，默认值对比度不足 */
+  --el-color-info: #66726b;
+  /* 状态色（成功 / 警告 / 危险）用于标签文字，默认的亮色在白底上看不清 */
+  --el-color-success: #2f7d4f;
+  --el-color-warning: #96670f;
+  --el-color-danger: #b3412f;
+  --el-color-error: #b3412f;
+  /* 组件的“小号”文字（标签、小表格、小按钮）不低于 13px */
+  --el-font-size-extra-small: 13px;
+  --el-font-size-small: 13px;
   --el-font-family: 'Bahnschrift', 'Microsoft YaHei UI', 'PingFang SC', sans-serif;
   --el-border-radius-base: 6px;
 }
 * {
   box-sizing: border-box;
+}
+/* 没有单独指定字号的小字不低于 12px（浏览器默认会缩到约 11.7px） */
+small {
+  font-size: 12px;
 }
 body {
   margin: 0;
@@ -65,27 +82,51 @@ a:focus-visible {
   height: auto;
   padding: 3px 2px;
 }
+/* 表格操作列里的文字按钮挨得近一些，窄屏下不折行 */
+.el-table .el-button.is-link + .el-button.is-link {
+  margin-left: 8px;
+}
+/* 只有图标的操作按钮（悬停看说明） */
+.el-button.icon-only .el-icon {
+  margin-right: 0;
+  font-size: 15px;
+}
 .el-button--primary {
   box-shadow: 0 2px 2px #143d3010;
 }
 .el-table {
-  --el-table-header-bg-color: #f8faf7;
-  --el-table-border-color: #edf0eb;
-  --el-table-row-hover-bg-color: #f5f8f3;
-  color: #41554a;
+  --el-table-header-bg-color: #f0f3ef;
+  --el-table-border-color: #e3e8e2;
+  --el-table-row-hover-bg-color: #e9f1eb;
+  color: #26362f;
+  font-size: 14px;
+}
+.el-table--small {
   font-size: 13px;
 }
 .el-table th.el-table__cell {
-  font-size: 12px;
-  font-weight: 500;
-  color: #7e8a80;
-  height: 46px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #4c5a52;
+  height: 44px;
 }
 .el-table td.el-table__cell {
-  height: 58px;
+  height: 54px;
 }
 .el-table .cell {
-  padding: 0 16px;
+  padding: 0 12px;
+  line-height: 21px;
+}
+/* 隔行浅底色，横向对照一行里的多列数字时不容易串行；录入用的表格不加 */
+.el-table:not(.editor-table) .el-table__body tr.el-table__row:nth-child(even) {
+  --el-table-tr-bg-color: #f8faf7;
+}
+.el-table strong {
+  font-weight: 600;
+  color: #1f2f29;
+}
+.el-tag {
+  --el-tag-font-size: 13px;
 }
 .el-table__inner-wrapper::before {
   display: none;
@@ -129,17 +170,20 @@ a:focus-visible {
   color: #277058;
 }
 .danger-text {
-  color: #b95542;
+  color: #a8432f;
 }
 .mono {
   font-family: 'Cascadia Code', Consolas, monospace;
-  font-size: 12px;
+  font-size: 13px;
+}
+.nowrap {
+  white-space: nowrap;
 }
 .cell-secondary {
   display: block;
   color: var(--muted);
-  font-size: 12px;
-  margin-top: 5px;
+  font-size: 13px;
+  margin-top: 2px;
 }
 .section-gap {
   margin-top: 22px;

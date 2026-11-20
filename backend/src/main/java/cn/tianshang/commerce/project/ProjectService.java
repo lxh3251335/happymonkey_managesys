@@ -95,6 +95,39 @@ public class ProjectService {
 
     // ===================== 登记与修改 =====================
 
+    /**
+     * 校验门店没有用过：除 ignoreQuoteId 以外没有其他报价、没有合同号、没有发货记录。
+     * 删除草稿并连带删除门店时，先用它确认门店可删，再动报价。
+     */
+    public Map<String, Object> requireUnused(String id, String ignoreQuoteId) {
+        ownership.checkProject(id);
+        var p = db.one("SELECT * FROM project WHERE id=? FOR UPDATE", id);
+        int quotes = db.jdbc.queryForObject(
+            "SELECT COUNT(*) FROM quotation WHERE project_id=? AND id<>?",
+            Integer.class,
+            id,
+            Objects.toString(ignoreQuoteId, "-")
+        );
+        if (quotes > 0) throw new ApiException("该门店还有其他报价，不能删除门店");
+        if (blank((String) p.get("contract_no")) != null) throw new ApiException("该门店已有合同号，不能删除");
+        if (p.get("shipped_on") != null || blank((String) p.get("tracking_no")) != null) throw new ApiException(
+            "该门店已有发货记录，不能删除"
+        );
+        return p;
+    }
+
+    /**
+     * 删除没有用过的门店：没有任何报价、没有合同号、也没有发货记录时才能删。
+     * 用于撤销“新建报价时顺带登记”的门店；有业务痕迹的门店不允许删除。
+     */
+    @PreAuthorize("hasAnyRole('ADMIN','MANAGER','SALES')")
+    @Transactional
+    public void deleteUnused(String id) {
+        var p = requireUnused(id, null);
+        db.jdbc.update("DELETE FROM project WHERE id=?", id);
+        db.audit("PROJECT_DELETED", id, "删除未使用的门店：" + p.get("name"));
+    }
+
     /** 发货与收货信息。填了运单号即视为已发货。 */
     public record DeliveryInput(
         @Pattern(regexp = "^$|制作中|已发货") String status,

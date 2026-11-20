@@ -80,7 +80,6 @@ onMounted(load)
 <template>
   <div>
     <div class="offer-toolbar">
-      <span class="muted">登记供应商对标准产品的报价；在“供应商成本”中维护模板时会显示最近有效报价作参考。</span>
       <el-button v-if="canSeeCost()" type="primary" size="small" @click="open">
         <el-icon><Plus /></el-icon>
         登记供应商报价
@@ -237,9 +236,9 @@ onMounted(load)
 .offer-toolbar {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
   gap: 12px;
   margin-bottom: 12px;
-  font-size: 13px;
+  font-size: 14px;
 }
 </style>

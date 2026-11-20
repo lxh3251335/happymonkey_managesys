@@ -14,7 +14,7 @@ import java.util.function.Function;
 import org.springframework.stereotype.Service;
 
 /**
- * 经营总览。合同额按项目下单日期归月，到账额按收款日期归月（收款减退款）。
+ * 经营总览。合同额按项目下单日期归月，回款额按回款日期归月（回款减退款）。
  * 毛利只统计报价和成本都完整的明细行，并给出覆盖率。
  *
  * <p>可按品牌（业务）筛选：筛选后整页指标、趋势、客户、产品线均只含该品牌；品牌 × 产品线对比始终基于全部业务。
@@ -319,7 +319,7 @@ public class ReportService {
         return out;
     }
 
-    /** 合同执行概况：开票、开票未到款、实际成本覆盖、合同状态（当前筛选、当前用户可见范围）。 */
+    /** 合同执行概况：开票、开票未回款、实际成本覆盖、合同状态（当前筛选、当前用户可见范围）。 */
     private Map<String, Object> execution(java.util.function.Predicate<String> inScope) {
         BigDecimal invoiced = BigDecimal.ZERO,
             uninvoiced = BigDecimal.ZERO,
@@ -380,7 +380,7 @@ public class ReportService {
         return x;
     }
 
-    /** 产品线：合同额与毛利按明细行归集，到账额与应收按明细金额比例分摊。 */
+    /** 产品线：合同额与毛利按明细行归集，回款额与应收按明细金额比例分摊。 */
     private static void addLines(Map<String, Acc> lines, Fact f, String contract) {
         for (var i : f.items()) {
             if (i.amount() == null) continue;

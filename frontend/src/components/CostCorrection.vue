@@ -92,7 +92,6 @@ async function save() {
     width="980px"
     :close-on-click-modal="false"
   >
-    <div class="inline-note">只修改内部成本，售价和对客报价单不变。每行修改都会记入操作审计（原值、新值和原因）。</div>
     <el-table :data="rows" size="small">
       <el-table-column label="产品 / 规格" min-width="200">
         <template #default="{ row }">
@@ -144,7 +143,7 @@ async function save() {
 .fix-total {
   margin: 12px 0;
   text-align: right;
-  font-size: 13px;
+  font-size: 14px;
   font-variant-numeric: tabular-nums;
 }
 .fix-total strong {

@@ -12,7 +12,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * 合同执行：开票（蓝字 / 红字冲销）与实际成本登记。到款沿用合同回款（ContractService.receipt），发货在门店项目上登记。
+ * 合同执行：开票（蓝字 / 红字冲销）与实际成本登记。回款沿用合同回款（ContractService.receipt），发货在门店项目上登记。
  *
  * <p>开票合计不能超过合同金额；红字发票须关联原蓝字发票且不超过其未冲销金额。登记错误的记录可删除（软删除，保留审计）。
  */
@@ -23,7 +23,7 @@ public class ContractExecutionService {
 
     static {
         COST_CATEGORIES.put("MATERIAL", "材料采购");
-        COST_CATEGORIES.put("LABOR", "团队人工");
+        COST_CATEGORIES.put("LABOR", "人工成本");
         COST_CATEGORIES.put("INSTALL", "安装调试");
         COST_CATEGORIES.put("FREIGHT", "运输物流");
         COST_CATEGORIES.put("FINANCE", "财务成本");
@@ -87,6 +87,16 @@ public class ContractExecutionService {
     @PreAuthorize("hasAnyRole('ADMIN','FINANCE')")
     @Transactional
     public Map<String, Object> invoice(@Valid InvoiceInput in) {
+        return invoice(in, null);
+    }
+
+    /**
+     * 登记发票。groupId 不为空时，这一行是一张“对多份合同”的发票记到本合同的部分：
+     * 同组内允许发票号码相同，in.amount() 是记到本合同的金额。
+     */
+    @PreAuthorize("hasAnyRole('ADMIN','FINANCE')")
+    @Transactional
+    public Map<String, Object> invoice(@Valid InvoiceInput in, String groupId) {
         ownership.checkContract(in.customerId(), in.contractKey());
         // 先锁住合同记录再计算已开票金额，避免并发开票超过合同金额
         db.one("SELECT id FROM contract WHERE id=? FOR UPDATE", records.ensure(in.customerId(), in.contractKey()));
@@ -94,9 +104,10 @@ public class ContractExecutionService {
         String no = in.invoiceNo().trim();
         if (
             db.jdbc.queryForObject(
-                "SELECT COUNT(*) FROM contract_invoice WHERE invoice_no=? AND deleted_at IS NULL",
+                "SELECT COUNT(*) FROM contract_invoice WHERE invoice_no=? AND deleted_at IS NULL AND (group_id IS NULL OR group_id<>?)",
                 Integer.class,
-                no
+                no,
+                groupId == null ? "" : groupId
             ) >
             0
         ) throw new ApiException("发票号码 " + no + " 已登记");
@@ -142,8 +153,8 @@ public class ContractExecutionService {
         String id = db.id();
         db.jdbc.update(
             """
-            INSERT INTO contract_invoice(id,customer_id,contract_no,company_id,kind,invoice_no,invoice_type,issued_on,amount,tax_rate,reverses_id,note,created_by)
-            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
+            INSERT INTO contract_invoice(id,customer_id,contract_no,company_id,kind,invoice_no,invoice_type,issued_on,amount,tax_rate,reverses_id,note,created_by,group_id)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """,
             id,
             in.customerId(),
@@ -157,7 +168,8 @@ public class ContractExecutionService {
             in.taxRate(),
             reverses,
             Contracts.blankToNull(in.note()),
-            Ownership.username()
+            Ownership.username(),
+            groupId
         );
         db.audit(
             in.kind().equals("INVOICE") ? "CONTRACT_INVOICE" : "CONTRACT_INVOICE_RED",

@@ -7,7 +7,7 @@ package cn.tianshang.commerce.quote;
  *   <li>DRAFT 草稿、ISSUED 待客户确认、ACCEPTED 客户已确认待生成合同 —— 三者合称“跟进中”；
  *   <li>CONTRACTED 已转合同：门店已有合同，此后在合同台账、项目台账中办理；
  *   <li>LOST 未成交；
- *   <li>ARCHIVED 已被该门店更新的已确认版本取代。
+ *   <li>ARCHIVED 已被该门店更新的已确认版本取代（含状态为 SUPERSEDED 的原合同依据）。
  * </ul>
  */
 public final class QuoteStage {
@@ -30,6 +30,7 @@ public final class QuoteStage {
     public static String of(String status, String contractState, int version, Integer acceptedVersion) {
         boolean hasContract = !"NONE".equals(contractState);
         if ("LOST".equals(status)) return LOST;
+        if ("SUPERSEDED".equals(status)) return ARCHIVED;
         if ("ACCEPTED".equals(status)) return hasContract ? CONTRACTED : ACCEPTED;
         if (acceptedVersion != null && version < acceptedVersion) return ARCHIVED;
         if ("DRAFT".equals(status)) return DRAFT;

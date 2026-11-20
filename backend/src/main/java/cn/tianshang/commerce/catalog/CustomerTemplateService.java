@@ -147,7 +147,7 @@ public class CustomerTemplateService {
         var quotes = db.jdbc.queryForList(
             """
                 SELECT q.id,q.code,q.status,p.name AS project_name FROM quotation q JOIN project p ON p.id=q.project_id
-                WHERE p.customer_id=? AND q.status<>'LOST'
+                WHERE p.customer_id=? AND q.status NOT IN ('LOST','SUPERSEDED')
                   AND (COALESCE(q.project_type_id,p.project_type_id)=?
                        OR (q.project_type_id IS NULL AND p.project_type_id IS NULL AND p.brand=?))
                 """ +

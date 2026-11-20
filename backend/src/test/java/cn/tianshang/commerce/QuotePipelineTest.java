@@ -135,6 +135,107 @@ class QuotePipelineTest extends ApiTestSupport {
         assertThat(quoteRow(quote).path("stage").asText()).isEqualTo("DRAFT");
     }
 
+    // ---------- 草稿的修改与删除 ----------
+
+    private boolean quoteExists(String id) throws Exception {
+        for (var q : getJson("/api/quotes")) if (q.path("id").asText().equals(id)) return true;
+        return false;
+    }
+
+    private boolean projectExists(String id) throws Exception {
+        for (var p : getJson("/api/projects")) if (p.path("id").asText().equals(id)) return true;
+        return false;
+    }
+
+    @Test
+    void draftCanBeEditedButIssuedQuoteCannot() throws Exception {
+        String project = project(),
+            first = product(),
+            second = product();
+        String quote = postJson("/api/quotes", quoteInput(project, first, "50")).path("id").asText();
+        // 改草稿：明细整体替换，版本号不变
+        var line = new HashMap<String, Object>();
+        line.put("productId", second);
+        line.put("quantity", 3);
+        line.put("unitPrice", "200");
+        line.put("unitCost", "80");
+        var changed = new HashMap<>(quoteInput(project, first, "50"));
+        changed.put("items", List.of(line));
+        changed.put("note", "改过的备注");
+        mvc
+            .perform(
+                put("/api/quotes/" + quote)
+                    .with(csrf())
+                    .contentType("application/json")
+                    .content(mapper.writeValueAsString(changed))
+            )
+            .andExpect(status().isOk());
+        var detail = getJson("/api/quotes/" + quote);
+        assertThat(detail.path("version").asInt()).isEqualTo(1);
+        assertThat(detail.path("status").asText()).isEqualTo("DRAFT");
+        assertThat(detail.path("amount").decimalValue()).isEqualByComparingTo("600");
+        assertThat(detail.path("note").asText()).isEqualTo("改过的备注");
+        assertThat(detail.path("items").size()).isEqualTo(1);
+        assertThat(detail.path("items").get(0).path("product_id").asText()).isEqualTo(second);
+        // 只读角色不能改；不负责该门店的业务员也不能改
+        for (var who : List.of(new String[] { "viewer1", "VIEWER" }, new String[] { "sales1", "SALES" }))
+            mvc
+                .perform(
+                    put("/api/quotes/" + quote)
+                        .with(csrf())
+                        .with(user(who[0]).roles(who[1]))
+                        .contentType("application/json")
+                        .content(mapper.writeValueAsString(changed))
+                )
+                .andExpect(status().is4xxClientError());
+        // 出具之后不能再改、不能删
+        postJson("/api/quotes/" + quote + "/issue", Map.of());
+        mvc
+            .perform(
+                put("/api/quotes/" + quote)
+                    .with(csrf())
+                    .contentType("application/json")
+                    .content(mapper.writeValueAsString(changed))
+            )
+            .andExpect(status().isBadRequest());
+        mvc.perform(delete("/api/quotes/" + quote).with(csrf())).andExpect(status().isBadRequest());
+        assertThat(getJson("/api/quotes/" + quote).path("amount").decimalValue()).isEqualByComparingTo("600");
+    }
+
+    @Test
+    void draftCanBeDeletedWithItsUnusedStore() throws Exception {
+        String product = product();
+        // 门店只有这一份草稿：可以连门店一起删，留下删除日志
+        String project = project(),
+            quote = postJson("/api/quotes", quoteInput(project, product, "50")).path("id").asText();
+        mvc
+            .perform(delete("/api/quotes/" + quote).with(csrf()).with(user("viewer1").roles("VIEWER")))
+            .andExpect(status().isForbidden());
+        mvc.perform(delete("/api/quotes/" + quote).param("withStore", "true").with(csrf())).andExpect(status().isOk());
+        assertThat(quoteExists(quote)).isFalse();
+        assertThat(projectExists(project)).isFalse();
+        assertThat(
+            jdbcTemplate.queryForList(
+                "SELECT action FROM audit_log WHERE entity_id=? AND action='QUOTE_DELETED'",
+                quote
+            )
+        ).hasSize(1);
+
+        // 门店还有别的报价：不能连门店一起删，整个操作不生效；只删草稿可以，门店保留
+        String busy = project(),
+            kept = postJson("/api/quotes", quoteInput(busy, product, "50")).path("id").asText();
+        postJson("/api/quotes/" + kept + "/issue", Map.of());
+        String draft = postJson("/api/quotes", quoteInput(busy, product, "50")).path("id").asText();
+        mvc
+            .perform(delete("/api/quotes/" + draft).param("withStore", "true").with(csrf()))
+            .andExpect(status().isBadRequest());
+        assertThat(quoteExists(draft)).isTrue();
+        mvc.perform(delete("/api/quotes/" + draft).with(csrf())).andExpect(status().isOk());
+        assertThat(quoteExists(draft)).isFalse();
+        assertThat(quoteExists(kept)).isTrue();
+        assertThat(projectExists(busy)).isTrue();
+    }
+
     // ---------- 客户报价模板 ----------
 
     private String type(String a, String b) throws Exception {

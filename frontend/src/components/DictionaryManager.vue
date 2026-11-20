@@ -66,13 +66,6 @@ async function save() {
 </script>
 <template>
   <div>
-    <div class="inline-note">
-      <template v-if="isCity">
-        项目的城市从这里选择。别名填区县、镇或商圈（如“大兴、通州”），新建门店未填城市时按门店名称自动识别；录入别名也会归到所属城市。
-      </template>
-      <template v-else>标准产品的应用场景从这里选择，如小象前置仓、快乐猴、冷库、配电房。</template>
-      改名会同步到所有已有记录；不再使用的请停用。
-    </div>
     <div class="dict-bar">
       <el-input
         v-model="keyword"
@@ -95,13 +88,13 @@ async function save() {
       <template v-if="isCity">
         <el-table-column label="省份" prop="province" width="100" />
         <el-table-column label="别名（区县、镇、商圈）" prop="aliases" min-width="260" show-overflow-tooltip />
-        <el-table-column label="项目" prop="projects" width="70" align="right" />
+        <el-table-column label="使用项目数" prop="projects" width="100" align="right" />
       </template>
       <template v-else>
         <el-table-column label="说明" prop="note" min-width="220" show-overflow-tooltip />
-        <el-table-column label="产品" prop="products" width="70" align="right" />
+        <el-table-column label="使用产品数" prop="products" width="100" align="right" />
       </template>
-      <el-table-column label="排序" prop="sort" width="60" align="right" />
+      <el-table-column label="显示顺序" prop="sort" width="86" align="right" />
       <el-table-column label="操作" width="70">
         <template #default="{ row }">
           <el-button link type="primary" @click="open(row)">编辑</el-button>

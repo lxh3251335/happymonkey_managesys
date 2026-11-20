@@ -101,7 +101,13 @@ class QuoteWorkflowTest extends ApiTestSupport {
                     .contentType("application/json")
                     .content("{\"dueDate\":\"2026-12-31\"}")
             )
-            .andExpect(status().isConflict());
+            .andExpect(status().isBadRequest()); // 已有已确认报价：新版本要走“确认并取代”
+        // 还没有合同号：直接取代，已登记的到款仍算在这个门店上
+        postJson("/api/contracts/replace-quote/" + second, Map.of());
+        for (var c : getJson("/api/contracts")) if (c.path("contract_key").asText().equals(key)) contract = c;
+        assertThat(contract.path("items").get(0).path("quote_id").asText()).isEqualTo(second);
+        assertThat(contract.path("received").decimalValue()).isEqualByComparingTo("80.00");
+        assertThat(contract.path("outstanding").decimalValue()).isEqualByComparingTo("166.90");
     }
 
     @Test

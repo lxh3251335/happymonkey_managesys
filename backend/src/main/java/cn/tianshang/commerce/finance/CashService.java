@@ -15,7 +15,7 @@ import org.springframework.transaction.annotation.Transactional;
  * 回款流水：统一查看全部收付款。
  *
  * <p>回款只按合同登记（{@link ContractService#receipt}），系统按门店剩余应收比例分摊到门店订单。
- * 早期按单个门店登记、未关联合同收款的流水作为“历史门店流水”保留展示，只允许对其做关联退款冲正。
+ * 早期按单个门店登记、未关联合同回款的流水作为“历史门店流水”保留展示，只允许对其做关联退款冲正。
  */
 @Service
 public class CashService {
@@ -111,7 +111,7 @@ public class CashService {
     public Map<String, String> refundLegacy(@Valid RefundInput c) {
         var original = db.one("SELECT * FROM cash_entry WHERE id=? AND kind='RECEIPT' FOR UPDATE", c.reversesId());
         if (original.get("contract_receipt_id") != null) throw new ApiException(
-            "这笔是合同收款的分摊流水，请在合同详情中登记合同退款"
+            "这笔是合同回款的分摊流水，请在合同详情中登记合同退款"
         );
         String reference = c.reference().trim();
         if (
@@ -127,7 +127,7 @@ public class CashService {
         ) throw new ApiException("退款超过原流水可退金额");
         if (
             c.paidOn().isBefore(LocalDate.parse(original.get("paid_on").toString().substring(0, 10)))
-        ) throw new ApiException("退款日期不能早于原收款日期");
+        ) throw new ApiException("退款日期不能早于原回款日期");
         String id = db.id();
         db.jdbc.update(
             "INSERT INTO cash_entry(id,quotation_id,kind,amount,paid_on,reference,note,reverses_id) VALUES(?,?,'REFUND',?,?,?,?,?)",

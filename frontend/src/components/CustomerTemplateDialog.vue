@@ -268,7 +268,7 @@ async function save() {
   align-items: center;
   gap: 8px;
   margin: 0 0 8px;
-  font-size: 12px;
+  font-size: 13px;
 }
 .tool-row .muted {
   flex: 1;

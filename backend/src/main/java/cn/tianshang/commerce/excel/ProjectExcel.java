@@ -30,7 +30,7 @@ public class ProjectExcel {
         { "city", "城市" },
         { "type", "项目类型" },
         { "owner", "负责人" },
-        { "order_date", "接单日期" },
+        { "order_date", "下单日期" },
         { "contract_no", "合同号" },
         { "external_id", "云智冷项目ID" },
         { "note", "备注" },
@@ -79,9 +79,8 @@ public class ProjectExcel {
             Column.of("city", "城市", 10).note("须在城市字典中，可填区县别名；留空按门店名称识别"),
             Column.of("type", "项目类型", 14).note("填写已有项目类型名称"),
             Column.of("owner", "负责人", 10).note("填写账户显示名称；留空为导入人"),
-            Column.of("order_date", "接单日期", 12),
+            Column.of("order_date", "下单日期", 12),
             Column.of("contract_no", "合同号", 18),
-            Column.of("external_id", "云智冷项目ID", 18),
             Column.of("status", "发货状态", 10).options("制作中", "已发货").note("填了运单号即视为已发货"),
             Column.of("expected_ship_on", "预计发货", 12),
             Column.of("shipped_on", "发货日期", 12),
@@ -224,7 +223,7 @@ public class ProjectExcel {
             value(sheet, row, "consignee_phone", cur, "consignee_phone"),
             value(sheet, row, "ship_address", cur, "ship_address")
         );
-        LocalDate orderDate = ExcelIo.date(value(sheet, row, "order_date", cur, "order_date"), "接单日期");
+        LocalDate orderDate = ExcelIo.date(value(sheet, row, "order_date", cur, "order_date"), "下单日期");
         return new ProjectService.ProjectInput(
             value(sheet, row, "name", cur, "name"),
             brand,

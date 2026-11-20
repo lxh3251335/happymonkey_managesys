@@ -56,6 +56,14 @@ public class ContractController {
         return records.fromQuote(quoteId, input);
     }
 
+    @PostMapping("/replace-quote/{quoteId}")
+    public Map<String, Object> replaceQuote(
+        @PathVariable String quoteId,
+        @Valid @RequestBody ContractRecordService.ReplaceQuoteInput input
+    ) {
+        return records.replaceQuote(quoteId, input);
+    }
+
     @PutMapping("/info")
     public Map<String, Object> update(
         @RequestParam String customerId,
@@ -126,6 +134,11 @@ public class ContractController {
     @PostMapping("/confirm")
     public Map<String, Object> confirm(@Valid @RequestBody ContractService.ConfirmInput input) {
         return service.confirm(input);
+    }
+
+    @PostMapping("/due-dates")
+    public Map<String, Object> dueDates(@Valid @RequestBody ContractService.DueDatesInput input) {
+        return service.dueDates(input);
     }
 
     @GetMapping("/receipts")

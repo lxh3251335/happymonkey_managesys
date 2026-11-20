@@ -177,6 +177,14 @@ public class ContractService {
             row.put("projects", g.size());
             row.put("shipped", g.stream().filter(ContractLedger.Fact::shipped).count());
             row.put("confirmed_projects", confirmed);
+            // 已有应收但没有截止日期的门店数：这部分应收不会计入逾期
+            row.put(
+                "undated",
+                g
+                    .stream()
+                    .filter(f -> f.confirmed() && f.dueDate() == null && f.outstanding().signum() > 0)
+                    .count()
+            );
             row.put(
                 "confirmation",
                 g.isEmpty() || confirmed == 0 ? "PENDING" : confirmed == g.size() ? "CONFIRMED" : "PARTIAL"
@@ -318,6 +326,10 @@ public class ContractService {
         return s == null ? null : s.date();
     }
 
+    /**
+     * 设置合同应收截止日期：合同签订即有应收，这里补上各门店订单的截止日期（用于逾期与账龄）。
+     * 拟定中的合同里还没确认的门店订单，同时办理确认。
+     */
     public record ConfirmInput(@NotBlank String customerId, @NotBlank String contractKey, @NotNull LocalDate dueDate) {}
 
     @PreAuthorize("hasAnyRole('ADMIN','MANAGER','SALES','FINANCE')")
@@ -327,18 +339,84 @@ public class ContractService {
         var group = group(input.customerId(), input.contractKey());
         int count = 0;
         for (var f : group) {
-            if (f.confirmed()) continue;
+            // 客户已确认且已有截止日期的门店不动；其余的确认订单并写入截止日期
+            if (f.accepted() && f.dueDate() != null) continue;
             if (f.amount().signum() <= 0) throw new ApiException("门店 " + f.projectName() + " 报价金额为零，无法确认");
-            quotes.transition(f.quoteId(), "accept", input.dueDate());
+            if (f.accepted()) quotes.dueDate(f.quoteId(), input.dueDate());
+            else quotes.transition(f.quoteId(), "accept", input.dueDate());
             count++;
         }
-        if (count == 0) throw new ApiException("该合同的门店订单均已确认");
+        if (count == 0) throw new ApiException("该合同各门店都已设置应收截止日期");
         db.audit(
             "CONTRACT_CONFIRMED",
             input.contractKey(),
-            "确认 " + count + " 个门店订单应收，截止 " + input.dueDate()
+            "为 " + count + " 个门店订单设置应收截止日期 " + input.dueDate()
         );
         return Map.of("confirmed", count);
+    }
+
+    public record ContractRef(@NotBlank String customerId, @NotBlank String contractKey) {}
+
+    /**
+     * 批量设置应收截止日期的规则：FIXED 统一日期；OFFSET 按基准日期加天数推算。
+     * 基准 SIGNED 为合同签订日期（没有则用门店下单日期），ORDER 为门店下单日期。
+     */
+    public record DueDatesInput(
+        @NotEmpty @Size(max = 2000) List<@Valid ContractRef> contracts,
+        @NotNull @Pattern(regexp = "FIXED|OFFSET") String mode,
+        LocalDate dueDate,
+        @Pattern(regexp = "SIGNED|ORDER") String base,
+        @Min(0) @Max(720) Integer days
+    ) {}
+
+    /**
+     * 批量为所选合同补上应收截止日期。只处理已有应收、但还没有截止日期的门店订单；
+     * 已有截止日期的不动，拟定中合同里尚未确认的订单不在此确认。推算时缺基准日期的门店跳过并计数。
+     */
+    @PreAuthorize("hasAnyRole('ADMIN','MANAGER','SALES','FINANCE')")
+    @Transactional
+    public Map<String, Object> dueDates(@Valid DueDatesInput in) {
+        boolean fixed = in.mode().equals("FIXED");
+        if (fixed && in.dueDate() == null) throw new ApiException("请填写应收截止日期");
+        if (!fixed && (in.base() == null || in.days() == null)) throw new ApiException("请选择基准日期并填写天数");
+        var wanted = new HashSet<String>();
+        for (var c : in.contracts()) wanted.add(c.customerId() + "::" + c.contractKey());
+        var signedOn = new HashMap<String, LocalDate>();
+        for (var h : db.jdbc.queryForList("SELECT customer_id,contract_no,signed_on FROM contract"))
+            signedOn.put(h.get("customer_id") + "::" + h.get("contract_no"), ContractLedger.date(h.get("signed_on")));
+        int updated = 0,
+            noBase = 0;
+        var perContract = new LinkedHashMap<String, Integer>();
+        // 经营事实已按当前用户的可见范围过滤：业务员只会处理自己负责的门店
+        for (var f : ledger.contracted()) {
+            String key = f.customerId() + "::" + f.contractKey();
+            if (!wanted.contains(key) || !f.confirmed() || f.dueDate() != null || f.amount().signum() <= 0) continue;
+            LocalDate due;
+            if (fixed) due = in.dueDate();
+            else {
+                LocalDate base =
+                    "SIGNED".equals(in.base()) && signedOn.get(key) != null ? signedOn.get(key) : f.orderDate();
+                if (base == null) {
+                    noBase++;
+                    continue;
+                }
+                due = base.plusDays(in.days());
+            }
+            if (f.accepted()) quotes.dueDate(f.quoteId(), due);
+            else quotes.transition(f.quoteId(), "accept", due);
+            updated++;
+            perContract.merge(f.contractKey(), 1, Integer::sum);
+        }
+        String rule = fixed
+            ? "统一为 " + in.dueDate()
+            : ("SIGNED".equals(in.base()) ? "签订日期" : "下单日期") + " + " + in.days() + " 天";
+        for (var e : perContract.entrySet())
+            db.audit(
+                "CONTRACT_CONFIRMED",
+                e.getKey(),
+                "批量为 " + e.getValue() + " 个门店订单设置应收截止日期（" + rule + "）"
+            );
+        return Map.of("updated", updated, "contracts", perContract.size(), "noBase", noBase);
     }
 
     public record ReceiptInput(
@@ -372,7 +450,7 @@ public class ContractService {
         List<BigDecimal> limits = new ArrayList<>();
         List<String> reverses = new ArrayList<>();
         if (c.kind().equals("RECEIPT")) {
-            if (c.reversesId() != null && !c.reversesId().isBlank()) throw new ApiException("收款不能关联退款原流水");
+            if (c.reversesId() != null && !c.reversesId().isBlank()) throw new ApiException("回款不能关联退款原流水");
             long pending = group
                 .stream()
                 .filter(f -> !f.confirmed())
@@ -388,7 +466,7 @@ public class ContractService {
                 "回款超过该合同剩余应收 " + sum(limits).toPlainString() + " 元"
             );
         } else {
-            if (c.reversesId() == null || c.reversesId().isBlank()) throw new ApiException("退款必须关联原合同收款");
+            if (c.reversesId() == null || c.reversesId().isBlank()) throw new ApiException("退款必须关联原回款");
             var original = db.one(
                 "SELECT * FROM contract_receipt WHERE id=? AND customer_id=? AND contract_no=? AND kind='RECEIPT'",
                 c.reversesId(),
@@ -396,7 +474,7 @@ public class ContractService {
                 contractNo
             );
             if (c.paidOn().isBefore(ContractLedger.date(original.get("paid_on")))) throw new ApiException(
-                "退款日期不能早于原收款日期"
+                "退款日期不能早于原回款日期"
             );
             for (var row : db.jdbc.queryForList(
                 """
@@ -412,7 +490,7 @@ public class ContractService {
                 reverses.add(row.get("id").toString());
             }
             if (sum(limits).compareTo(c.amount()) < 0) throw new ApiException(
-                "退款超过原收款可退金额 " + sum(limits).toPlainString() + " 元"
+                "退款超过原回款可退金额 " + sum(limits).toPlainString() + " 元"
             );
         }
         db.jdbc.update(

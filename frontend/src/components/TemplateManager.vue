@@ -85,9 +85,6 @@ onMounted(load)
 </script>
 <template>
   <div>
-    <div class="inline-note">
-      报价单版式决定对客报价单的公司抬头、联系方式、收款账户和标准条款。报价出具时会固定当时的版式内容，之后修改版式不会改变已出具的报价单。
-    </div>
     <el-button type="primary" class="section-gap" @click="open()">新增报价单版式</el-button>
     <el-table :data="templates">
       <el-table-column label="版式名称" min-width="160">
@@ -100,7 +97,7 @@ onMounted(load)
       <el-table-column label="公司抬头" prop="company_name" min-width="200" show-overflow-tooltip />
       <el-table-column label="单据标题" prop="title" width="130" />
       <el-table-column label="联系电话" prop="phone" width="140" />
-      <el-table-column label="使用报价" prop="used" width="90" align="right" />
+      <el-table-column label="已用于报价数" prop="used" width="110" align="right" />
       <el-table-column label="更新" width="110">
         <template #default="{ row }">{{ day(row.updated_at) }}</template>
       </el-table-column>

@@ -41,7 +41,7 @@ const aliasHint = (name: string) => dict.cities.find((c) => c.name === name)?.al
 <style scoped>
 .alias {
   float: right;
-  color: #8a958e;
-  font-size: 12px;
+  color: #66716a;
+  font-size: 13px;
 }
 </style>

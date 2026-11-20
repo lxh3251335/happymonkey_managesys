@@ -135,6 +135,97 @@ public class ContractRecordService {
         return Map.of("id", id, "contractKey", no);
     }
 
+    public record ReplaceQuoteInput(@Size(max = 500) String reason, LocalDate dueDate) {}
+
+    /**
+     * 确认新版本并取代门店原已确认的报价（改价、增补或减配）。
+     *
+     * <ul>
+     *   <li>合同已签订：属于合同变更，只有管理层 / 系统管理员可办理，必须填写原因，并记入合同变更记录；</li>
+     *   <li>合同拟定中或还没有合同：负责人可直接办理；</li>
+     *   <li>新金额不得低于该门店已回款；合同未填签约金额时，变更后的合同金额不得低于已开票金额。</li>
+     * </ul>
+     */
+    @PreAuthorize("hasAnyRole('ADMIN','MANAGER','SALES')")
+    @Transactional
+    public Map<String, Object> replaceQuote(String quoteId, @Valid ReplaceQuoteInput in) {
+        var quote = quotes.detail(quoteId);
+        String projectId = quote.get("project_id").toString();
+        var project = db.one("SELECT * FROM project WHERE id=? FOR UPDATE", projectId);
+        String customerId = project.get("customer_id").toString();
+        String contractNo = Contracts.blankToNull((String) project.get("contract_no"));
+        String contractKey = contractNo != null ? contractNo : "#" + project.get("code");
+        boolean established = !List.of("NONE", "DRAFT").contains(projects.contractState(projectId));
+        String reason = Contracts.blankToNull(in.reason());
+        if (established) {
+            if (!Roles.canApprove()) throw new ApiException(
+                "该门店的合同已签订，更换报价属于合同变更，请联系管理层办理"
+            );
+            if (reason == null) throw new ApiException("请填写变更原因");
+        }
+        var old = db.jdbc.queryForList(
+            "SELECT id FROM quotation WHERE project_id=? AND status='ACCEPTED' AND id<>?",
+            String.class,
+            projectId,
+            quoteId
+        );
+        if (old.isEmpty()) throw new ApiException("该门店没有已确认的报价，请直接办理客户确认");
+        if (quote.get("amount") == null) throw new ApiException("报价金额不完整，无法确认");
+        BigDecimal newAmount = ContractLedger.decimal(quote.get("amount")),
+            oldAmount = ContractLedger.decimal(quotes.detail(old.get(0)).get("amount"));
+        BigDecimal received = ContractLedger.decimal(
+            db.jdbc.queryForObject(
+                """
+                SELECT COALESCE(SUM(CASE WHEN e.kind='RECEIPT' THEN e.amount ELSE -e.amount END),0)
+                FROM cash_entry e JOIN quotation q ON q.id=e.quotation_id WHERE q.project_id=?
+                """,
+                BigDecimal.class,
+                projectId
+            )
+        );
+        if (received.compareTo(newAmount) > 0) throw new ApiException(
+            "该门店已回款 " + money(received) + "，高于新报价金额 " + money(newAmount) + "，请先办理退款"
+        );
+        var contract = contracts.contract(customerId, contractKey);
+        BigDecimal signed = ContractLedger.decimal(contract.get("signed_amount"));
+        boolean signedKept = contract.get("signed_amount") != null;
+        BigDecimal after = signedKept
+            ? signed
+            : ContractLedger.decimal(contract.get("order_amount")).subtract(oldAmount).add(newAmount);
+        BigDecimal invoiced = ContractLedger.decimal(contract.get("invoiced"));
+        if (invoiced.compareTo(after) > 0) throw new ApiException(
+            "变更后合同金额 " + money(after) + " 低于已开票金额 " + money(invoiced) + "，请先办理红字冲销"
+        );
+        var result = quotes.supersede(quoteId, in.dueDate());
+        String before = "V" + result.get("old_version") + " " + money(oldAmount),
+            now = "V" + result.get("new_version") + " " + money(newAmount);
+        // 有合同号就记入合同变更记录；只有门店订单、还没有合同记录的历史合同先补建记录
+        if (contractNo != null) record(
+            ensure(customerId, contractNo),
+            "DIRECT",
+            Map.of("门店报价 · " + project.get("name"), Arrays.asList(before, now)),
+            reason != null ? reason : "合同拟定中更换门店报价",
+            Ownership.username()
+        );
+        db.audit(
+            "CONTRACT_QUOTE_REPLACED",
+            projectId,
+            "门店报价 " + before + " → " + now + (reason == null ? "" : "；原因：" + reason)
+        );
+        var out = new LinkedHashMap<String, Object>();
+        out.put("customerId", customerId);
+        out.put("contractKey", contractKey);
+        out.put("oldAmount", oldAmount);
+        out.put("newAmount", newAmount);
+        // 合同填了签约金额时，合同金额仍以签约金额为准，需要时在合同信息中另行修改
+        out.put("signedAmountKept", signedKept);
+        return out;
+    }
+
+    private static String money(BigDecimal v) {
+        return "¥" + v.setScale(2, java.math.RoundingMode.HALF_UP).toPlainString();
+    }
+
     public record FromQuoteInput(
         @Size(max = 100) String contractNo,
         @Size(max = 36) String companyId,

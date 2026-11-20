@@ -195,15 +195,12 @@ async function save() {
 <template>
   <div>
     <div class="manager-bar">
-      <span class="muted">
-        每个供应商对每种项目类型的单台成本 = 材料 + 团队人工 + 财务成本。新建报价选择供应商后自动带出。
-      </span>
       <el-button v-if="canSeeCost()" type="primary" size="small" @click="open()">新增 / 维护成本模板</el-button>
     </div>
     <el-table :data="templates" empty-text="暂无供应商成本模板">
       <el-table-column label="项目类型" prop="project_type_name" min-width="120" />
       <el-table-column label="供应商" prop="supplier_name" min-width="150" />
-      <el-table-column label="已报成本" width="90" align="right">
+      <el-table-column label="已填成本的产品" width="130" align="right">
         <template #default="{ row }">{{ row.items.length }} 项</template>
       </el-table-column>
       <el-table-column label="整套成本" width="120" align="right">
@@ -264,7 +261,8 @@ async function save() {
           <el-table-column label="数量" width="56" align="right">
             <template #default="{ row }">{{ row.extra ? '—' : row.quantity }}</template>
           </el-table-column>
-          <el-table-column label="供应商报价参考" width="150">
+          <!-- 供应商报价页已收起：只有已登记过供应商报价时才显示这一参考列 -->
+          <el-table-column v-if="offers.length" label="供应商报价参考" width="150">
             <template #default="{ row }">
               <template v-if="offerFor(row.productId)">
                 {{ money(offerFor(row.productId)!.unit_price) }}
@@ -287,7 +285,7 @@ async function save() {
               <el-input-number v-model="row.materialCost" :min="0" :precision="2" :controls="false" />
             </template>
           </el-table-column>
-          <el-table-column label="团队人工" width="105">
+          <el-table-column label="人工成本" width="105">
             <template #default="{ row }">
               <el-input-number v-model="row.laborCost" :min="0" :precision="2" :controls="false" />
             </template>
@@ -337,7 +335,6 @@ async function save() {
             <el-option v-for="p in addable" :key="p.id" :value="p.id" :label="productLabel(p)" />
           </el-select>
           <el-button :disabled="!extraProductId" @click="addExtra">添加</el-button>
-          <span class="muted">配置外产品不计入整套成本；报价中手动加入该产品时按这里的成本核算。</span>
         </div>
         <div v-if="form.items.some((l) => !l.extra)" class="set-sum">
           整套成本
@@ -375,7 +372,7 @@ async function save() {
   align-items: center;
   gap: 8px;
   margin-top: 10px;
-  font-size: 12px;
+  font-size: 13px;
 }
 .extra-row .el-select {
   flex: 0 0 340px;
@@ -386,7 +383,7 @@ async function save() {
 .set-sum {
   margin: 12px 0;
   text-align: right;
-  font-size: 13px;
+  font-size: 14px;
   font-variant-numeric: tabular-nums;
 }
 .set-sum strong {

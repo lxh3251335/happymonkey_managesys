@@ -165,7 +165,7 @@ public class ExcelService {
                 Column.of("specification", "规格", 16),
                 Column.of("model", "型号", 12),
                 Column.of("material_cost", "材料成本", 12).number(),
-                Column.of("labor_cost", "团队人工", 12).number(),
+                Column.of("labor_cost", "人工成本", 12).number(),
                 Column.of("finance_cost", "财务成本", 12).number(),
                 Column.of("unit_cost", "单台成本", 12).number().note(EXPORT_ONLY + "；= 材料 + 人工 + 财务")
             );
@@ -197,7 +197,7 @@ public class ExcelService {
                     ? List.of(
                           "合同台账 导入说明",
                           "1. 按“客户 + 合同号”匹配：已有合同更新合同要素，没有的新建合同（合同号以 # 开头的是未填合同号的单店订单）。",
-                          "2. 门店数、订单金额、开票、到款、成本、毛利等统计列只导出、不导入；开票请用“开票记录”导入，到款在系统中登记。",
+                          "2. 门店数、订单金额、开票、回款、成本、毛利等统计列只导出、不导入；开票请用“开票记录”导入，到款在系统中登记。",
                           "3. 导入由管理员执行，每份合同的修改都会记入合同变更记录（原因：Excel 批量导入）。",
                           "4. 删除不需要更新的列即可保持原值；有任何错误时整批不写入。"
                       )
@@ -729,7 +729,7 @@ public class ExcelService {
                 if (!seen.add(pid)) errors.add("第 " + r.number() + " 行：同一产品重复");
                 try {
                     var m = ExcelIo.decimal(r.get("material_cost"), "材料成本");
-                    var l = ExcelIo.decimal(r.get("labor_cost"), "团队人工");
+                    var l = ExcelIo.decimal(r.get("labor_cost"), "人工成本");
                     var f = ExcelIo.decimal(r.get("finance_cost"), "财务成本");
                     for (var x : new BigDecimal[] { m, l, f })
                         if (x != null && x.signum() < 0) errors.add("第 " + r.number() + " 行：成本不能为负数");

@@ -9,7 +9,7 @@ import QuoteEditor from '../components/QuoteEditor.vue'
 import QuoteDetail from '../components/QuoteDetail.vue'
 import CostCorrection from '../components/CostCorrection.vue'
 import CustomerTemplateDialog, { type TemplateSeed } from '../components/CustomerTemplateDialog.vue'
-import { api, post, canWrite, canFinance, canSeeCost, session } from '../api'
+import { api, post, canApprove, canWrite, canFinance, canSeeCost, session } from '../api'
 import { activeCompanies, companyLabel, defaultCompany, loadDictionaries } from '../dictionaries'
 import type { Quote, Product, Project } from '../types'
 import { money, percent, afterDays, day, today } from '../utils'
@@ -155,6 +155,49 @@ async function reopen() {
   }
 }
 
+// ---------- 确认新版本并取代原报价 ----------
+/** 门店已有已确认的报价，而当前这份是更新的已出具版本：确认它就要取代原版本。 */
+const replaces = computed(() => {
+  const q = detail.value
+  return !!q && q.status === 'ISSUED' && q.accepted_version != null && q.version > q.accepted_version
+})
+/** 合同已签订时，取代原报价属于合同变更，只有管理层 / 系统管理员可办理并须填写原因。 */
+const contractSigned = computed(() => !['NONE', 'DRAFT'].includes(detail.value?.contract_state || 'NONE'))
+const acceptedQuote = computed(() =>
+  rows.value.find((q) => q.project_id === detail.value?.project_id && q.status === 'ACCEPTED'),
+)
+const replacing = ref(false),
+  replaceForm = ref({ reason: '', dueDate: '' })
+function openReplace() {
+  replaceForm.value = { reason: '', dueDate: '' }
+  replacing.value = true
+}
+async function replaceQuote() {
+  const q = detail.value
+  if (!q) return
+  if (contractSigned.value && !replaceForm.value.reason.trim()) return ElMessage.warning('请填写变更原因')
+  busy.value = true
+  try {
+    const r = await post<{ signedAmountKept: boolean }>(`/contracts/replace-quote/${q.id}`, {
+      reason: replaceForm.value.reason.trim() || null,
+      dueDate: replaceForm.value.dueDate || null,
+    })
+    replacing.value = false
+    await saved(q.id)
+    if (r.signedAmountKept)
+      ElMessageBox.alert(
+        '新版本已生效。这份合同填写了签约金额，合同金额仍以签约金额为准；如需调整，请到合同台账修改该合同的签约金额。',
+        '已取代原报价',
+        { confirmButtonText: '知道了' },
+      ).catch(() => {})
+    else ElMessage.success(`V${q.version} 已生效，原版本保留备查`)
+  } catch (e) {
+    ElMessage.error((e as Error).message)
+  } finally {
+    busy.value = false
+  }
+}
+
 // ---------- 存为客户报价模板 ----------
 const templateDialog = ref(false),
   templateSeed = ref<TemplateSeed>()
@@ -173,6 +216,7 @@ function more(command: string) {
   if (command === 'template') saveAsTemplate()
   else if (command === 'lost') openLost()
   else if (command === 'reopen') reopen()
+  else if (command === 'delete') openDelete()
 }
 async function load() {
   try {
@@ -196,7 +240,52 @@ async function show(id: string) {
 }
 function create(copy = false) {
   seed.value = copy ? detail.value : undefined
+  editing.value = false
   editor.value = true
+}
+/** 修改草稿：还没出具的报价可以直接改；已出具的只能复制为新版本。 */
+const editing = ref(false)
+function editDraft() {
+  seed.value = detail.value
+  editing.value = true
+  editor.value = true
+}
+
+// ---------- 删除草稿 ----------
+const deleting = ref(false),
+  deleteStore = ref(false)
+const detailProject = computed(() => projects.value.find((p) => p.id === detail.value?.project_id))
+/** 门店只有这一份报价、没有合同和发货记录时，可以连同门店一起删。 */
+const storeRemovable = computed(() => {
+  const p = detailProject.value
+  return !!p && Number(p.quote_count) === 1 && p.contract_state === 'NONE' && !p.shipped_on && !p.tracking_no
+})
+function openDelete() {
+  const p = detailProject.value,
+    q = detail.value
+  // 门店和报价是同时建的（新建报价时顺带登记的门店）：默认一起删
+  const together =
+    !!p?.created_at && !!q && Math.abs(new Date(p.created_at).getTime() - new Date(q.created_at).getTime()) < 10_000
+  deleteStore.value = storeRemovable.value && together
+  deleting.value = true
+}
+async function removeDraft() {
+  const q = detail.value
+  if (!q) return
+  busy.value = true
+  try {
+    const withStore = storeRemovable.value && deleteStore.value
+    await api(`/quotes/${q.id}?withStore=${withStore}`, { method: 'DELETE' })
+    deleting.value = false
+    detailOpen.value = false
+    detail.value = undefined
+    await load()
+    ElMessage.success(withStore ? '草稿和门店已删除' : '草稿已删除')
+  } catch (e) {
+    ElMessage.error((e as Error).message)
+  } finally {
+    busy.value = false
+  }
 }
 async function saved(id: string) {
   await load()
@@ -259,15 +348,7 @@ onMounted(async () => {
 </script>
 <template>
   <div>
-    <PageHeader
-      eyebrow="CUSTOMER QUOTATIONS"
-      title="客户报价"
-      :description="
-        canSeeCost()
-          ? '合同签订前的报价都在这里跟进；客户确认并生成合同后，转入合同台账和项目台账办理。'
-          : '合同签订前的报价都在这里跟进；生成合同后转入合同台账和项目台账。成本由系统核算，财务复核。'
-      "
-    >
+    <PageHeader eyebrow="CUSTOMER QUOTATIONS" title="客户报价">
       <el-button v-if="canWrite()" type="primary" @click="create()">
         <el-icon><Plus /></el-icon>
         新建报价
@@ -289,16 +370,16 @@ onMounted(async () => {
         <el-select v-model="customer" clearable filterable placeholder="全部客户">
           <el-option v-for="[id, name] in customers" :key="id" :label="name" :value="id" />
         </el-select>
-        <el-checkbox v-if="canSeeCost()" v-model="incomplete">仅看待补充</el-checkbox>
+        <el-checkbox v-if="canSeeCost()" v-model="incomplete">只看缺金额或成本的</el-checkbox>
         <span class="filter-count">{{ filtered.length }} 份报价</span>
       </div>
       <el-table
         :data="filtered.slice((page - 1) * 12, page * 12)"
         :empty-text="quick === 'ACTIVE' ? '没有跟进中的报价' : '没有符合条件的报价'"
       >
-        <el-table-column label="项目 / 门店" prop="project_name" min-width="230" show-overflow-tooltip />
-        <el-table-column label="客户" prop="customer_name" min-width="115" />
-        <el-table-column label="阶段" width="150">
+        <el-table-column label="项目 / 门店" prop="project_name" min-width="210" show-overflow-tooltip />
+        <el-table-column label="客户" prop="customer_name" min-width="100" show-overflow-tooltip />
+        <el-table-column label="阶段" min-width="150">
           <template #default="{ row }">
             <StatusTag :status="row.stage" kind="stage" />
             <small v-if="row.stage === 'LOST' && row.lost_reason" class="cell-secondary" :title="row.lost_reason">
@@ -315,29 +396,26 @@ onMounted(async () => {
             </small>
           </template>
         </el-table-column>
-        <el-table-column v-if="showOwner" label="负责人" width="90">
+        <el-table-column v-if="showOwner" label="负责人" min-width="78">
           <template #default="{ row }">
             <span :class="row.owner_name ? '' : 'muted'">{{ row.owner_name || '未分配' }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="版本" width="70">
+        <el-table-column label="版本" width="58">
           <template #default="{ row }">V{{ row.version }}</template>
         </el-table-column>
-        <el-table-column label="报价金额" align="right" min-width="135">
+        <el-table-column label="报价金额" align="right" min-width="108">
           <template #default="{ row }">{{ money(row.amount) }}</template>
         </el-table-column>
-        <el-table-column v-if="canSeeCost()" label="成本" align="right" min-width="125">
-          <template #default="{ row }">{{ money(row.cost) }}</template>
-        </el-table-column>
-        <el-table-column v-if="canSeeCost()" label="预计利润" align="right" min-width="125">
+        <el-table-column v-if="canSeeCost()" label="毛利" align="right" min-width="100">
           <template #default="{ row }">
             <span :class="row.profit < 0 ? 'danger-text' : 'profit-text'">{{ money(row.profit) }}</span>
           </template>
         </el-table-column>
-        <el-table-column v-if="canSeeCost()" label="销售毛利率" align="right" width="120">
+        <el-table-column v-if="canSeeCost()" label="毛利率" align="right" min-width="84">
           <template #default="{ row }">{{ percent(row.gross_margin) }}</template>
         </el-table-column>
-        <el-table-column label="操作" fixed="right" width="85">
+        <el-table-column label="操作" fixed="right" width="70">
           <template #default="{ row }"><el-button link type="primary" @click="show(row.id)">查看</el-button></template>
         </el-table-column>
       </el-table>
@@ -356,9 +434,10 @@ onMounted(async () => {
       :products="products"
       :project-id="projectId"
       :seed="seed"
+      :edit="editing"
       @saved="saved"
     />
-    <el-dialog v-model="detailOpen" title="报价详情" width="1100px">
+    <el-dialog v-model="detailOpen" title="报价详情" width="min(1100px, 96vw)">
       <div v-if="detail?.stage === 'LOST'" class="inline-note warning">
         该报价已标记为未成交{{ detail.lost_at ? `（${day(detail.lost_at)}）` : '' }}：{{ detail.lost_reason }}
       </div>
@@ -377,6 +456,9 @@ onMounted(async () => {
                 标记未成交
               </el-dropdown-item>
               <el-dropdown-item v-if="detail.stage === 'LOST'" command="reopen">恢复跟进</el-dropdown-item>
+              <el-dropdown-item v-if="detail.status === 'DRAFT'" command="delete" divided>
+                <span class="danger-text">删除草稿</span>
+              </el-dropdown-item>
             </el-dropdown-menu>
           </template>
         </el-dropdown>
@@ -391,6 +473,7 @@ onMounted(async () => {
         >
           查看合同 {{ detail.contract_no }}
         </el-button>
+        <el-button v-if="canWrite() && detail?.status === 'DRAFT'" @click="editDraft">修改草稿</el-button>
         <el-button v-if="canWrite()" @click="create(true)">复制为新版本</el-button>
         <el-button v-if="canFinance() && detail" @click="fixing = true">修正成本</el-button>
         <el-button v-if="detail" :loading="busy" @click="output('quote')">输出报价单</el-button>
@@ -404,7 +487,19 @@ onMounted(async () => {
           出具报价
         </el-button>
         <el-button
-          v-if="canWrite() && ['ISSUED', 'HISTORICAL'].includes(detail?.status || '')"
+          v-if="canWrite() && replaces && (!contractSigned || canApprove())"
+          type="primary"
+          @click="openReplace"
+        >
+          确认并取代 V{{ detail?.accepted_version }}
+        </el-button>
+        <el-button
+          v-else-if="
+            canWrite() &&
+            !replaces &&
+            detail?.stage !== 'CONTRACTED' &&
+            ['ISSUED', 'HISTORICAL'].includes(detail?.status || '')
+          "
           type="primary"
           @click="openContract"
         >
@@ -421,6 +516,56 @@ onMounted(async () => {
     </el-dialog>
     <CostCorrection v-model="fixing" :quote="detail" @saved="detail && saved(detail.id)" />
     <CustomerTemplateDialog v-model="templateDialog" :seed="templateSeed" />
+    <el-dialog v-model="replacing" title="确认新版本并取代原报价" width="540px">
+      <p v-if="detail" class="dialog-lead">
+        {{ detail.project_name }}：原 V{{ detail.accepted_version }}
+        {{ acceptedQuote ? money(acceptedQuote.amount) : '' }} → 新 V{{ detail.version }} {{ money(detail.amount) }}
+        <template v-if="acceptedQuote && detail.amount != null && acceptedQuote.amount != null">
+          （{{ detail.amount >= acceptedQuote.amount ? '增加' : '减少' }}
+          {{ money(Math.abs(detail.amount - acceptedQuote.amount)) }}）
+        </template>
+        。确认后新版本成为这个门店的订单依据，原版本标记为“已被取代”并保留备查，已登记的回款仍算在这个门店上。
+      </p>
+      <el-form label-position="top">
+        <el-form-item :label="contractSigned ? '变更原因' : '说明（可选）'" :required="contractSigned">
+          <el-input
+            v-model="replaceForm.reason"
+            maxlength="500"
+            placeholder="如：客户增补 2 台一控二配电箱；或：协商后整单降价"
+          />
+        </el-form-item>
+        <el-form-item label="应收截止日期">
+          <el-date-picker
+            v-model="replaceForm.dueDate"
+            type="date"
+            value-format="YYYY-MM-DD"
+            placeholder="不填则沿用原版本的截止日期"
+          />
+        </el-form-item>
+      </el-form>
+      <div v-if="contractSigned" class="inline-note warning">
+        合同
+        {{ detail?.contract_no }}
+        已签订，这属于合同变更：会记入该合同的变更记录。新金额不能低于该门店已回款；合同没有单独填写签约金额时，变更后的合同金额不能低于已开票金额。
+      </div>
+      <template #footer>
+        <el-button @click="replacing = false">取消</el-button>
+        <el-button type="primary" :loading="busy" @click="replaceQuote">确认并取代</el-button>
+      </template>
+    </el-dialog>
+    <el-dialog v-model="deleting" title="删除报价草稿" width="480px">
+      <p v-if="detail" class="dialog-lead">
+        {{ detail.project_name }} · V{{ detail.version }} ·
+        {{ money(detail.amount) }}。这份草稿还没有出具给客户，删除后不能恢复，操作会记入日志。
+      </p>
+      <el-checkbox v-if="storeRemovable" v-model="deleteStore">
+        同时删除这个门店（它只有这一份报价，没有合同和发货记录）
+      </el-checkbox>
+      <template #footer>
+        <el-button @click="deleting = false">取消</el-button>
+        <el-button type="danger" :loading="busy" @click="removeDraft">删除</el-button>
+      </template>
+    </el-dialog>
     <el-dialog v-model="losing" title="标记未成交" width="480px">
       <p v-if="detail" class="dialog-lead">
         {{ detail.project_name }} · V{{ detail.version }} ·
@@ -494,9 +639,7 @@ onMounted(async () => {
           />
         </el-form-item>
       </el-form>
-      <div class="inline-note">
-        填了签订日期即为“已签订”，否则为“拟定中”（可继续修改，签订时补填日期）。已签订合同的任何修改都需管理员批准，并保留完整修改记录。
-      </div>
+      <div class="inline-note">填了签订日期即为“已签订”，之后的修改需要审批。</div>
       <template #footer>
         <el-button @click="accepting = false">取消</el-button>
         <el-button type="primary" :loading="busy" @click="makeContract">生成合同</el-button>

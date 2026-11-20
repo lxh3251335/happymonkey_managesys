@@ -156,7 +156,7 @@ async function remove(a: ContractAttachment) {
 <style scoped>
 .attach-sub {
   margin: -8px 0 14px;
-  font-size: 12px;
+  font-size: 13px;
 }
 .attach-upload {
   display: flex;
@@ -179,7 +179,7 @@ async function remove(a: ContractAttachment) {
   border: 1px dashed #c9d3c2;
   border-radius: 4px;
   color: #5d6d58;
-  font-size: 13px;
+  font-size: 14px;
   cursor: pointer;
   overflow: hidden;
   white-space: nowrap;

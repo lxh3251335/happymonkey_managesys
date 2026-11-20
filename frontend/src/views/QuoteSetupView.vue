@@ -7,7 +7,6 @@ import ExcelTools from '../components/ExcelTools.vue'
 import ProjectTypeManager from '../components/ProjectTypeManager.vue'
 import SupplierTemplateManager from '../components/SupplierTemplateManager.vue'
 import CustomerTemplateManager from '../components/CustomerTemplateManager.vue'
-import SupplierOffers from '../components/SupplierOffers.vue'
 import TemplateManager from '../components/TemplateManager.vue'
 import { api, canSeeCost, canWrite, isAdmin } from '../api'
 import type { Product } from '../types'
@@ -15,7 +14,7 @@ import type { Product } from '../types'
 /**
  * 报价配置：报价所需的全部设置集中在一处。
  * 项目类型（标准配置与售价）→ 客户报价模板（某客户的协议配置与售价，优先于标准配置）→ 供应商成本模板（报价成本的唯一来源）
- * → 供应商报价（维护成本模板的参考）→ 报价单版式（抬头与条款）。
+ * → 报价单版式（抬头与条款）。供应商报价页（SupplierOffers）与供应商成本重叠且无数据，已从页面收起，组件与接口保留。
  */
 const route = useRoute(),
   router = useRouter()
@@ -24,7 +23,6 @@ const tabs = computed(() =>
     { name: 'types', label: '项目类型', show: true },
     { name: 'customers', label: '客户报价模板', show: true },
     { name: 'costs', label: '供应商成本', show: canSeeCost() },
-    { name: 'offers', label: '供应商报价', show: canSeeCost() },
     { name: 'templates', label: '报价单版式', show: isAdmin() },
   ].filter((t) => t.show),
 )
@@ -59,10 +57,7 @@ onMounted(async () => {
 </script>
 <template>
   <div>
-    <PageHeader
-      title="报价配置"
-      description="项目类型的标准配置、客户报价模板、供应商成本模板和报价单版式，新建报价时自动带出。"
-    >
+    <PageHeader title="报价配置">
       <ExcelTools
         v-if="excel"
         :key="excel.dataset"
@@ -76,14 +71,9 @@ onMounted(async () => {
       <el-tabs v-model="tab" @tab-change="switchTab">
         <el-tab-pane v-for="t in tabs" :key="t.name" :label="t.label" :name="t.name" />
       </el-tabs>
-      <div class="flow-note muted">
-        报价流程：选客户和项目类型，客户有报价模板按模板带出、否则按标准配置带出 → 选供应商按其成本模板核算成本 →
-        按报价单版式输出报价单与合同。
-      </div>
       <ProjectTypeManager v-if="tab === 'types'" ref="typeManager" :key="`t${reloadKey}`" :products="products" />
       <CustomerTemplateManager v-else-if="tab === 'customers'" />
       <SupplierTemplateManager v-else-if="tab === 'costs'" :key="`c${reloadKey}`" @configure="configure" />
-      <SupplierOffers v-else-if="tab === 'offers'" />
       <TemplateManager v-else-if="tab === 'templates'" />
     </section>
   </div>
@@ -91,9 +81,5 @@ onMounted(async () => {
 <style scoped>
 .setup-panel {
   padding: 4px 24px 20px;
-}
-.flow-note {
-  margin: -4px 0 12px;
-  font-size: 12px;
 }
 </style>

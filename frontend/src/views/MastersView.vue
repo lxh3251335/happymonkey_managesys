@@ -44,7 +44,6 @@ const freshProduct = () => ({
   mainstream: false,
 })
 const scenario = ref(''),
-  mainstreamOnly = ref(false),
   drawingsOpen = ref(false),
   drawingProduct = ref<Product>()
 const product = ref(freshProduct())
@@ -65,19 +64,9 @@ const filteredProducts = computed(() =>
   products.value.filter(
     (p) =>
       (!scenario.value || p.scenario === scenario.value) &&
-      (!mainstreamOnly.value || p.mainstream) &&
       `${p.scenario}${p.name}${p.specification}${p.model}${p.supplier_name || ''}`.includes(keyword.value),
   ),
 )
-async function toggleMainstream(p: Product) {
-  try {
-    await put(`/products/${p.id}/mainstream`, { mainstream: !p.mainstream })
-    p.mainstream = !p.mainstream
-    ElMessage.success(p.mainstream ? '已设为主流配置' : '已取消主流配置')
-  } catch (e) {
-    ElMessage.error((e as Error).message)
-  }
-}
 async function copyInvoice(p: Partner) {
   try {
     await navigator.clipboard.writeText(invoiceText(p))
@@ -94,7 +83,6 @@ function resetFilters() {
   page.value = 1
   keyword.value = ''
   scenario.value = ''
-  mainstreamOnly.value = false
 }
 async function load() {
   try {
@@ -185,10 +173,7 @@ onMounted(load)
 </script>
 <template>
   <div>
-    <PageHeader
-      title="基础资料"
-      description="客户、供应商与标准产品库。项目类型、客户报价模板、供应商成本与报价单版式在“报价配置”中维护。"
-    >
+    <PageHeader title="基础资料">
       <ExcelTools
         :key="excel.dataset"
         :dataset="excel.dataset"
@@ -222,7 +207,6 @@ onMounted(load)
         <el-select v-model="scenario" clearable placeholder="全部应用场景" class="scenario-filter" @change="page = 1">
           <el-option v-for="x in scenarios" :key="x" :label="x" :value="x" />
         </el-select>
-        <el-checkbox v-model="mainstreamOnly" @change="page = 1">只看主流配置</el-checkbox>
         <el-input
           v-model="keyword"
           :prefix-icon="Search"
@@ -241,20 +225,17 @@ onMounted(load)
             <small class="cell-secondary muted">{{ row.phone }}</small>
           </template>
         </el-table-column>
-        <el-table-column label="开票抬头 / 税号" min-width="240">
-          <template #default="{ row }">
-            {{ row.invoice_title || row.name }}
-            <small class="cell-secondary mono">{{ row.tax_no || '未填税号' }}</small>
-          </template>
-        </el-table-column>
-        <el-table-column label="开票信息" width="150">
+        <!-- 开票抬头默认同名称，只在不同时显示；税号有才显示 -->
+        <el-table-column label="开票信息" min-width="240">
           <template #default="{ row }">
             <span v-if="!missingInvoiceFields(row).length" class="invoice-ok">
               完整{{ row.invoice_type ? ` · ${row.invoice_type === 'SPECIAL' ? '专票' : '普票'}` : '' }}
             </span>
-            <span v-else class="invoice-missing" :title="`缺：${missingInvoiceFields(row).join('、')}`">
-              缺 {{ missingInvoiceFields(row).length }} 项
-            </span>
+            <span v-else class="invoice-missing">缺：{{ missingInvoiceFields(row).join('、') }}</span>
+            <small v-if="row.tax_no || (row.invoice_title && row.invoice_title !== row.name)" class="cell-secondary">
+              {{ row.invoice_title && row.invoice_title !== row.name ? `抬头 ${row.invoice_title} ` : '' }}
+              <span v-if="row.tax_no" class="mono">税号 {{ row.tax_no }}</span>
+            </small>
           </template>
         </el-table-column>
         <el-table-column label="备注" prop="note" min-width="180" show-overflow-tooltip />
@@ -269,19 +250,10 @@ onMounted(load)
         <el-table :data="filteredProducts.slice((page - 1) * 12, page * 12)">
           <el-table-column label="应用场景" prop="scenario" width="120" show-overflow-tooltip />
           <el-table-column label="产品名称" min-width="190">
-            <template #default="{ row }">
-              {{ row.name }}
-              <span v-if="row.mainstream" class="mainstream-tag">主流配置</span>
-            </template>
+            <template #default="{ row }">{{ row.name }}</template>
           </el-table-column>
           <el-table-column label="规格" prop="specification" min-width="130" />
           <el-table-column label="型号" prop="model" min-width="90" />
-          <el-table-column label="单位" prop="unit" width="60" />
-          <el-table-column label="供应商" min-width="130" show-overflow-tooltip>
-            <template #default="{ row }">
-              <span :class="row.supplier_name ? '' : 'muted'">{{ row.supplier_name || '未指定' }}</span>
-            </template>
-          </el-table-column>
           <el-table-column label="图纸" width="80" align="center">
             <template #default="{ row }">
               <el-button link :type="row.drawings ? 'primary' : 'info'" @click="openDrawings(row)">
@@ -295,10 +267,9 @@ onMounted(load)
           <el-table-column v-if="canSeeCost()" label="历史成本参考" align="right" min-width="120">
             <template #default="{ row }">{{ money(row.reference_cost) }}</template>
           </el-table-column>
-          <el-table-column v-if="canWrite()" label="操作" width="150" fixed="right">
+          <el-table-column v-if="canWrite()" label="操作" width="80" fixed="right">
             <template #default="{ row }">
               <el-button link type="primary" @click="edit(row)">编辑</el-button>
-              <el-button link @click="toggleMainstream(row)">{{ row.mainstream ? '取消主流' : '设为主流' }}</el-button>
             </template>
           </el-table-column>
         </el-table>
@@ -316,9 +287,6 @@ onMounted(load)
       </div>
     </section>
     <el-dialog v-model="dialog" :title="`${editingId ? '编辑' : '新增'}${kindName}`" width="640px" top="6vh">
-      <div v-if="editingId && tab === 'PRODUCT'" class="inline-note">
-        修改只影响之后新建的报价；已保存的报价明细保留当时的品名、规格和单位。
-      </div>
       <el-form label-position="top">
         <template v-if="tab !== 'PRODUCT'">
           <el-form-item label="名称" required><el-input v-model="partner.name" maxlength="200" /></el-form-item>
@@ -374,9 +342,6 @@ onMounted(load)
                 <el-option v-for="x in suppliers" :key="x.id" :label="x.name" :value="x.id" />
               </el-select>
             </el-form-item>
-            <el-form-item label="标签">
-              <el-checkbox v-model="product.mainstream">主流配置</el-checkbox>
-            </el-form-item>
           </div>
           <el-form-item label="产品名称" required><el-input v-model="product.name" maxlength="200" /></el-form-item>
           <el-form-item label="规格（软件、服务类可留空）">
@@ -406,17 +371,17 @@ onMounted(load)
   margin: 4px 0 10px;
   padding-top: 10px;
   border-top: 1px solid #eef1ec;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 600;
   color: #253731;
 }
 .invoice-ok {
   color: #24634f;
-  font-size: 12px;
+  font-size: 13px;
 }
 .invoice-missing {
   color: #8a6a1f;
-  font-size: 12px;
+  font-size: 13px;
 }
 .cell-secondary {
   display: block;
@@ -432,16 +397,6 @@ onMounted(load)
 }
 .count {
   margin-left: auto;
-  font-size: 12px;
-}
-.mainstream-tag {
-  display: inline-block;
-  margin-left: 6px;
-  padding: 0 6px;
-  border-radius: 3px;
-  background: #e6f0ea;
-  color: #24634f;
-  font-size: 11px;
-  line-height: 18px;
+  font-size: 13px;
 }
 </style>

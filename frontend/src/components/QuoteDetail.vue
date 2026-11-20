@@ -22,20 +22,21 @@ const split = (n: number | null) => (n == null ? '—' : Number(n).toLocaleStrin
       <StatusTag :status="quote.status" />
     </div>
     <div class="detail-meta">
-      <span>品牌：{{ quote.brand }}</span>
+      <span>业务线：{{ quote.brand }}</span>
       <span v-if="quote.city">城市：{{ quote.city }}</span>
       <span v-if="quote.project_type_name">项目类型：{{ quote.project_type_name }}</span>
       <span v-if="quote.supplier_name">供应商：{{ quote.supplier_name }}</span>
       <span v-if="quote.contract_no">合同号：{{ quote.contract_no }}</span>
       <span>
-        税口径：{{ taxName[quote.tax_basis] }}{{ quote.tax_rate == null ? '' : ` · ${percent(quote.tax_rate)}` }}
+        税口径：{{ quote.tax_basis === 'UNKNOWN' ? '待核实' : taxName[quote.tax_basis]
+        }}{{ quote.tax_rate == null ? '' : ` · ${percent(quote.tax_rate)}` }}
       </span>
-      <span>有效期：{{ day(quote.valid_until) }}</span>
+      <span v-if="quote.valid_until">有效期至：{{ day(quote.valid_until) }}</span>
       <span v-if="quote.template_name">报价单版式：{{ quote.template_name }}</span>
-      <span>应收截止：{{ day(quote.due_date) }}</span>
+      <span v-if="quote.due_date">应收截止日：{{ day(quote.due_date) }}</span>
     </div>
     <div v-if="seeCost && !quote.complete" class="inline-note warning">
-      金额或成本缺失，整份报价的利润和利润率暂不计算。
+      金额或成本缺失，整份报价的毛利和毛利率暂不计算。
     </div>
     <el-table :data="quote.items">
       <el-table-column label="产品" prop="name" min-width="160" />
@@ -66,7 +67,6 @@ const split = (n: number | null) => (n == null ? '—' : Number(n).toLocaleStrin
           {{ row.amount && row.cost != null ? percent((row.amount - row.cost) / row.amount) : '—' }}
         </template>
       </el-table-column>
-      <el-table-column v-if="seeCost" label="数据来源" min-width="140" prop="source" show-overflow-tooltip />
     </el-table>
     <div class="quote-summary">
       <div>
@@ -74,11 +74,15 @@ const split = (n: number | null) => (n == null ? '—' : Number(n).toLocaleStrin
         <strong>{{ money(quote.amount) }}</strong>
       </div>
       <div v-if="seeCost">
-        预计利润
+        成本合计
+        <strong>{{ money(quote.cost) }}</strong>
+      </div>
+      <div v-if="seeCost">
+        毛利
         <strong>{{ money(quote.profit) }}</strong>
       </div>
       <div v-if="seeCost">
-        销售毛利率
+        毛利率
         <strong>{{ percent(quote.gross_margin) }}</strong>
       </div>
       <div v-if="seeCost">
@@ -87,7 +91,7 @@ const split = (n: number | null) => (n == null ? '—' : Number(n).toLocaleStrin
       </div>
     </div>
     <p v-if="seeCost" class="muted">
-      销售毛利率 = 利润 ÷ 报价；成本利润率 = 利润 ÷
+      毛利率 = 毛利 ÷ 报价；成本利润率 = 毛利 ÷
       成本。未包含尚未登记的运输、安装及其他费用。税口径待核实时，仅作历史金额测算。
     </p>
     <p v-if="quote.note" class="detail-note">{{ quote.note }}</p>
@@ -96,7 +100,7 @@ const split = (n: number | null) => (n == null ? '—' : Number(n).toLocaleStrin
 <style scoped>
 .cell-sub {
   display: block;
-  color: #8a978f;
-  font-size: 11px;
+  color: #65726a;
+  font-size: 12px;
 }
 </style>

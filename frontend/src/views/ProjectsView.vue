@@ -8,6 +8,7 @@ import BusinessSelect from '../components/BusinessSelect.vue'
 import CitySelect from '../components/CitySelect.vue'
 import ExcelTools from '../components/ExcelTools.vue'
 import ProjectDeliveryDialog from '../components/ProjectDeliveryDialog.vue'
+import DeliveryBatchDialog from '../components/DeliveryBatchDialog.vue'
 import { api, post, canApprove, canWrite, isAdmin, session } from '../api'
 import { activeOwners, dict, loadDictionaries } from '../dictionaries'
 import type { Partner, Project, ProjectType } from '../types'
@@ -205,6 +206,7 @@ async function save() {
 }
 
 // ---------- 发货物流 ----------
+const batchOpen = ref(false)
 const deliveryOpen = ref(false),
   deliveryProject = ref<Project | null>(null)
 function openDelivery(p: Project) {
@@ -251,12 +253,9 @@ onMounted(async () => {
 </script>
 <template>
   <div>
-    <PageHeader
-      eyebrow="PROJECT REGISTER"
-      title="项目台账"
-      description="已成交门店的项目执行：负责人、收货信息、预计发货与物流跟踪。"
-    >
+    <PageHeader eyebrow="PROJECT REGISTER" title="项目台账">
       <ExcelTools dataset="projects" title="项目台账" :can-import="isAdmin()" @imported="load" />
+      <el-button v-if="canWrite()" @click="batchOpen = true">批量粘贴运单</el-button>
       <el-button v-if="canWrite()" type="primary" @click="open()">
         <el-icon><Plus /></el-icon>
         登记项目
@@ -306,19 +305,14 @@ onMounted(async () => {
         </el-button>
         <span class="filter-count">共 {{ filtered.length }} 个项目</span>
       </div>
-      <div v-if="scope === 'QUOTING'" class="scope-note muted">
-        这些门店还没有合同，报价的跟进在
-        <el-button link type="primary" @click="router.push('/quotes')">客户报价</el-button>
-        中办理；客户确认并生成合同后自动进入“已成交”。先发货后补合同的门店可以在这里登记发货。
-      </div>
       <el-table
         :data="filtered.slice((page - 1) * PAGE, page * PAGE)"
         :empty-text="scope === 'DEAL' ? '没有符合条件的已成交项目' : '没有报价中的项目'"
         row-key="id"
         @selection-change="(v: Project[]) => (selected = v)"
       >
-        <el-table-column v-if="canApprove()" type="selection" width="40" reserve-selection />
-        <el-table-column label="项目 / 门店" min-width="230">
+        <el-table-column v-if="canApprove()" type="selection" width="38" reserve-selection />
+        <el-table-column label="项目 / 门店" min-width="190">
           <template #default="{ row }">
             <span class="ellipsis-line" :title="row.name">{{ row.name }}</span>
             <small class="cell-secondary">
@@ -326,12 +320,12 @@ onMounted(async () => {
             </small>
           </template>
         </el-table-column>
-        <el-table-column v-if="showOwner" label="负责人" width="84">
+        <el-table-column v-if="showOwner" label="负责人" min-width="76">
           <template #default="{ row }">
             <span :class="row.owner_name ? '' : 'muted'">{{ row.owner_name || '未分配' }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="接单 / 合同" width="156">
+        <el-table-column label="下单日期 / 合同号" min-width="152">
           <template #default="{ row }">
             {{ day(row.order_date) }}
             <el-button v-if="row.contract_no" link type="primary" class="cell-link" @click="goContract(row)">
@@ -342,7 +336,7 @@ onMounted(async () => {
             </small>
           </template>
         </el-table-column>
-        <el-table-column label="发货" width="132">
+        <el-table-column label="发货" min-width="128">
           <template #default="{ row }">
             <span
               :class="['ship-tag', row.shipping_status === '已发货' ? 'done' : row.shipping_status ? 'making' : 'none']"
@@ -357,7 +351,7 @@ onMounted(async () => {
             </small>
           </template>
         </el-table-column>
-        <el-table-column label="物流" min-width="150">
+        <el-table-column label="物流" min-width="118">
           <template #default="{ row }">
             <template v-if="row.tracking_no">
               {{ row.courier || '快递' }}
@@ -366,7 +360,7 @@ onMounted(async () => {
             <span v-else class="muted">—</span>
           </template>
         </el-table-column>
-        <el-table-column label="收货信息" min-width="230">
+        <el-table-column label="收货信息" min-width="152">
           <template #default="{ row }">
             <template v-if="row.consignee || row.ship_address">
               {{ row.consignee || '—' }} {{ row.consignee_phone || '' }}
@@ -377,10 +371,17 @@ onMounted(async () => {
             <span v-else class="muted">未填</span>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="272" fixed="right">
+        <el-table-column label="操作" width="204" fixed="right">
           <template #default="{ row }">
             <el-button v-if="canWrite()" link type="primary" @click="openDelivery(row)">发货物流</el-button>
-            <el-button link :icon="CopyDocument" @click="copyDelivery(row)">复制</el-button>
+            <el-button
+              link
+              :icon="CopyDocument"
+              class="icon-only"
+              title="复制邮寄信息"
+              aria-label="复制邮寄信息"
+              @click="copyDelivery(row)"
+            />
             <el-button v-if="canWrite()" link @click="open(row)">编辑</el-button>
             <el-button link @click="router.push(`/quotes?project=${row.id}`)">报价</el-button>
           </template>
@@ -414,7 +415,7 @@ onMounted(async () => {
               <el-option v-for="t in types" :key="t.id" :value="t.id" :label="t.name" />
             </el-select>
           </el-form-item>
-          <el-form-item label="接单日期">
+          <el-form-item label="下单日期">
             <el-date-picker v-model="form.orderDate" value-format="YYYY-MM-DD" type="date" />
           </el-form-item>
           <el-form-item v-if="canApprove()" label="销售负责人">
@@ -424,9 +425,6 @@ onMounted(async () => {
           </el-form-item>
           <el-form-item label="合同号">
             <el-input v-model="form.contractNo" maxlength="100" placeholder="通常由报价生成合同时自动写入" />
-          </el-form-item>
-          <el-form-item label="云智冷项目 ID">
-            <el-input v-model="form.externalId" maxlength="150" placeholder="可稍后关联" />
           </el-form-item>
         </div>
         <template v-if="!editing">
@@ -444,9 +442,6 @@ onMounted(async () => {
           <el-input v-model="form.note" type="textarea" :rows="2" maxlength="2000" />
         </el-form-item>
       </el-form>
-      <div v-if="editing" class="inline-note">
-        收货信息、发货与快递单号请在“发货物流”中维护。门店所属合同已签订时，调整合同号须由管理员办理。
-      </div>
       <template #footer>
         <el-button @click="dialog = false">取消</el-button>
         <el-button type="primary" :loading="busy" @click="save">保存项目</el-button>
@@ -454,6 +449,8 @@ onMounted(async () => {
     </el-dialog>
 
     <ProjectDeliveryDialog v-model="deliveryOpen" :project="deliveryProject" @saved="load" />
+    <!-- 只在已成交的门店里对运单：还在报价的门店不会发货 -->
+    <DeliveryBatchDialog v-model="batchOpen" :projects="rows.filter(dealt)" @saved="load" />
 
     <el-dialog v-model="assignDialog" title="分配销售负责人" width="460px">
       <p class="dialog-lead">已选 {{ selected.length }} 个门店。负责人只能查看和办理自己负责的门店、报价与合同。</p>
@@ -476,10 +473,6 @@ onMounted(async () => {
 .scope-switch {
   margin-right: 2px;
 }
-.scope-note {
-  padding: 10px 24px 0;
-  font-size: 12px;
-}
 .project-filters {
   flex-wrap: wrap;
   gap: 8px;
@@ -495,7 +488,7 @@ onMounted(async () => {
   display: inline-block;
   padding: 1px 8px;
   border-radius: 10px;
-  font-size: 12px;
+  font-size: 13px;
 }
 .ship-tag.done {
   color: #24634f;
@@ -506,7 +499,7 @@ onMounted(async () => {
   background: #e7eef7;
 }
 .ship-tag.none {
-  color: #6b7a72;
+  color: #5d6a63;
   background: #eef1ec;
 }
 .cell-secondary {
@@ -516,7 +509,7 @@ onMounted(async () => {
   display: block;
   height: auto;
   padding: 0;
-  font-size: 12px;
+  font-size: 13px;
 }
 .ellipsis-line {
   display: block;
@@ -529,7 +522,7 @@ onMounted(async () => {
 }
 .section {
   margin: 4px 0 8px;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 600;
   color: #253731;
 }

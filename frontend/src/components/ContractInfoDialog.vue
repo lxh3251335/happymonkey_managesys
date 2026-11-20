@@ -213,23 +213,8 @@ async function save() {
             placeholder="留空按门店订单合计"
           />
         </el-form-item>
-        <el-form-item label="履约开始">
-          <el-date-picker v-model="form.startOn" type="date" value-format="YYYY-MM-DD" />
-        </el-form-item>
-        <el-form-item label="履约结束">
-          <el-date-picker v-model="form.endOn" type="date" value-format="YYYY-MM-DD" />
-        </el-form-item>
         <el-form-item label="质保期（月）">
           <el-input-number v-model="form.warrantyMonths" :min="0" :max="240" :controls="false" />
-        </el-form-item>
-        <el-form-item label="质保金（元）">
-          <el-input-number
-            v-model="form.retentionAmount"
-            :min="0"
-            :max="99999999999"
-            :precision="2"
-            :controls="false"
-          />
         </el-form-item>
         <el-form-item label="销售负责人">
           <el-select v-model="form.ownerId" clearable filterable :disabled="!canApprove()" placeholder="未分配">
@@ -241,9 +226,6 @@ async function save() {
             />
           </el-select>
         </el-form-item>
-        <el-form-item label="客户签约人">
-          <el-input v-model="form.customerSigner" maxlength="100" />
-        </el-form-item>
         <el-form-item label="原件归档">
           <div class="status-row">
             <el-switch v-model="form.archived" active-text="已归档" />
@@ -252,9 +234,6 @@ async function save() {
         </el-form-item>
       </div>
       <el-form-item label="合同名称"><el-input v-model="form.title" maxlength="200" /></el-form-item>
-      <el-form-item label="合同内容（标的、供货范围）">
-        <el-input v-model="form.content" type="textarea" :rows="3" maxlength="2000" show-word-limit />
-      </el-form-item>
       <el-form-item label="付款条款">
         <el-input v-model="form.paymentTerms" type="textarea" :rows="2" maxlength="1000" />
       </el-form-item>

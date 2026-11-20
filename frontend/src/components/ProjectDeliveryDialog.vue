@@ -5,13 +5,17 @@ import { CopyDocument } from '@element-plus/icons-vue'
 import { api } from '../api'
 import type { Project } from '../types'
 import { copyText, deliveryText, today } from '../utils'
+import { parseDelivery } from '../parsing/delivery'
 
 /** 发货与物流登记：收货信息、预计发货、发货状态与日期、快递公司与运单号。填了运单号即视为已发货。 */
 const props = defineProps<{ modelValue: boolean; project?: Project | null }>()
 const emit = defineEmits<{ 'update:modelValue': [boolean]; saved: [] }>()
 
 const couriers = ref<string[]>([]),
-  busy = ref(false)
+  busy = ref(false),
+  pasted = ref(''),
+  /** 粘贴识别的结果说明：填入了哪些字段、哪些需要核对。 */
+  pasteNote = ref<{ filled: string[]; guessed?: string } | null>(null)
 const form = ref({
   status: '',
   expectedShipOn: '',
@@ -39,9 +43,24 @@ watch(
       consigneePhone: p.consignee_phone || '',
       shipAddress: p.ship_address || '',
     }
+    pasted.value = ''
+    pasteNote.value = null
     if (!couriers.value.length) couriers.value = await api<string[]>('/projects/couriers').catch(() => [])
   },
 )
+/** 粘贴识别：只覆盖认出来的字段，其余保持原样。 */
+watch(pasted, (text) => {
+  if (!text.trim()) return (pasteNote.value = null)
+  const p = parseDelivery(text, couriers.value)
+  const f = form.value,
+    filled: string[] = []
+  if (p.consignee) ((f.consignee = p.consignee), filled.push('收货人'))
+  if (p.phone) ((f.consigneePhone = p.phone), filled.push('电话'))
+  if (p.address) ((f.shipAddress = p.address), filled.push('地址'))
+  if (p.courier) ((f.courier = p.courier), filled.push('快递公司'))
+  if (p.trackingNo) ((f.trackingNo = p.trackingNo), filled.push('运单号'))
+  pasteNote.value = { filled, guessed: p.courierGuessed ? p.courier : undefined }
+})
 /** 录入运单号时自动标记已发货并带上今天。 */
 watch(
   () => form.value.trackingNo,
@@ -104,6 +123,21 @@ async function save() {
     @update:model-value="emit('update:modelValue', $event)"
   >
     <el-form label-position="top">
+      <el-input
+        v-model="pasted"
+        type="textarea"
+        :rows="2"
+        resize="none"
+        class="paste-box"
+        placeholder="粘贴识别：把客户发来的收货信息或快递单号贴到这里，自动填到下面。例如：张三 13800001111 广东省深圳市宝安区某某路 8 号"
+      />
+      <div v-if="pasteNote" :class="['paste-note', { none: !pasteNote.filled.length }]">
+        <template v-if="pasteNote.filled.length">
+          已填入：{{ pasteNote.filled.join('、') }}，请核对。
+          <span v-if="pasteNote.guessed" class="warn">快递公司“{{ pasteNote.guessed }}”是按单号开头推断的。</span>
+        </template>
+        <template v-else>没有认出收货信息或运单号，请手工填写。</template>
+      </div>
       <div class="section">收货信息</div>
       <div class="form-grid">
         <el-form-item label="收货人"><el-input v-model="form.consignee" maxlength="60" /></el-form-item>
@@ -154,11 +188,26 @@ async function save() {
 <style scoped>
 .section {
   margin: 2px 0 8px;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 600;
   color: #253731;
 }
 .copy {
   float: left;
+}
+.paste-box {
+  margin-bottom: 6px;
+}
+.paste-box :deep(textarea) {
+  background: #f8faf7;
+}
+.paste-note {
+  margin-bottom: 10px;
+  font-size: 13px;
+  color: #24634f;
+}
+.paste-note.none,
+.paste-note .warn {
+  color: #96670f;
 }
 </style>

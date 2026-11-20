@@ -223,6 +223,8 @@ class ExcelImportExportTest extends ApiTestSupport {
                 r.getCell(unitCol).getNumericCellValue()
             );
         assertThat(units).containsExactlyInAnyOrder(1500d, 2950d);
+        // 上面导入用的是旧表头“团队人工”（旧文件仍可导入）；导出用统一后的名称“人工成本”
+        assertThat(col(s, "人工成本")).isPositive();
     }
 
     @Test
