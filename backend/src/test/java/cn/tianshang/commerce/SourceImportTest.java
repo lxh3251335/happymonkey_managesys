@@ -40,7 +40,7 @@ class SourceImportTest extends ApiTestSupport {
         assertThat(quote.path("amount").decimalValue()).isEqualByComparingTo("100.01");
         assertThat(quote.path("cost").isNull()).isTrue();
         assertThat(quote.path("profit").isNull()).isTrue();
-        assertThat(getJson("/api/cash/balances").size()).isZero();
+        assertThat(getJson("/api/cash/ledger").size()).isZero();
         var item = getJson("/api/quotes/" + quote.path("id").asText()).path("items").get(0);
         assertThat(item.path("source").asText()).contains("fixture!2");
     }

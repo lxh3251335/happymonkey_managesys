@@ -13,6 +13,7 @@ C:\Users\liuxi\Documents\ChatGPT\快乐猴_小象项目登记系统开发
 | backend/（除 target） | Java 源码、配置、SQL 迁移、测试；其中 data 为业务库 | 复制 |
 | frontend/（除 node_modules、dist） | Vue / TypeScript 源码和依赖锁文件 | 复制 |
 | backend/data/commerce.mv.db | 当前本机业务库：项目、报价、账号、回款等 | 停止 Windows 服务后复制，保留同一路径 |
+| backend/data/attachments/ | 合同附件文件（数据库只存元数据） | 与业务库一起复制，保留同一路径 |
 | docs/source-seed.json | 已复核历史导入包 | 单独保留 |
 | docs/source-workbooks.json、docs/import-review.json | 原表提取结果、隔离及待核对资料 | 单独保留 |
 | scripts/、tools/、deploy/、docs/ | 启动脚本、辅助工具、部署、架构文档 | 复制 |
@@ -92,3 +93,26 @@ Docker 部署使用适合芯片的 [Docker Desktop for Mac](https://docs.docker.
 ## 验证范围
 
 当前在 Windows 中检查了 Bash 语法和 Compose 配置，并根据官方清单调整了 Java 镜像架构。本环境无法实际运行 macOS / Apple Silicon，也没有运行中的 Docker daemon，尚未完成 Mac 实机及 ARM64 容器构建验证。迁移前无需停止当前服务查看文档；只有实际复制数据库时才需停机。
+
+## 通过 Tailscale 供其他电脑访问
+
+服务继续只监听 Mac mini 的 `127.0.0.1`，由 Tailscale Serve 转发给同一 tailnet 内的设备。局域网和公网不开放端口，Tailscale 自动提供 HTTPS 证书。
+
+1. Mac mini 安装并登录 Tailscale；在 Tailscale 管理后台的 DNS 页面启用 MagicDNS 和 HTTPS Certificates。
+2. 按上文启动服务，确认 Mac 本机 `http://127.0.0.1:5173` 可以打开。
+3. 在 Mac Terminal 运行（只需一次，重启后由 Tailscale 自动恢复）：
+
+```bash
+tailscale serve --bg 5173
+tailscale serve status
+```
+
+4. 其他已登录同一 tailnet 的电脑访问 `tailscale serve status` 显示的地址，形如 `https://<Mac机器名>.<tailnet名>.ts.net`。
+
+前端配置已放行 `*.ts.net` 主机名；其他主机名仍被拒绝。如需额外主机名，启动前设置 `EXTRA_ALLOWED_HOSTS=host1,host2`。
+
+注意：
+
+- 开放给其他电脑前，务必修改管理员密码，不要继续使用开发初始密码。每位使用者单独创建账号。
+- 不要使用 `tailscale funnel`，它会把服务公开到互联网。
+- 停止转发：`tailscale serve --https=443 off`。

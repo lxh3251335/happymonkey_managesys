@@ -1,9 +1,9 @@
 <script setup lang="ts">
+/** 供应商报价与比价（成本数据，仅系统管理员、管理层、财务可见）。报价作为维护供应商成本模板的参考。 */
 import { ref, onMounted, computed } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Plus } from '@element-plus/icons-vue'
-import PageHeader from '../components/PageHeader.vue'
-import { api, post, canWrite } from '../api'
+import { api, post, canSeeCost } from '../api'
 import type { Offer, Partner, Product } from '../types'
 import { money, unitMoney, today, afterDays, day, percent, taxName } from '../utils'
 const offers = ref<Offer[]>([]),
@@ -79,16 +79,12 @@ onMounted(load)
 </script>
 <template>
   <div>
-    <PageHeader
-      eyebrow="SUPPLIER INTELLIGENCE"
-      title="供应商比价"
-      description="在相同产品与配置下，比较含税价格、运费、交期和起订量。"
-    >
-      <el-button v-if="canWrite()" type="primary" @click="open">
+    <div class="offer-toolbar">
+      <el-button v-if="canSeeCost()" type="primary" size="small" @click="open">
         <el-icon><Plus /></el-icon>
         登记供应商报价
       </el-button>
-    </PageHeader>
+    </div>
     <el-alert v-if="error" :title="error" type="error" :closable="false" />
     <section class="panel comparison-controls">
       <div>
@@ -101,7 +97,7 @@ onMounted(load)
             v-for="p in products"
             :key="p.id"
             :value="p.id"
-            :label="`${p.brand} / ${p.name} / ${p.specification} / ${p.model}`"
+            :label="`${p.scenario} / ${p.name} / ${p.specification} / ${p.model}`"
           />
         </el-select>
         <el-input-number v-model="quantity" :min="0.001" :max="999999" :precision="3" @change="compare" />
@@ -193,7 +189,7 @@ onMounted(load)
                 v-for="p in products"
                 :key="p.id"
                 :value="p.id"
-                :label="`${p.brand} / ${p.name} / ${p.specification} / ${p.model}`"
+                :label="`${p.scenario} / ${p.name} / ${p.specification} / ${p.model}`"
               />
             </el-select>
           </el-form-item>
@@ -236,3 +232,13 @@ onMounted(load)
     </el-dialog>
   </div>
 </template>
+<style scoped>
+.offer-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  margin-bottom: 12px;
+  font-size: 14px;
+}
+</style>

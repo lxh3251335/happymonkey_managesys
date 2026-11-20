@@ -1,0 +1,228 @@
+{
+  "_说明": "物流粘贴识别的共用用例：浏览器里的 frontend/src/parsing/delivery.ts 和服务端的 DeliveryParser.java 都必须通过。改规则时先改这里。",
+  "couriers": [
+    "顺丰速运",
+    "京东物流",
+    "德邦快递",
+    "中通快递",
+    "圆通速递",
+    "韵达快递",
+    "申通快递",
+    "EMS"
+  ],
+  "parse": [
+    {
+      "name": "一行里的姓名、手机号、地址",
+      "input": "张三 13800001111 广东省深圳市宝安区新安街道某某路8号",
+      "expect": {
+        "phone": "13800001111",
+        "address": "广东省深圳市宝安区新安街道某某路8号",
+        "consignee": "张三"
+      }
+    },
+    {
+      "name": "带标签、分行、全角符号",
+      "input": "收货人：李店长\n电话：138-0000-2222\n地址：浙江省杭州市临平区 上环桥路 12 号 1 楼",
+      "expect": {
+        "consignee": "李店长",
+        "address": "浙江省杭州市临平区上环桥路12号1楼",
+        "phone": "13800002222"
+      }
+    },
+    {
+      "name": "地址被空格分成几段、顺序打乱、带称呼",
+      "input": "四川省 成都市 武侯区 测试路1号，王经理，０２８-８７６５４３２１",
+      "expect": {
+        "phone": "028-87654321",
+        "address": "四川省成都市武侯区测试路1号",
+        "consignee": "王经理"
+      }
+    },
+    {
+      "name": "写了快递公司的用写的",
+      "input": "顺丰 SF1234567890123",
+      "expect": {
+        "trackingNo": "SF1234567890123",
+        "courier": "顺丰速运"
+      }
+    },
+    {
+      "name": "没写快递公司的按单号开头推断",
+      "input": "jdvb12345678901",
+      "expect": {
+        "trackingNo": "JDVB12345678901",
+        "courier": "京东物流",
+        "courierGuessed": true
+      }
+    },
+    {
+      "name": "带“运单号”标签",
+      "input": "德邦快递 运单号：DPK202611150001",
+      "expect": {
+        "trackingNo": "DPK202611150001",
+        "courier": "德邦快递"
+      }
+    },
+    {
+      "name": "认不出快递公司的纯数字单号只填单号",
+      "input": "单号 998877665544332",
+      "expect": {
+        "trackingNo": "998877665544332"
+      }
+    },
+    {
+      "name": "手机号不当运单号",
+      "input": "13800001111",
+      "expect": {
+        "phone": "13800001111"
+      }
+    },
+    {
+      "name": "收货信息和运单混在一起",
+      "input": "赵店长 13800001111 成都市武侯区测试路 1 号 顺丰速运 SF9988776655443",
+      "expect": {
+        "phone": "13800001111",
+        "trackingNo": "SF9988776655443",
+        "courier": "顺丰速运",
+        "address": "成都市武侯区测试路1号",
+        "consignee": "赵店长"
+      }
+    },
+    {
+      "name": "地址行里夹着电话",
+      "input": "收件人 孙主管\n地址：江苏省无锡市滨湖区测试大厦3栋2单元 13900002222",
+      "expect": {
+        "consignee": "孙主管",
+        "address": "江苏省无锡市滨湖区测试大厦3栋2单元",
+        "phone": "13900002222"
+      }
+    },
+    {
+      "name": "只有空白",
+      "input": "  \n ",
+      "expect": {}
+    },
+    {
+      "name": "无关的话不当成收货人",
+      "input": "明天发",
+      "expect": {}
+    }
+  ],
+  "courierOfTracking": [
+    {
+      "input": "78123456789012",
+      "expect": "中通快递"
+    },
+    {
+      "input": "123456789012",
+      "expect": null
+    },
+    {
+      "input": "SF1234567890123",
+      "expect": "顺丰速运"
+    },
+    {
+      "input": "DPK202611150001",
+      "expect": "德邦快递"
+    },
+    {
+      "input": "4312345678901",
+      "expect": "韵达快递"
+    }
+  ],
+  "lines": [
+    {
+      "name": "批量运单：逐行拆出门店线索、快递公司和单号",
+      "input": "小象成都盛泰站 顺丰 SF1111111111111\n\n成都博林站\tSF2222222222222\n杭州临平上环桥店：德邦 DPK3333333333",
+      "expect": [
+        {
+          "hint": "小象成都盛泰站",
+          "courier": "顺丰速运",
+          "trackingNo": "SF1111111111111",
+          "courierGuessed": false
+        },
+        {
+          "hint": "成都博林站",
+          "courier": "顺丰速运",
+          "trackingNo": "SF2222222222222",
+          "courierGuessed": true
+        },
+        {
+          "hint": "杭州临平上环桥店",
+          "courier": "德邦快递",
+          "trackingNo": "DPK3333333333",
+          "courierGuessed": false
+        }
+      ]
+    }
+  ],
+  "stores": [
+    {
+      "name": "LK-260127 小象成都盛泰站",
+      "code": "LS-AAA11111",
+      "contract_no": "TJ2026-SHHLZY-101"
+    },
+    {
+      "name": "LK-260136 小象成都博林站",
+      "code": "LS-BBB22222",
+      "contract_no": "TJ2026-SHHLZY-107"
+    },
+    {
+      "name": "快乐猴 杭州临平上环桥店（部分备货）",
+      "code": "LS-CCC33333",
+      "contract_no": "TJ2026-BJXYTL-04"
+    },
+    {
+      "name": "快乐猴杭州临平店",
+      "code": "LS-DDD44444",
+      "contract_no": null
+    }
+  ],
+  "match": [
+    {
+      "hint": "小象成都盛泰站",
+      "expect": [
+        "LS-AAA11111"
+      ]
+    },
+    {
+      "hint": "成都博林站",
+      "expect": [
+        "LS-BBB22222"
+      ]
+    },
+    {
+      "hint": "TJ2026-BJXYTL-04",
+      "expect": [
+        "LS-CCC33333"
+      ]
+    },
+    {
+      "hint": "ls-ddd44444",
+      "expect": [
+        "LS-DDD44444"
+      ]
+    },
+    {
+      "hint": "杭州临平上环桥店",
+      "expect": [
+        "LS-CCC33333"
+      ]
+    },
+    {
+      "hint": "上海某某店",
+      "expect": []
+    },
+    {
+      "hint": "杭州临平",
+      "expect": [
+        "LS-CCC33333",
+        "LS-DDD44444"
+      ]
+    },
+    {
+      "hint": "",
+      "expect": []
+    }
+  ]
+}

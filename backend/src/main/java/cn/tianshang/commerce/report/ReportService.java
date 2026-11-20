@@ -1,26 +1,297 @@
 package cn.tianshang.commerce.report;
 
 import cn.tianshang.commerce.common.Database;
-import cn.tianshang.commerce.finance.CashService;
+import cn.tianshang.commerce.contract.ContractLedger;
+import cn.tianshang.commerce.contract.ContractLedger.Fact;
+import cn.tianshang.commerce.contract.Contracts;
 import cn.tianshang.commerce.quote.QuoteService;
 import java.math.*;
+import java.time.LocalDate;
+import java.time.YearMonth;
+import java.time.temporal.ChronoUnit;
 import java.util.*;
+import java.util.function.Function;
 import org.springframework.stereotype.Service;
 
+/**
+ * 经营总览。合同额按项目下单日期归月，回款额按回款日期归月（回款减退款）。
+ * 毛利只统计报价和成本都完整的明细行，并给出覆盖率。
+ *
+ * <p>可按品牌（业务）筛选：筛选后整页指标、趋势、客户、产品线均只含该品牌；品牌 × 产品线对比始终基于全部业务。
+ */
 @Service
 public class ReportService {
 
+    private static final List<String> AGING = List.of(
+        "未到期",
+        "逾期 1-30 天",
+        "逾期 31-60 天",
+        "逾期 61-90 天",
+        "逾期 90 天以上"
+    );
+
     private final Database db;
     private final QuoteService quotes;
-    private final CashService cash;
+    private final ContractLedger ledger;
+    private final cn.tianshang.commerce.business.BusinessService business;
+    private final cn.tianshang.commerce.common.Ownership ownership;
+    private final cn.tianshang.commerce.contract.ContractService contracts;
+    static final String UNOWNED = "未分配负责人";
 
-    public ReportService(Database db, QuoteService quotes, CashService cash) {
+    public ReportService(
+        Database db,
+        QuoteService quotes,
+        ContractLedger ledger,
+        cn.tianshang.commerce.business.BusinessService business,
+        cn.tianshang.commerce.common.Ownership ownership,
+        cn.tianshang.commerce.contract.ContractService contracts
+    ) {
         this.db = db;
         this.quotes = quotes;
-        this.cash = cash;
+        this.ledger = ledger;
+        this.business = business;
+        this.ownership = ownership;
+        this.contracts = contracts;
+    }
+
+    /** 一个分组的累计值。 */
+    static final class Acc {
+
+        final String name;
+        BigDecimal contract = BigDecimal.ZERO,
+            received = BigDecimal.ZERO,
+            outstanding = BigDecimal.ZERO,
+            profit = BigDecimal.ZERO,
+            base = BigDecimal.ZERO,
+            quantity = BigDecimal.ZERO;
+        final Set<String> projects = new HashSet<>(),
+            contracts = new HashSet<>();
+
+        Acc(String name) {
+            this.name = name;
+        }
+
+        Map<String, Object> row(BigDecimal grand) {
+            var x = new LinkedHashMap<String, Object>();
+            x.put("name", name);
+            x.put("contract_amount", contract);
+            x.put("received", received);
+            x.put("outstanding", outstanding);
+            x.put("collection_rate", ratio(received, contract));
+            x.put("share", ratio(contract, grand));
+            x.put("profit", profit);
+            x.put("gross_margin", ratio(profit, base));
+            x.put("margin_coverage", ratio(base, contract));
+            x.put("projects", projects.size());
+            x.put("contracts", contracts.size());
+            x.put(
+                "avg_per_project",
+                projects.isEmpty()
+                    ? null
+                    : contract.divide(BigDecimal.valueOf(projects.size()), 2, RoundingMode.HALF_UP)
+            );
+            x.put("quantity", quantity);
+            return x;
+        }
     }
 
     public Map<String, Object> dashboard() {
+        return dashboard(null, null);
+    }
+
+    public Map<String, Object> dashboard(String brandFilter) {
+        return dashboard(brandFilter, null);
+    }
+
+    /** brand：按业务线筛选；group：按客户集团筛选（含其下全部业务线）。两者都空为全部业务。 */
+    public Map<String, Object> dashboard(String brandFilter, String groupFilter) {
+        String brand = Contracts.blankToNull(business.canonical(brandFilter));
+        String group = brand == null ? Contracts.blankToNull(groupFilter) : null;
+        var groupOf = business.groupOfLine();
+        java.util.function.Predicate<String> inScope = b ->
+            brand != null ? brand.equals(b) : group == null || group.equals(groupOf.get(b));
+        // 经营分析按合同口径：签约金额、实际成本、签订月份，已终止合同不计入
+        var all = ledger.analysis();
+        var facts = all
+            .stream()
+            .filter(f -> inScope.test(f.brand()))
+            .toList();
+        var today = LocalDate.now();
+        String cashSql = """
+            SELECT e.quotation_id,e.kind,e.amount,e.paid_on,p.brand,p.city,p.owner_id,c.name AS customer_name,
+              u.display_name AS owner_name
+            FROM cash_entry e JOIN quotation q ON q.id=e.quotation_id JOIN project p ON p.id=q.project_id
+            JOIN partner c ON c.id=p.customer_id LEFT JOIN app_user u ON u.id=p.owner_id
+            """;
+        var cash = db.jdbc
+            .queryForList(cashSql)
+            .stream()
+            .filter(e -> inScope.test(Objects.toString(e.get("brand"), "")))
+            .filter(e -> ownership.visible(e.get("owner_id")))
+            .toList();
+        var monthLines = new HashMap<String, Map<String, Acc>>();
+
+        var months = new TreeMap<String, Acc>();
+        var customers = new HashMap<String, Acc>();
+        var brands = new HashMap<String, Acc>();
+        var cities = new HashMap<String, Acc>();
+        var owners = new HashMap<String, Acc>();
+        var lines = new HashMap<String, Acc>();
+        var total = new Acc("合计");
+        BigDecimal backlog = BigDecimal.ZERO;
+        var backlogStatus = new LinkedHashMap<String, Acc>();
+        var aging = new LinkedHashMap<String, Acc>();
+        AGING.forEach(b -> aging.put(b, new Acc(b)));
+        int incompleteCost = 0;
+        BigDecimal pending = BigDecimal.ZERO;
+
+        for (var f : facts) {
+            String contract = f.customerId() + "::" + f.contractKey();
+            for (var acc : List.of(
+                total,
+                at(months, f.month() == null ? "未知" : f.month()),
+                at(customers, f.customerName()),
+                at(brands, f.brand()),
+                at(cities, f.city() == null ? "未填城市" : f.city()),
+                at(owners, f.ownerName() == null ? UNOWNED : f.ownerName())
+            )) {
+                acc.contract = acc.contract.add(f.amount());
+                acc.outstanding = acc.outstanding.add(f.outstanding());
+                acc.projects.add(f.projectId());
+                acc.contracts.add(contract);
+                addMargin(acc, f.items());
+            }
+            if (!f.confirmed()) pending = pending.add(f.amount());
+            if (
+                f
+                    .items()
+                    .stream()
+                    .anyMatch(i -> i.amount() != null && i.cost() == null)
+            ) incompleteCost++;
+            addLines(lines, f, contract);
+            addLines(
+                monthLines.computeIfAbsent(f.month() == null ? "未知" : f.month(), k -> new HashMap<>()),
+                f,
+                contract
+            );
+            if (!f.shipped()) {
+                backlog = backlog.add(f.amount());
+                var acc = at(backlogStatus, f.shippingStatus() == null ? "未登记发货状态" : f.shippingStatus());
+                acc.contract = acc.contract.add(f.amount());
+                acc.projects.add(f.projectId());
+                acc.contracts.add(contract);
+            }
+            if (f.confirmed() && f.outstanding().signum() > 0) {
+                long days = f.dueDate() == null ? 0 : ChronoUnit.DAYS.between(f.dueDate(), today);
+                String bucket =
+                    days <= 0
+                        ? AGING.get(0)
+                        : days <= 30
+                            ? AGING.get(1)
+                            : days <= 60
+                                ? AGING.get(2)
+                                : days <= 90
+                                    ? AGING.get(3)
+                                    : AGING.get(4);
+                var acc = aging.get(bucket);
+                acc.contract = acc.contract.add(f.outstanding());
+                acc.projects.add(f.projectId());
+                acc.contracts.add(contract);
+            }
+        }
+        for (var e : cash) {
+            var amount = new BigDecimal(e.get("amount").toString());
+            if ("REFUND".equals(e.get("kind"))) amount = amount.negate();
+            String month = e.get("paid_on").toString().substring(0, 7);
+            for (var acc : List.of(
+                total,
+                at(months, month),
+                at(customers, e.get("customer_name").toString()),
+                at(brands, e.get("brand").toString()),
+                at(cities, e.get("city") == null ? "未填城市" : e.get("city").toString()),
+                at(owners, e.get("owner_name") == null ? UNOWNED : e.get("owner_name").toString())
+            ))
+                acc.received = acc.received.add(amount);
+        }
+        fillMonthGaps(months);
+
+        var out = new LinkedHashMap<String, Object>();
+        var totals = total.row(total.contract);
+        totals.put("confirmed_amount", total.contract.subtract(pending));
+        totals.put("pending_amount", pending);
+        totals.put("receivable", total.outstanding);
+        var overdue = aging.values().stream().skip(1).toList();
+        totals.put(
+            "overdue_amount",
+            overdue
+                .stream()
+                .map(a -> a.contract)
+                .reduce(BigDecimal.ZERO, BigDecimal::add)
+        );
+        totals.put(
+            "overdue_projects",
+            overdue
+                .stream()
+                .mapToInt(a -> a.projects.size())
+                .sum()
+        );
+        totals.put("backlog_amount", backlog);
+        totals.put(
+            "backlog_projects",
+            backlogStatus
+                .values()
+                .stream()
+                .mapToInt(a -> a.projects.size())
+                .sum()
+        );
+        totals.put("incomplete_cost_projects", incompleteCost);
+        String thisMonth = YearMonth.from(today).toString();
+        totals.put("current_month", thisMonth);
+        var current = months.get(thisMonth);
+        totals.put("current_month_contract", current == null ? BigDecimal.ZERO : current.contract);
+        totals.put("current_month_received", current == null ? BigDecimal.ZERO : current.received);
+        out.put("totals", totals);
+
+        out.put(
+            "monthly",
+            months
+                .values()
+                .stream()
+                .map(a -> {
+                    var row = a.row(total.contract);
+                    var ml = monthLines.getOrDefault(a.name, Map.of());
+                    var byLine = new LinkedHashMap<String, Object>();
+                    for (String line : Contracts.LINES)
+                        if (ml.containsKey(line)) byLine.put(line, ml.get(line).row(a.contract));
+                    row.put("lines", byLine);
+                    return row;
+                })
+                .toList()
+        );
+        var byCustomer = ranked(customers, total.contract);
+        out.put("by_customer", byCustomer);
+        out.put("by_brand", ranked(brands, total.contract));
+        out.put("by_city", ranked(cities, total.contract));
+        out.put("by_owner", ranked(owners, total.contract));
+        out.put("execution", execution(inScope));
+        out.put("by_line", ranked(lines, total.contract));
+        out.put("line_summary", lineSummary(lines, total.contract));
+        out.put("brand", brand);
+        out.put("group", group);
+        var brandLines = brandLines(all);
+        for (var row : brandLines) row.put("group", groupOf.getOrDefault(row.get("brand").toString(), "未归类"));
+        out.put("brand_lines", brandLines);
+        out.put(
+            "aging",
+            aging
+                .values()
+                .stream()
+                .map(a -> a.row(total.outstanding))
+                .toList()
+        );
+        out.put("backlog", ranked(backlogStatus, backlog));
+        out.put("concentration", concentration(byCustomer));
+
         var latest = new LinkedHashMap<String, Map<String, Object>>();
         for (var q : quotes.list()) {
             String key = q.get("project_id").toString();
@@ -29,69 +300,206 @@ public class ReportService {
                 ((Number) q.get("version")).intValue() > ((Number) latest.get(key).get("version")).intValue()
             ) latest.put(key, q);
         }
-        var rows = new ArrayList<>(latest.values());
-        var balances = cash.balances();
-        var out = new LinkedHashMap<String, Object>();
-        out.put("projects", db.jdbc.queryForObject("SELECT COUNT(*) FROM project", Integer.class));
+        out.put(
+            "projects",
+            ownership.restricted()
+                ? db.jdbc.queryForObject(
+                      "SELECT COUNT(*) FROM project WHERE owner_id=?",
+                      Integer.class,
+                      Objects.toString(ownership.userId(), "-")
+                  )
+                : db.jdbc.queryForObject("SELECT COUNT(*) FROM project", Integer.class)
+        );
         out.put(
             "customers",
             db.jdbc.queryForObject("SELECT COUNT(*) FROM partner WHERE kind='CUSTOMER'", Integer.class)
         );
-        out.put("quotes", rows.size());
-        out.put("amount", sum(rows, "known_amount"));
-        var complete = rows
-            .stream()
-            .filter(q -> Boolean.TRUE.equals(q.get("complete")))
-            .toList();
-        out.put("incomplete", rows.size() - complete.size());
-        out.put("complete_quotes", complete.size());
-        out.put("profit", sum(complete, "profit"));
-        out.put("cost", sum(complete, "cost"));
-        var denominator = sum(complete, "amount");
-        out.put(
-            "gross_margin",
-            denominator.signum() > 0 ? sum(complete, "profit").divide(denominator, 6, RoundingMode.HALF_UP) : null
-        );
-        out.put("receivable", sum(balances, "outstanding"));
-        out.put("received", sum(balances, "received"));
-        out.put("accepted", balances.size());
-        out.put(
-            "overdue",
-            balances
-                .stream()
-                .filter(q -> Boolean.TRUE.equals(q.get("overdue")))
-                .count()
-        );
-        out.put("recent", rows.stream().limit(6).toList());
-        out.put("customers_breakdown", breakdown(rows, "customer_name"));
-        out.put("brands_breakdown", breakdown(rows, "brand"));
+        out.put("recent", latest.values().stream().limit(6).toList());
         out.put("imports", db.jdbc.queryForList("SELECT * FROM import_batch ORDER BY created_at DESC"));
         return out;
     }
 
-    private BigDecimal sum(List<Map<String, Object>> rows, String key) {
-        return rows
-            .stream()
-            .map(q -> q.get(key))
-            .filter(Objects::nonNull)
-            .map(v -> new BigDecimal(v.toString()))
-            .reduce(BigDecimal.ZERO, BigDecimal::add);
+    /** 合同执行概况：开票、开票未回款、实际成本覆盖、合同状态（当前筛选、当前用户可见范围）。 */
+    private Map<String, Object> execution(java.util.function.Predicate<String> inScope) {
+        BigDecimal invoiced = BigDecimal.ZERO,
+            uninvoiced = BigDecimal.ZERO,
+            invoicedUnreceived = BigDecimal.ZERO,
+            actualCost = BigDecimal.ZERO,
+            terminatedAmount = BigDecimal.ZERO;
+        int count = 0,
+            drafts = 0,
+            signed = 0,
+            completed = 0,
+            terminated = 0,
+            withActual = 0,
+            unarchived = 0,
+            pendingChanges = 0;
+        for (var c : contracts.contracts()) {
+            @SuppressWarnings("unchecked")
+            var brands = (List<String>) c.get("brands");
+            boolean in = brands.isEmpty() ? inScope.test("未指定") : brands.stream().anyMatch(inScope);
+            if (!in) continue;
+            String status = c.get("status").toString();
+            BigDecimal amount = (BigDecimal) c.get("amount");
+            if (status.equals("TERMINATED")) {
+                terminated++;
+                terminatedAmount = terminatedAmount.add(amount);
+                continue;
+            }
+            count++;
+            switch (status) {
+                case "DRAFT" -> drafts++;
+                case "COMPLETED" -> completed++;
+                default -> signed++;
+            }
+            invoiced = invoiced.add((BigDecimal) c.get("invoiced"));
+            uninvoiced = uninvoiced.add(((BigDecimal) c.get("uninvoiced")).max(BigDecimal.ZERO));
+            invoicedUnreceived = invoicedUnreceived.add((BigDecimal) c.get("invoiced_unreceived"));
+            BigDecimal ac = (BigDecimal) c.get("actual_cost");
+            if (ac.signum() > 0) {
+                withActual++;
+                actualCost = actualCost.add(ac);
+            }
+            if (!status.equals("DRAFT") && !Boolean.TRUE.equals(c.get("archived"))) unarchived++;
+            pendingChanges += ((Number) c.get("pending_changes")).intValue();
+        }
+        var x = new LinkedHashMap<String, Object>();
+        x.put("contracts", count);
+        x.put("draft", drafts);
+        x.put("signed", signed);
+        x.put("completed", completed);
+        x.put("terminated", terminated);
+        x.put("terminated_amount", terminatedAmount);
+        x.put("invoiced", invoiced);
+        x.put("uninvoiced", uninvoiced);
+        x.put("invoiced_unreceived", invoicedUnreceived);
+        x.put("actual_cost", actualCost);
+        x.put("actual_cost_contracts", withActual);
+        x.put("unarchived", unarchived);
+        x.put("pending_changes", pendingChanges);
+        return x;
     }
 
-    private List<Map<String, Object>> breakdown(List<Map<String, Object>> rows, String key) {
-        var groups = new TreeMap<String, List<Map<String, Object>>>();
-        rows.forEach(q -> groups.computeIfAbsent(q.get(key).toString(), k -> new ArrayList<>()).add(q));
-        return groups
+    /** 产品线：合同额与毛利按明细行归集，回款额与应收按明细金额比例分摊。 */
+    private static void addLines(Map<String, Acc> lines, Fact f, String contract) {
+        for (var i : f.items()) {
+            if (i.amount() == null) continue;
+            var acc = at(lines, i.line());
+            acc.contract = acc.contract.add(i.amount());
+            acc.projects.add(f.projectId());
+            acc.contracts.add(contract);
+            acc.quantity = acc.quantity.add(i.quantity());
+            addMargin(acc, List.of(i));
+            if (f.amount().signum() > 0) {
+                acc.received = acc.received.add(
+                    f.received().multiply(i.amount()).divide(f.amount(), 2, RoundingMode.HALF_UP)
+                );
+                acc.outstanding = acc.outstanding.add(
+                    f.outstanding().multiply(i.amount()).divide(f.amount(), 2, RoundingMode.HALF_UP)
+                );
+            }
+        }
+    }
+
+    /** 主要产品线固定输出（即使为零），其余产品线有数据才输出；按固定顺序。 */
+    private static List<Map<String, Object>> lineSummary(Map<String, Acc> lines, BigDecimal grand) {
+        var out = new ArrayList<Map<String, Object>>();
+        for (String line : Contracts.LINES) {
+            boolean main = line.equals(Contracts.CABINET) || line.equals(Contracts.IOT);
+            if (main || lines.containsKey(line)) out.add(lines.getOrDefault(line, new Acc(line)).row(grand));
+        }
+        return out;
+    }
+
+    /** 品牌 × 产品线对比：始终基于全部业务，用于比较各品牌两条产品线的规模与毛利。 */
+    private static List<Map<String, Object>> brandLines(List<Fact> facts) {
+        var byBrand = new LinkedHashMap<String, Map<String, Acc>>();
+        var totals = new HashMap<String, Acc>();
+        for (var f : facts) {
+            String contract = f.customerId() + "::" + f.contractKey();
+            addLines(byBrand.computeIfAbsent(f.brand(), k -> new HashMap<>()), f, contract);
+            var t = at(totals, f.brand());
+            t.contract = t.contract.add(f.amount());
+            addMargin(t, f.items());
+        }
+        return byBrand
             .entrySet()
             .stream()
+            .sorted(
+                Comparator.comparing((Map.Entry<String, Map<String, Acc>> e) -> totals.get(e.getKey()).contract)
+                    .reversed()
+                    .thenComparing(Map.Entry::getKey)
+            )
             .map(e -> {
-                Map<String, Object> x = new HashMap<>();
-                x.put("name", e.getKey());
-                x.put("amount", sum(e.getValue(), "known_amount"));
-                x.put("count", e.getValue().size());
-                return x;
+                var t = totals.get(e.getKey());
+                Map<String, Object> row = new LinkedHashMap<>();
+                row.put("brand", e.getKey());
+                row.put("contract_amount", t.contract);
+                row.put("gross_margin", ratio(t.profit, t.base));
+                row.put("lines", lineSummary(e.getValue(), t.contract));
+                return row;
             })
-            .sorted((a, b) -> ((BigDecimal) b.get("amount")).compareTo((BigDecimal) a.get("amount")))
             .toList();
+    }
+
+    private static Acc at(Map<String, Acc> map, String key) {
+        return map.computeIfAbsent(key, Acc::new);
+    }
+
+    private static void addMargin(Acc acc, List<ContractLedger.Item> items) {
+        for (var i : items) {
+            if (i.amount() == null || i.cost() == null) continue;
+            acc.base = acc.base.add(i.amount());
+            acc.profit = acc.profit.add(i.amount().subtract(i.cost()));
+        }
+    }
+
+    /** 补齐首尾月份之间没有业务的月份，使趋势连续。 */
+    private static void fillMonthGaps(TreeMap<String, Acc> months) {
+        var real = months
+            .keySet()
+            .stream()
+            .filter(k -> k.matches("\\d{4}-\\d{2}"))
+            .toList();
+        if (real.isEmpty()) return;
+        var m = YearMonth.parse(real.get(0));
+        var end = YearMonth.parse(real.get(real.size() - 1));
+        while (!m.isAfter(end)) {
+            months.computeIfAbsent(m.toString(), Acc::new);
+            m = m.plusMonths(1);
+        }
+    }
+
+    private static List<Map<String, Object>> ranked(Map<String, Acc> map, BigDecimal grand) {
+        return map
+            .values()
+            .stream()
+            .sorted(
+                Comparator.comparing((Acc a) -> a.contract)
+                    .reversed()
+                    .thenComparing(a -> a.name)
+            )
+            .map(a -> a.row(grand))
+            .toList();
+    }
+
+    private static Map<String, Object> concentration(List<Map<String, Object>> customers) {
+        Function<Integer, BigDecimal> top = n ->
+            customers
+                .stream()
+                .limit(n)
+                .map(c -> (BigDecimal) c.get("share"))
+                .filter(Objects::nonNull)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        var out = new LinkedHashMap<String, Object>();
+        out.put("top_customer", customers.isEmpty() ? null : customers.get(0).get("name"));
+        out.put("top1_share", customers.isEmpty() ? null : top.apply(1));
+        out.put("top3_share", customers.isEmpty() ? null : top.apply(3));
+        out.put("customer_count", customers.size());
+        return out;
+    }
+
+    static BigDecimal ratio(BigDecimal part, BigDecimal whole) {
+        return whole == null || whole.signum() == 0 ? null : part.divide(whole, 6, RoundingMode.HALF_UP);
     }
 }

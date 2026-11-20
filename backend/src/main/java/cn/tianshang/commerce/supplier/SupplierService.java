@@ -19,10 +19,12 @@ public class SupplierService {
         this.db = db;
     }
 
+    /** 供应商报价属于成本数据：仅系统管理员、管理层、财务可见与维护。 */
+    @PreAuthorize("hasAnyRole('ADMIN','MANAGER','FINANCE')")
     public List<Map<String, Object>> offers() {
         return db.jdbc.queryForList(
             """
-            SELECT o.*,s.name AS supplier_name,p.name AS product_name,p.specification,p.brand,p.model
+            SELECT o.*,s.name AS supplier_name,p.name AS product_name,p.specification,p.scenario,p.model
             FROM supplier_offer o JOIN partner s ON s.id=o.supplier_id JOIN product p ON p.id=o.product_id
             ORDER BY o.quoted_on DESC,o.id
             """
@@ -43,7 +45,7 @@ public class SupplierService {
         @Size(max = 1000) String note
     ) {}
 
-    @PreAuthorize("hasAnyRole('ADMIN','SALES')")
+    @PreAuthorize("hasAnyRole('ADMIN','MANAGER','SALES')")
     @Transactional
     public Map<String, String> create(@Valid OfferInput o) {
         db.one("SELECT id FROM partner WHERE id=? AND kind='SUPPLIER'", o.supplierId());
@@ -73,6 +75,7 @@ public class SupplierService {
         return Map.of("id", id);
     }
 
+    @PreAuthorize("hasAnyRole('ADMIN','MANAGER','FINANCE')")
     public List<Map<String, Object>> compare(String productId, BigDecimal quantity) {
         if (quantity.signum() <= 0 || quantity.compareTo(new BigDecimal("999999")) > 0) throw new ApiException(
             "请输入有效比价数量"

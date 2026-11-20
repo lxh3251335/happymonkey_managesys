@@ -5,7 +5,7 @@
 }
 .el-form-item__label {
   color: #65745c;
-  font-size: 12px;
+  font-size: 13px;
 }
 .quote-base {
   grid-template-columns: 2fr 1fr 1fr 1fr;
@@ -14,15 +14,15 @@
   padding: 13px 16px;
   background: #f4f7ef;
   border: 1px solid #e5ebdc;
-  color: #819071;
+  color: #606b54;
   border-radius: 5px;
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.8;
   margin-bottom: 16px;
 }
 .inline-note.warning {
   background: #faf5e8;
-  color: #a38a51;
+  color: #816d40;
   border-color: #ede3c8;
 }
 .editor-table .cell {
@@ -42,7 +42,8 @@
 }
 .quote-summary {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
   background: #f5f8f1;
   border: 1px solid #e3eadb;
   border-radius: 7px;
@@ -50,8 +51,8 @@
   padding: 23px 20px;
 }
 .quote-summary > div {
-  font-size: 11px;
-  color: #8d9c7e;
+  font-size: 12px;
+  color: #657358;
   padding: 0 12px;
   border-right: 1px solid #e1e8d8;
 }
@@ -79,8 +80,8 @@
   margin-bottom: 10px;
 }
 .detail-banner p {
-  font-size: 12px;
-  color: #8f9e81;
+  font-size: 13px;
+  color: #657358;
 }
 .detail-meta {
   display: flex;
@@ -88,13 +89,13 @@
   gap: 25px;
   border-top: 1px solid var(--line);
   padding: 18px 0;
-  font-size: 11px;
-  color: #8d9a7d;
+  font-size: 12px;
+  color: #68735a;
 }
 .detail-note {
   padding: 16px;
   background: #fafbf8;
-  color: #839173;
+  color: #67725a;
   border-radius: 5px;
   margin-top: 16px;
   white-space: pre-wrap;
@@ -105,8 +106,8 @@
 }
 .comparison-controls p {
   margin-top: 10px;
-  font-size: 11px;
-  color: #96a28b;
+  font-size: 12px;
+  color: #67735c;
   line-height: 1.8;
 }
 .compare-fields {
@@ -138,6 +139,7 @@
     grid-template-columns: 1fr 1fr;
   }
   .quote-summary {
+    grid-auto-flow: row;
     grid-template-columns: 1fr 1fr;
     gap: 20px 0;
   }
@@ -158,4 +160,61 @@
   .quote-summary strong {
     font-size: 17px;
   }
+}
+
+/* 快速筛选标签：台账类页面顶部的一排计数筛选 */
+.quick-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 12px 24px 0;
+}
+.quick {
+  border: 1px solid #dfe6dc;
+  background: #fff;
+  color: #4b5a52;
+  border-radius: 14px;
+  padding: 3px 10px;
+  font-size: 13px;
+  line-height: 18px;
+  cursor: pointer;
+}
+.quick em {
+  font-style: normal;
+  color: #66716a;
+  margin-left: 2px;
+  font-variant-numeric: tabular-nums;
+}
+.quick.warn {
+  border-color: #e7c77d;
+  color: #8a6a1f;
+}
+.quick.on {
+  background: #24634f;
+  border-color: #24634f;
+  color: #fff;
+}
+.quick.on em {
+  color: #d5e7de;
+}
+.quick-sep {
+  width: 1px;
+  height: 16px;
+  margin: 0 4px;
+  background: #dfe6dc;
+}
+
+/* 报价配置各标签页顶部的说明与操作栏 */
+.manager-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 24px;
+  font-size: 13px;
+}
+/* 只有一个按钮时靠右 */
+.manager-bar > :only-child {
+  margin-left: auto;
 }

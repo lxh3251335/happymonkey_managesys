@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onMounted } from 'vue'
+import { businesses, loadBusinesses } from '../business'
 import { useRoute, useRouter } from 'vue-router'
 import {
   DataAnalysis,
@@ -17,12 +18,14 @@ import { api, session } from '../api'
 import { roleName, today } from '../utils'
 const route = useRoute(),
   router = useRouter()
+/** 菜单；报价配置中的成本相关标签页按角色显示。 */
 const menu = [
   { path: '/', name: '经营总览', icon: DataAnalysis },
+  // 日常使用：项目台账、合同台账；其次是报价与配置类页面
   { path: '/projects', name: '项目台账', icon: FolderOpened },
+  { path: '/cash', name: '合同台账', icon: Wallet },
   { path: '/quotes', name: '客户报价', icon: Document },
-  { path: '/offers', name: '供应商比价', icon: Connection },
-  { path: '/cash', name: '回款与应收', icon: Wallet },
+  { path: '/quote-setup', name: '报价配置', icon: Connection },
   { path: '/masters', name: '基础资料', icon: Grid },
   { path: '/settings', name: '系统管理', icon: Setting },
 ]
@@ -32,6 +35,10 @@ async function logout() {
   session.user = null
   await router.push('/login')
 }
+/** 侧边栏显示业务字典中启用的客户集团与业务线。 */
+const activeGroups = computed(() => businesses.groups.filter((g) => g.active && g.lines.some((l) => l.active)))
+const activeLines = computed(() => activeGroups.value.flatMap((g) => g.lines.filter((l) => l.active)))
+onMounted(() => loadBusinesses().catch(() => undefined))
 </script>
 <template>
   <div class="workspace">
@@ -60,11 +67,10 @@ async function logout() {
         </router-link>
       </nav>
       <div class="sidebar-project">
-        <div class="mini-label">当前业务空间</div>
-        <strong>美团项目事业部</strong>
+        <div class="mini-label">服务客户</div>
+        <strong>{{ activeGroups.map((g) => g.name).join(' · ') || '未设置业务字典' }}</strong>
         <div class="brand-pills">
-          <span>快乐猴</span>
-          <span>小象超市</span>
+          <span v-for="l in activeLines" :key="l.id">{{ l.short_name || l.name }}</span>
         </div>
         <p>报价 · 成本 · 利润 · 回款</p>
       </div>

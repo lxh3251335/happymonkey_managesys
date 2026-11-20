@@ -24,6 +24,9 @@ services:
       DB_PASSWORD: ${DB_PASSWORD:?请设置数据库密码}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:?请设置初始管理员密码}
       JAVA_TOOL_OPTIONS: -Duser.timezone=Asia/Shanghai
+      ATTACHMENT_DIR: /var/lib/commerce/attachments
+    volumes:
+      - attachments:/var/lib/commerce/attachments
     depends_on:
       db:
         condition: service_healthy
@@ -42,3 +45,4 @@ services:
     restart: unless-stopped
 volumes:
   postgres_data:
+  attachments:

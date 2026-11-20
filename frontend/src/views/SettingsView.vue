@@ -2,18 +2,54 @@
 import { ref, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import PageHeader from '../components/PageHeader.vue'
-import { api, post, session } from '../api'
+import BusinessManager from '../components/BusinessManager.vue'
+import DictionaryManager from '../components/DictionaryManager.vue'
+import CompanyManager from '../components/CompanyManager.vue'
+import BotBinding from '../components/BotBinding.vue'
+import WecomBotSettings from '../components/WecomBotSettings.vue'
+import { api, post, put, session } from '../api'
 import type { User, Audit, ImportBatch } from '../types'
-import { roleName, day } from '../utils'
+import { actionName, dateTime, day, roleName } from '../utils'
 const tab = ref('account'),
   users = ref<User[]>([]),
   audits = ref<Audit[]>([]),
   imports = ref<ImportBatch[]>([]),
   dialog = ref(false),
   busy = ref(false),
-  error = ref('')
+  error = ref(''),
+  dictTab = ref<'business' | 'scenario' | 'city'>('business')
 const password = ref({ oldPassword: '', newPassword: '' })
 const user = ref({ username: '', displayName: '', role: 'SALES', password: '' })
+const editDialog = ref(false),
+  editing = ref<User>(),
+  edit = ref({ displayName: '', role: 'SALES', enabled: true, password: '' })
+function openEdit(u: User) {
+  editing.value = u
+  edit.value = { displayName: u.display_name, role: u.role, enabled: u.enabled !== false, password: '' }
+  editDialog.value = true
+}
+async function saveUser() {
+  if (!editing.value) return
+  if (!edit.value.displayName.trim()) return ElMessage.warning('请填写显示名称')
+  if (edit.value.password && edit.value.password.length < 12) return ElMessage.warning('重置密码至少12位')
+  busy.value = true
+  try {
+    const id = editing.value.id
+    await put(`/admin/users/${id}`, {
+      displayName: edit.value.displayName,
+      role: edit.value.role,
+      enabled: edit.value.enabled,
+    })
+    if (edit.value.password) await post(`/admin/users/${id}/password`, { password: edit.value.password })
+    editDialog.value = false
+    await load()
+    ElMessage.success(edit.value.password ? '用户已更新，密码已重置' : '用户已更新')
+  } catch (e) {
+    ElMessage.error((e as Error).message)
+  } finally {
+    busy.value = false
+  }
+}
 async function load() {
   if (session.user?.role !== 'ADMIN') return
   try {
@@ -66,17 +102,16 @@ onMounted(load)
 </script>
 <template>
   <div>
-    <PageHeader
-      eyebrow="WORKSPACE SETTINGS"
-      title="系统管理"
-      description="维护账户和角色，保留业务操作记录与历史导入凭据。"
-    />
+    <PageHeader eyebrow="WORKSPACE SETTINGS" title="系统管理" />
     <el-alert v-if="error" :title="error" type="error" :closable="false" />
     <section class="panel settings-panel">
       <el-tabs v-model="tab">
         <el-tab-pane label="账户安全" name="account" />
         <template v-if="session.user?.role === 'ADMIN'">
           <el-tab-pane label="用户与角色" name="users" />
+          <el-tab-pane label="数据字典" name="business" />
+          <el-tab-pane label="签约主体" name="companies" />
+          <el-tab-pane label="企业微信机器人" name="wecom" />
           <el-tab-pane label="操作审计" name="audit" />
           <el-tab-pane label="历史数据导入" name="imports" />
         </template>
@@ -93,11 +128,9 @@ onMounted(load)
           </el-form-item>
           <el-button type="primary" :loading="busy" @click="changePassword">更新密码</el-button>
         </el-form>
+        <BotBinding />
       </div>
       <div v-if="tab === 'users'">
-        <div class="inline-note">
-          管理员：全部操作；商务：项目、基础资料与报价；财务：回款登记；只读：内部经营资料查询。所有角色均为公司内部人员。
-        </div>
         <el-button type="primary" class="section-gap" @click="dialog = true">新增用户</el-button>
         <el-table :data="users">
           <el-table-column label="用户名" prop="username" />
@@ -105,23 +138,41 @@ onMounted(load)
           <el-table-column label="角色">
             <template #default="{ row }">{{ roleName[row.role] }}</template>
           </el-table-column>
+          <el-table-column label="状态" width="90">
+            <template #default="{ row }">
+              <el-tag :type="row.enabled ? 'success' : 'info'" size="small">{{ row.enabled ? '启用' : '停用' }}</el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="操作" width="90">
+            <template #default="{ row }">
+              <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
+            </template>
+          </el-table-column>
         </el-table>
       </div>
+      <template v-if="tab === 'business'">
+        <el-radio-group v-model="dictTab" size="small" class="dict-switch">
+          <el-radio-button value="business">客户集团与业务线</el-radio-button>
+          <el-radio-button value="scenario">应用场景</el-radio-button>
+          <el-radio-button value="city">城市</el-radio-button>
+        </el-radio-group>
+        <BusinessManager v-if="dictTab === 'business'" />
+        <DictionaryManager v-else :key="dictTab" :kind="dictTab" />
+      </template>
+      <CompanyManager v-if="tab === 'companies'" />
+      <WecomBotSettings v-if="tab === 'wecom'" />
       <el-table v-if="tab === 'audit'" :data="audits" max-height="600">
-        <el-table-column label="日期" width="120">
-          <template #default="{ row }">{{ day(row.created_at) }}</template>
+        <el-table-column label="时间" width="150">
+          <template #default="{ row }">{{ dateTime(row.created_at) }}</template>
         </el-table-column>
         <el-table-column label="操作人" prop="actor" width="130" />
-        <el-table-column label="操作" prop="action" min-width="220" />
-        <el-table-column label="记录 ID" prop="entity_id" min-width="230" show-overflow-tooltip />
-        <el-table-column label="说明" prop="detail" min-width="300" show-overflow-tooltip />
+        <el-table-column label="操作" min-width="180">
+          <template #default="{ row }">{{ actionName[row.action] || row.action }}</template>
+        </el-table-column>
+        <el-table-column label="说明" prop="detail" min-width="420" show-overflow-tooltip />
       </el-table>
       <div v-if="tab === 'imports'">
-        <div class="inline-note">
-          本轮导入保留历史报价快照及原始行号。批量备货隔离，缺失金额和成本保持空值，客户回款需另行登记。原表和对比分析表不重复入账。
-        </div>
         <el-table :data="imports">
-          <el-table-column label="导入批次" prop="id" width="230" />
           <el-table-column label="时间" width="130">
             <template #default="{ row }">{{ day(row.created_at) }}</template>
           </el-table-column>
@@ -149,5 +200,30 @@ onMounted(load)
         <el-button type="primary" :loading="busy" @click="createUser">创建用户</el-button>
       </template>
     </el-dialog>
+    <el-dialog v-model="editDialog" :title="`编辑用户 ${editing?.username || ''}`" width="520px">
+      <el-form label-position="top">
+        <el-form-item label="显示名称"><el-input v-model="edit.displayName" maxlength="100" /></el-form-item>
+        <el-form-item label="角色">
+          <el-select v-model="edit.role">
+            <el-option v-for="(name, key) in roleName" :key="key" :label="name" :value="key" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="账户状态">
+          <el-switch v-model="edit.enabled" active-text="启用" inactive-text="停用" />
+        </el-form-item>
+        <el-form-item label="重置密码（留空则不修改，至少12位）">
+          <el-input v-model="edit.password" type="password" show-password autocomplete="new-password" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="editDialog = false">取消</el-button>
+        <el-button type="primary" :loading="busy" @click="saveUser">保存</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
+<style scoped>
+.dict-switch {
+  margin-bottom: 12px;
+}
+</style>

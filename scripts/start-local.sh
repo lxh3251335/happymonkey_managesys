@@ -16,9 +16,11 @@ for tool in java node npm curl lsof; do
   command -v "$tool" >/dev/null 2>&1 || { printf 'Required command not found: %s\n' "$tool" >&2; exit 1; }
 done
 node -e 'const [major,minor]=process.versions.node.split(".").map(Number); if(!((major===22&&minor>=18)||major>=24)){console.error("Use Node.js 22.18+ (22.x), or 24+");process.exit(1)}'
-for port in 8080 5173; do
+BACKEND_PORT="${BACKEND_PORT:-8080}"
+FRONTEND_PORT="${FRONTEND_PORT:-5173}"
+for port in "$BACKEND_PORT" "$FRONTEND_PORT"; do
   if lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; then
-    printf 'Port %s is already in use. Check the existing service before retrying.\n' "$port" >&2
+    printf 'Port %s is already in use. Check the existing service, or set BACKEND_PORT / FRONTEND_PORT to free ports.\n' "$port" >&2
     exit 1
   fi
 done
@@ -37,7 +39,8 @@ export SPRING_PROFILES_ACTIVE=dev
 export SOURCE_SEED="$TASK_ROOT/docs/source-seed.json"
 export IMPORT_SOURCE=false
 if [ -f "$SOURCE_SEED" ]; then export IMPORT_SOURCE=true; fi
-export API_TARGET=http://127.0.0.1:8080
+export SERVER_PORT="$BACKEND_PORT"
+export API_TARGET="http://127.0.0.1:$BACKEND_PORT"
 backend_pid=''
 frontend_pid=''
 cleanup() {
@@ -54,17 +57,17 @@ trap 'exit 143' TERM
 
 (cd "$TASK_ROOT/backend" && exec java -Duser.timezone=Asia/Shanghai -jar target/project-commerce-0.1.0.jar) >"$TASK_ROOT/logs/backend.mac.log" 2>&1 &
 backend_pid=$!
-(cd "$TASK_ROOT/frontend" && exec node node_modules/vite/bin/vite.js preview --configLoader native --host 127.0.0.1 --port 5173 --strictPort) >"$TASK_ROOT/logs/frontend.mac.log" 2>&1 &
+(cd "$TASK_ROOT/frontend" && exec node node_modules/vite/bin/vite.js preview --configLoader native --host 127.0.0.1 --port "$FRONTEND_PORT" --strictPort) >"$TASK_ROOT/logs/frontend.mac.log" 2>&1 &
 frontend_pid=$!
 
 ready=false
 for ((attempt=0; attempt<30; attempt++)); do
   if ! kill -0 "$backend_pid" 2>/dev/null || ! kill -0 "$frontend_pid" 2>/dev/null; then break; fi
-  if curl --fail --silent --max-time 1 http://127.0.0.1:8080/api/health >/dev/null && curl --fail --silent --max-time 1 http://127.0.0.1:5173/ >/dev/null; then ready=true; break; fi
+  if curl --fail --silent --max-time 1 "http://127.0.0.1:$BACKEND_PORT/api/health" >/dev/null && curl --fail --silent --max-time 1 "http://127.0.0.1:$FRONTEND_PORT/" >/dev/null; then ready=true; break; fi
   sleep 1
 done
 if [ "$ready" = false ]; then printf 'Startup did not complete. Check logs/backend.mac.log and logs/frontend.mac.log.\n' >&2; exit 1; fi
-printf 'Ready: http://127.0.0.1:5173\nKeep this terminal open. Press Ctrl+C to stop both services.\n'
+printf 'Ready: http://127.0.0.1:%s\nKeep this terminal open. Press Ctrl+C to stop both services.\n' "$FRONTEND_PORT"
 while kill -0 "$backend_pid" 2>/dev/null && kill -0 "$frontend_pid" 2>/dev/null; do sleep 1; done
 printf 'A service exited. Check the logs.\n' >&2
 exit 1

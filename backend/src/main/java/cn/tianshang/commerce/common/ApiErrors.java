@@ -6,6 +6,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MaxUploadSizeExceededException;
 
 @RestControllerAdvice
 public class ApiErrors {
@@ -41,5 +42,11 @@ public class ApiErrors {
     @ResponseStatus(HttpStatus.FORBIDDEN)
     public Map<String, String> denied(Exception e) {
         return Map.of("message", "当前角色无此操作权限");
+    }
+
+    @ExceptionHandler(MaxUploadSizeExceededException.class)
+    @ResponseStatus(HttpStatus.PAYLOAD_TOO_LARGE)
+    public Map<String, String> tooLarge(Exception e) {
+        return Map.of("message", "文件过大：合同附件不超过 20 MB，图纸不超过 30 MB");
     }
 }

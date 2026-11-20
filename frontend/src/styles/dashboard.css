@@ -3,7 +3,7 @@
   align-items: center;
   justify-content: space-between;
   margin-bottom: 23px;
-  font-size: 11px;
+  font-size: 12px;
   color: #667965;
 }
 .overview-strip > div {
@@ -32,15 +32,15 @@
   position: relative;
 }
 .metric-label {
-  font-size: 11px;
-  color: #859281;
+  font-size: 12px;
+  color: #667162;
   display: flex;
   justify-content: space-between;
   align-items: center;
 }
 .metric-label .el-icon {
   font-size: 19px;
-  color: #8ca17d;
+  color: #627555;
 }
 .metric-value {
   margin: 24px 0 23px;
@@ -52,32 +52,32 @@
   font-variant-numeric: tabular-nums;
 }
 .metric-unit {
-  font-size: 9px;
+  font-size: 11px;
   letter-spacing: 0;
-  color: #94a18f;
+  color: #667361;
   margin-left: 7px;
 }
 .metric-foot {
-  font-size: 9px;
-  color: #9ba593;
+  font-size: 11px;
+  color: #67715e;
   display: flex;
   align-items: center;
   min-height: 19px;
   gap: 7px;
 }
 .metric-badge {
-  color: #5c7e52;
+  color: #4a6a41;
   background: #eff5e9;
   padding: 3px 6px;
   border-radius: 3px;
-  font-size: 9px;
+  font-size: 11px;
 }
 .metric-card.accent {
   border-color: #d6dccb;
   background: #f0f3e9;
 }
 .metric-card.accent .metric-label .el-icon {
-  color: #899a5c;
+  color: #677445;
 }
 .data-note {
   margin: 18px 0 24px;
@@ -88,12 +88,12 @@
   background: #fbf8ef;
   border: 1px solid #eae4d0;
   border-radius: 6px;
-  color: #9c8b64;
-  font-size: 10px;
+  color: #7a6d4e;
+  font-size: 12px;
 }
 .data-note strong {
   font-weight: 500;
-  color: #947d4d;
+  color: #77653e;
   white-space: nowrap;
 }
 .note-dot {
@@ -105,7 +105,7 @@
 }
 .data-note a {
   margin-left: auto;
-  color: #8d7744;
+  color: #776439;
   white-space: nowrap;
   display: flex;
   align-items: center;
@@ -130,8 +130,8 @@
   margin-bottom: 0;
 }
 .bar-rank {
-  color: #a6b19e;
-  font-size: 10px;
+  color: #66735c;
+  font-size: 12px;
 }
 .bar-body {
   flex: 1;
@@ -139,7 +139,7 @@
 .bar-label {
   display: flex;
   justify-content: space-between;
-  font-size: 11px;
+  font-size: 12px;
   margin-bottom: 9px;
   color: #5c7458;
 }
@@ -148,7 +148,7 @@
   color: #496446;
 }
 .bar-label span {
-  font-size: 11px;
+  font-size: 12px;
 }
 .bar-track {
   height: 5px;
@@ -172,8 +172,8 @@
   background: #c0caaa;
 }
 .customer-bar-row > small {
-  font-size: 9px;
-  color: #9ba993;
+  font-size: 11px;
+  color: #64735b;
   width: 52px;
   text-align: right;
 }
@@ -192,21 +192,21 @@
   font-size: 15px;
 }
 .business-symbol.monkey {
-  color: #9c7e3b;
+  color: #7b632e;
   background: #f5efdc;
 }
 .business-symbol.elephant {
-  color: #5b8368;
+  color: #4d6f58;
   background: #eaf1e8;
 }
 .brand-summary strong {
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 500;
 }
 .brand-summary small {
   display: block;
-  font-size: 10px;
-  color: #9ba793;
+  font-size: 12px;
+  color: #67735e;
   margin-top: 7px;
 }
 .brand-amount {
@@ -225,20 +225,20 @@
 }
 .brand-panel-footer > .el-icon {
   font-size: 20px;
-  color: #8fa17f;
+  color: #647455;
 }
 .brand-panel-footer strong {
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 500;
 }
 .brand-panel-footer p {
-  font-size: 10px;
+  font-size: 12px;
   margin-top: 7px;
-  color: #98a48e;
+  color: #66725c;
 }
 .brand-panel-footer button {
   margin-left: auto;
-  font-size: 10px;
+  font-size: 12px;
 }
 .recent-panel {
   margin-top: 24px;
@@ -248,13 +248,13 @@
   cursor: pointer;
 }
 .status-tag {
-  font-size: 10px;
+  font-size: 12px;
   display: inline-flex;
   align-items: center;
   gap: 6px;
   padding: 5px 8px;
   border-radius: 4px;
-  color: #8c977e;
+  color: #68725c;
   background: #f2f5ed;
   white-space: nowrap;
 }
@@ -265,16 +265,26 @@
   background: currentColor;
 }
 .status-tag.accepted {
-  color: #437e59;
+  color: #2f6b47;
   background: #edf5ee;
 }
 .status-tag.issued {
-  color: #7a924c;
+  color: #5b6d39;
   background: #f2f5e9;
 }
 .status-tag.draft {
-  color: #a48a54;
+  color: #816c42;
   background: #faf4e8;
+}
+.status-tag.contracted {
+  color: #2f6b47;
+  background: #edf5ee;
+}
+.status-tag.lost,
+.status-tag.superseded,
+.status-tag.archived {
+  color: #6a716c;
+  background: #f1f2f0;
 }
 .cash-metrics {
   display: grid;
@@ -288,8 +298,8 @@
 .compact-metric > span,
 .compact-metric > small {
   display: block;
-  font-size: 11px;
-  color: #8c9b84;
+  font-size: 12px;
+  color: #65735d;
 }
 .compact-metric strong {
   display: block;
@@ -299,11 +309,11 @@
   color: #3d5b3f;
 }
 .compact-metric em {
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 400;
   font-style: normal;
   margin-left: 7px;
-  color: #a0ad96;
+  color: #65735a;
 }
 @media (max-width: 1280px) {
   .metric-card {
@@ -336,7 +346,7 @@
 @media (max-width: 700px) {
   .overview-strip > div {
     flex-wrap: wrap;
-    font-size: 10px;
+    font-size: 12px;
   }
   .metric-grid {
     gap: 10px;
@@ -349,10 +359,10 @@
     margin: 20px 0;
   }
   .metric-foot {
-    font-size: 8px;
+    font-size: 10px;
   }
   .metric-label {
-    font-size: 10px;
+    font-size: 12px;
   }
   .data-note {
     flex-wrap: wrap;
@@ -369,7 +379,7 @@
     gap: 10px;
   }
   .brand-amount {
-    font-size: 13px;
+    font-size: 14px;
   }
 }
 @media (max-width: 430px) {

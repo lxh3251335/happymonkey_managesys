@@ -1,83 +1,381 @@
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, nextTick, onBeforeUnmount, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Plus, Delete } from '@element-plus/icons-vue'
-import { post } from '../api'
-import type { Project, Product, Quote } from '../types'
-import { afterDays, money, percent } from '../utils'
+import { api, canApprove, canSeeCost, post, put } from '../api'
+import CitySelect from './CitySelect.vue'
+import { activeCompanies, companyLabel, defaultCompany, loadDictionaries } from '../dictionaries'
+import type {
+  Partner,
+  PrefillLine,
+  Project,
+  Product,
+  ProjectType,
+  Quote,
+  QuoteTemplate,
+  SupplierTemplate,
+} from '../types'
+import { afterDays, day, money, percent, today } from '../utils'
+
 const props = defineProps<{
   modelValue: boolean
   projects: Project[]
   products: Product[]
   projectId?: string
+  /** 带入的报价：默认是“复制为新版本”；edit 为真时是修改这份草稿本身。 */
   seed?: Quote
+  edit?: boolean
 }>()
 const emit = defineEmits<{ 'update:modelValue': [boolean]; saved: [string] }>()
+
 interface LineDraft {
   productId: string
   quantity: number
   unitPrice: number | undefined
-  unitCost: number | undefined
+  materialCost: number | undefined
+  laborCost: number | undefined
+  financeCost: number | undefined
 }
-const form = ref({ projectId: '', taxBasis: 'UNKNOWN', taxPercent: 0, validUntil: afterDays(30), note: '' })
+const blankLine = (): LineDraft => ({
+  productId: '',
+  quantity: 1,
+  unitPrice: undefined,
+  materialCost: undefined,
+  laborCost: undefined,
+  financeCost: undefined,
+})
+
+const mode = ref<'new' | 'existing'>('new')
+const store = ref({ customerId: '', name: '', city: '' })
+const form = ref({
+  projectId: '',
+  projectTypeId: '',
+  supplierId: '',
+  taxBasis: 'INCLUDED',
+  taxPercent: 13,
+  validUntil: afterDays(30),
+  note: '',
+  templateId: '',
+  companyId: '',
+})
+/** 业务员看不到成本：成本列与毛利隐藏，保存时由系统按供应商成本模板核算。 */
+const seeCost = canSeeCost()
 const lines = ref<LineDraft[]>([]),
-  busy = ref(false)
-function add() {
-  lines.value.push({ productId: '', quantity: 1, unitPrice: undefined, unitCost: undefined })
+  busy = ref(false),
+  filling = ref(false),
+  types = ref<ProjectType[]>([]),
+  supplierTemplates = ref<SupplierTemplate[]>([]),
+  partners = ref<Partner[]>([]),
+  templates = ref<QuoteTemplate[]>([]),
+  prefillNote = ref('')
+
+const customers = computed(() => partners.value.filter((p) => p.kind === 'CUSTOMER'))
+const activeTypes = computed(() => types.value.filter((t) => t.active))
+/** 当前项目类型下有成本模板的供应商。 */
+const suppliers = computed(() =>
+  supplierTemplates.value.filter((s) => s.active && s.project_type_id === form.value.projectTypeId),
+)
+const currentProject = computed(() => props.projects.find((p) => p.id === form.value.projectId))
+/** 本次报价的客户：新门店取所选客户，已登记项目取门店的客户；用于匹配客户报价模板。 */
+const customerId = computed(() =>
+  mode.value === 'new' ? store.value.customerId : currentProject.value?.customer_id || '',
+)
+/** 明细是否还没动过（只有空行）：此时切换客户 / 项目可以放心按模板重新带出。 */
+const untouched = () => lines.value.every((l) => !l.productId)
+/** 模板带出时的明细快照；明细与快照一致说明带出后没有手工改过，换客户时可以重新带出而不丢修改。 */
+const prefillSnapshot = ref('')
+const unchangedSincePrefill = () => !!prefillSnapshot.value && prefillSnapshot.value === JSON.stringify(lines.value)
+
+/** 合同已签订的门店：新报价等于改合同，只有管理层 / 管理员可以选。 */
+const signed = (p: Project) => p.contract_state !== 'NONE' && p.contract_state !== 'DRAFT'
+const includeSigned = ref(false)
+/** “已登记项目”可选范围：尚未签合同（或合同仍在拟定）的门店；当前已选的保留。 */
+const quotableProjects = computed(() =>
+  props.projects.filter((p) => !signed(p) || (canApprove() && includeSigned.value) || p.id === form.value.projectId),
+)
+const hiddenSigned = computed(() => props.projects.filter(signed).length)
+
+// ---------- 参考已签约项目：带入产品、数量与售价 ----------
+const referenceId = ref(''),
+  referencing = ref(false)
+/** 可参考的项目：合同已签订或已完结的门店；选了项目类型时同业务线的排在前面。 */
+const referenceProjects = computed(() => {
+  const brand = types.value.find((t) => t.id === form.value.projectTypeId)?.brand
+  return props.projects
+    .filter((p) => p.contract_state === 'SIGNED' || p.contract_state === 'COMPLETED')
+    .sort((a, b) => Number(b.brand === brand) - Number(a.brand === brand) || a.name.localeCompare(b.name, 'zh-CN'))
+})
+async function applyReference() {
+  if (!referenceId.value) return
+  referencing.value = true
+  try {
+    const q = await api<Quote>(`/quotes/reference?projectId=${encodeURIComponent(referenceId.value)}`)
+    const n = (v: number | null | undefined) => (v == null ? undefined : Number(v))
+    // 已选供应商且看得到成本时，成本仍按供应商成本模板（当前有效成本），不沿用旧报价的成本
+    const keepCost = new Map(lines.value.map((l) => [l.productId, l]))
+    lines.value = q.items.map((i) => {
+      const old = keepCost.get(i.product_id)
+      return {
+        productId: i.product_id,
+        quantity: Number(i.quantity),
+        unitPrice: n(i.unit_price),
+        materialCost:
+          old?.materialCost ??
+          n(i.material_cost) ??
+          (i.labor_cost == null && i.finance_cost == null ? n(i.unit_cost) : undefined),
+        laborCost: old?.laborCost ?? n(i.labor_cost),
+        financeCost: old?.financeCost ?? n(i.finance_cost),
+      }
+    })
+    if (!lines.value.length) lines.value.push(blankLine())
+    prefillSnapshot.value = ''
+    prefillNote.value = `已参考「${q.project_name}」（${q.contract_no || '合同'}）带入 ${q.items.length} 项产品、数量和售价，可逐行修改。`
+    ElMessage.success('已带入参考项目的产品与报价')
+  } catch (e) {
+    ElMessage.error((e as Error).message)
+  } finally {
+    referencing.value = false
+  }
 }
+
+async function loadOptions() {
+  const [t, s, p, q] = await Promise.all([
+    api<ProjectType[]>('/project-types'),
+    api<SupplierTemplate[]>('/supplier-templates'),
+    api<Partner[]>('/partners'),
+    api<QuoteTemplate[]>('/quotes/templates'),
+  ])
+  types.value = t
+  supplierTemplates.value = s
+  partners.value = p
+  templates.value = q.filter((x) => x.active)
+}
+
 watch(
   () => props.modelValue,
-  (open) => {
+  async (open) => {
     if (!open) return
-    form.value = {
-      projectId: props.seed?.project_id || props.projectId || '',
-      taxBasis: props.seed?.tax_basis || 'UNKNOWN',
-      taxPercent: (props.seed?.tax_rate || 0) * 100,
-      validUntil: afterDays(30),
-      note: props.seed?.note || '',
+    try {
+      await Promise.all([loadOptions(), loadDictionaries()])
+    } catch (e) {
+      ElMessage.error((e as Error).message)
     }
+    const fromProject = props.seed?.project_id || props.projectId || ''
+    mode.value = fromProject ? 'existing' : 'new'
+    store.value = { customerId: '', name: '', city: '' }
+    referenceId.value = ''
+    includeSigned.value = false
+    const project = props.projects.find((p) => p.id === fromProject)
+    form.value = {
+      projectId: fromProject,
+      projectTypeId: props.seed?.project_type_id || project?.project_type_id || '',
+      supplierId: props.seed?.supplier_id || '',
+      taxBasis: props.seed?.tax_basis || 'INCLUDED',
+      taxPercent: props.seed ? (props.seed.tax_rate || 0) * 100 : 13,
+      // 修改草稿时保留原有效期（已过期的顺延）；复制为新版本时重新起算
+      validUntil:
+        props.edit && props.seed?.valid_until && day(props.seed.valid_until) >= today()
+          ? day(props.seed.valid_until)
+          : afterDays(30),
+      note: props.seed?.note || '',
+      templateId:
+        (props.edit && templates.value.find((t) => t.id === props.seed?.template_id)?.id) ||
+        templates.value.find((t) => t.is_default)?.id ||
+        '',
+      companyId: props.seed?.company_id || defaultCompany.value?.id || '',
+    }
+    prefillNote.value = ''
+    prefillSnapshot.value = ''
     lines.value = props.seed
       ? props.seed.items.map((i) => ({
           productId: i.product_id,
           quantity: Number(i.quantity),
           unitPrice: i.unit_price == null ? undefined : Number(i.unit_price),
-          unitCost: i.unit_cost == null ? undefined : Number(i.unit_cost),
+          // 历史报价没有成本拆分时，把单台成本放在材料成本中
+          materialCost:
+            i.material_cost != null
+              ? Number(i.material_cost)
+              : i.labor_cost == null && i.finance_cost == null && i.unit_cost != null
+                ? Number(i.unit_cost)
+                : undefined,
+          laborCost: i.labor_cost == null ? undefined : Number(i.labor_cost),
+          financeCost: i.finance_cost == null ? undefined : Number(i.finance_cost),
         }))
       : []
-    if (!lines.value.length) add()
+    if (!lines.value.length) lines.value.push(blankLine())
   },
 )
+
+/** 选已有项目时带出其项目类型；明细还没填时直接按模板带出。 */
+watch(
+  () => form.value.projectId,
+  (id) => {
+    const p = props.projects.find((x) => x.id === id)
+    if (!p || props.seed || !props.modelValue) return
+    if (p.project_type_id) form.value.projectTypeId = p.project_type_id
+    if (form.value.projectTypeId && untouched()) applyTemplate()
+  },
+)
+/** 新门店换了客户：客户报价模板可能不同，明细还没填或当前就是按模板带出的，则重新带出。 */
+watch(
+  () => store.value.customerId,
+  () => {
+    if (mode.value !== 'new' || props.seed || !props.modelValue || !form.value.projectTypeId) return
+    if (untouched() || unchangedSincePrefill()) applyTemplate()
+  },
+)
+
+/** 按客户报价模板（没有则按项目类型标准配置）+ 供应商成本模板带出明细（会替换当前明细）。 */
+async function applyTemplate() {
+  if (!form.value.projectTypeId) return
+  filling.value = true
+  try {
+    const params = new URLSearchParams()
+    if (form.value.supplierId) params.set('supplierId', form.value.supplierId)
+    if (customerId.value) params.set('customerId', customerId.value)
+    const q = params.size ? `?${params}` : ''
+    const r = await api<{ items: PrefillLine[]; source: 'CUSTOMER' | 'TYPE' }>(
+      `/project-types/${form.value.projectTypeId}/prefill${q}`,
+    )
+    const n = (v: number | null) => (v == null ? undefined : Number(v))
+    lines.value = r.items.map((i) => ({
+      productId: i.product_id,
+      quantity: Number(i.quantity),
+      unitPrice: n(i.unit_price),
+      materialCost: n(i.material_cost),
+      laborCost: n(i.labor_cost),
+      financeCost: n(i.finance_cost),
+    }))
+    if (!lines.value.length) lines.value.push(blankLine())
+    prefillSnapshot.value = JSON.stringify(lines.value)
+    const missing = r.items.filter((i) => i.unit_cost == null).length
+    const from =
+      r.source === 'CUSTOMER' ? '已按该客户的报价模板带出配置和协议价' : '已按项目类型的标准配置带出配置和售价'
+    prefillNote.value =
+      from +
+      (!seeCost
+        ? form.value.supplierId
+          ? '；成本由系统按该供应商的成本模板核算。'
+          : '；请选择供应商，系统按其成本模板核算成本。'
+        : !form.value.supplierId
+          ? '；选择供应商后带出成本。'
+          : missing
+            ? `，并带出供应商成本；${missing} 项该供应商模板未报成本，请补充。`
+            : '，并带出供应商成本，可逐行修改。')
+  } catch (e) {
+    ElMessage.error((e as Error).message)
+  } finally {
+    filling.value = false
+  }
+}
+function onTypeChange() {
+  if (!suppliers.value.some((s) => s.supplier_id === form.value.supplierId)) form.value.supplierId = ''
+  applyTemplate()
+}
+
+const unitCost = (l: LineDraft) =>
+  l.materialCost == null && l.laborCost == null && l.financeCost == null
+    ? null
+    : (l.materialCost || 0) + (l.laborCost || 0) + (l.financeCost || 0)
+const cents = (n: number) => Math.round(n * 100) / 100
+const lineAmount = (l: LineDraft) => (l.unitPrice == null ? null : cents(l.quantity * l.unitPrice))
+const lineCost = (l: LineDraft) => {
+  const c = unitCost(l)
+  return c == null ? null : cents(l.quantity * c)
+}
+const lineMargin = (l: LineDraft) => {
+  const a = lineAmount(l),
+    c = lineCost(l)
+  return a == null || c == null || a === 0 ? null : (a - c) / a
+}
+const total = computed(() => lines.value.reduce((s, l) => s + (lineAmount(l) || 0), 0))
+const part = (k: 'materialCost' | 'laborCost' | 'financeCost') =>
+  lines.value.reduce((s, l) => s + cents(l.quantity * (l[k] || 0)), 0)
+const costComplete = computed(() => lines.value.every((l) => unitCost(l) != null))
+const cost = computed(() => (costComplete.value ? lines.value.reduce((s, l) => s + (lineCost(l) || 0), 0) : null))
+const profit = computed(() => (cost.value == null ? null : total.value - cost.value))
+const margin = computed(() => (profit.value == null || total.value === 0 ? null : profit.value / total.value))
+
+function productLabel(id: string) {
+  const p = props.products.find((x) => x.id === id)
+  return p ? `${p.scenario} / ${p.name} / ${p.specification}${p.model ? ' / ' + p.model : ''}` : ''
+}
 function selectProduct(line: LineDraft) {
   const p = props.products.find((p) => p.id === line.productId)
   line.unitPrice = p?.reference_price == null ? undefined : Number(p.reference_price)
-  line.unitCost = p?.reference_cost == null ? undefined : Number(p.reference_cost)
+  line.materialCost = p?.reference_cost == null ? undefined : Number(p.reference_cost)
+  line.laborCost = undefined
+  line.financeCost = undefined
 }
-const total = computed(() =>
-  lines.value.reduce((s, i) => s + Math.round(i.quantity * (i.unitPrice || 0) * 100) / 100, 0),
-)
-const cost = computed(() =>
-  lines.value.some((i) => i.unitCost == null)
-    ? null
-    : lines.value.reduce((s, i) => s + Math.round(i.quantity * i.unitCost! * 100) / 100, 0),
-)
+
+// ---------- 布局：弹窗一屏显示，产品明细多时只在明细表内滚动 ----------
+const tableRef = ref<{ $el: HTMLElement; setScrollTop: (top: number) => void }>()
+const tableMax = ref(Math.max(180, window.innerHeight - 470))
+/** 明细表可用高度 = 窗口高度 − 弹窗里明细表以外的部分 − 上下留白。 */
+function fit() {
+  const dialog = document.querySelector<HTMLElement>('.quote-editor')
+  const table = tableRef.value?.$el
+  if (!dialog || !table) return
+  const chrome = dialog.offsetHeight - table.offsetHeight
+  // 上方留白 2.5vh（弹窗 top），下方留白 16px（见文件末尾的弹窗外框样式）
+  tableMax.value = Math.max(150, Math.floor(window.innerHeight * 0.975 - 18 - chrome))
+}
+onMounted(() => window.addEventListener('resize', fit))
+onBeforeUnmount(() => window.removeEventListener('resize', fit))
+watch([mode, prefillNote], () => nextTick(fit))
+async function addLine() {
+  lines.value.push(blankLine())
+  await nextTick()
+  tableRef.value?.setScrollTop(1e6)
+}
+
 async function save() {
-  if (
-    !form.value.projectId ||
-    !form.value.validUntil ||
-    !lines.value.length ||
-    lines.value.some((l) => !l.productId || l.unitPrice == null)
-  )
-    return ElMessage.warning('请选择项目，并补全产品、数量、销售单价和有效期')
+  if (mode.value === 'new') {
+    if (!store.value.customerId || !store.value.name.trim() || !form.value.projectTypeId)
+      return ElMessage.warning('请选择客户、项目类型，并填写门店名称')
+  } else if (!form.value.projectId) return ElMessage.warning('请选择项目')
+  if (!form.value.validUntil || !lines.value.length || lines.value.some((l) => !l.productId || l.unitPrice == null))
+    return ElMessage.warning('请补全产品、数量、销售单价和有效期')
   busy.value = true
   try {
-    const result = await post<{ id: string }>('/quotes', {
-      ...form.value,
+    const body = {
+      projectId: mode.value === 'existing' ? form.value.projectId : null,
+      newProject:
+        mode.value === 'new'
+          ? {
+              customerId: store.value.customerId,
+              name: store.value.name.trim(),
+              city: store.value.city || null,
+              projectTypeId: form.value.projectTypeId,
+            }
+          : null,
+      projectTypeId: form.value.projectTypeId || null,
+      supplierId: form.value.supplierId || null,
+      taxBasis: form.value.taxBasis,
       taxRate: form.value.taxBasis === 'UNKNOWN' ? null : form.value.taxPercent / 100,
-      items: lines.value.map((l) => ({ ...l, unitCost: l.unitCost ?? null })),
-    })
+      validUntil: form.value.validUntil,
+      note: form.value.note,
+      templateId: form.value.templateId || null,
+      companyId: form.value.companyId || null,
+      items: lines.value.map((l) => ({
+        productId: l.productId,
+        quantity: l.quantity,
+        unitPrice: l.unitPrice,
+        materialCost: l.materialCost ?? null,
+        laborCost: l.laborCost ?? null,
+        financeCost: l.financeCost ?? null,
+      })),
+    }
+    let id: string
+    if (props.edit && props.seed) {
+      await put(`/quotes/${props.seed.id}`, body)
+      id = props.seed.id
+    } else id = (await post<{ id: string }>('/quotes', body)).id
     emit('update:modelValue', false)
-    emit('saved', result.id)
-    ElMessage.success('已保存新的报价版本')
+    emit('saved', id)
+    ElMessage.success(
+      props.edit ? '草稿已保存' : mode.value === 'new' ? '已登记门店并保存报价草稿' : '已保存新的报价版本',
+    )
   } catch (e) {
     ElMessage.error((e as Error).message)
   } finally {
@@ -88,120 +386,453 @@ async function save() {
 <template>
   <el-dialog
     :model-value="modelValue"
-    @update:model-value="emit('update:modelValue', $event)"
-    title="创建客户报价"
-    width="1080px"
+    class="quote-editor"
+    width="min(1360px, 97vw)"
+    top="2.5vh"
     :close-on-click-modal="false"
+    @update:model-value="emit('update:modelValue', $event)"
+    @opened="fit"
   >
-    <el-form label-position="top">
-      <div class="form-grid quote-base">
-        <el-form-item label="报价项目" required>
-          <el-select v-model="form.projectId" filterable placeholder="选择门店 / 项目">
-            <el-option v-for="p in projects" :key="p.id" :value="p.id" :label="`${p.name} · ${p.customer_name}`" />
+    <template #header>
+      <div class="qe-head">
+        <span class="el-dialog__title">{{ edit && seed ? `修改报价草稿 · V${seed.version}` : '创建客户报价' }}</span>
+        <el-radio-group v-model="mode" size="small" :disabled="!!seed">
+          <el-radio-button value="new">新门店</el-radio-button>
+          <el-radio-button value="existing">已登记项目</el-radio-button>
+        </el-radio-group>
+        <span class="muted qe-tip">合同号在客户确认、生成合同时自动编号</span>
+      </div>
+    </template>
+    <el-form label-position="top" class="quote-form">
+      <!-- 门店、供应商与报价条件：两行六列 -->
+      <div class="qe-grid">
+        <template v-if="mode === 'new'">
+          <el-form-item label="客户" required>
+            <el-select v-model="store.customerId" filterable default-first-option placeholder="选择客户">
+              <el-option v-for="c in customers" :key="c.id" :value="c.id" :label="c.name" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="项目类型" required>
+            <el-select v-model="form.projectTypeId" placeholder="如：小象前置仓" @change="onTypeChange">
+              <el-option v-for="t in activeTypes" :key="t.id" :value="t.id" :label="t.name" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="门店名称" required class="span-2">
+            <el-input v-model="store.name" maxlength="300" placeholder="例如：小象天津丰泽站" />
+          </el-form-item>
+          <el-form-item label="城市">
+            <CitySelect v-model="store.city" placeholder="留空按名称识别" />
+          </el-form-item>
+        </template>
+        <template v-else>
+          <el-form-item required class="span-3">
+            <template #label>
+              报价项目
+              <span class="muted label-extra" :title="`已签合同的 ${hiddenSigned} 个门店改报价属于合同变更`">
+                只列未签合同的门店（{{ quotableProjects.length }} 个）
+              </span>
+              <el-checkbox v-if="canApprove() && !seed" v-model="includeSigned" size="small" class="label-check">
+                显示已签合同的
+              </el-checkbox>
+            </template>
+            <el-select v-model="form.projectId" filterable placeholder="选择门店 / 项目" :disabled="!!seed">
+              <el-option
+                v-for="p in quotableProjects"
+                :key="p.id"
+                :value="p.id"
+                :label="`${p.name} · ${p.customer_name}${p.city ? ' · ' + p.city : ''}${signed(p) ? ' · 已签合同' : ''}`"
+              />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="项目类型">
+            <el-select v-model="form.projectTypeId" clearable placeholder="选择后可带出模板" @change="onTypeChange">
+              <el-option v-for="t in activeTypes" :key="t.id" :value="t.id" :label="t.name" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="门店信息">
+            <span v-if="currentProject" class="muted store-info" :title="currentProject.contract_no || ''">
+              {{ currentProject.customer_name }} · {{ currentProject.city || '未填城市' }}
+              {{ currentProject.contract_no ? ` · ${currentProject.contract_no}` : '' }}
+            </span>
+            <span v-else class="muted store-info">—</span>
+          </el-form-item>
+        </template>
+        <el-form-item :label="seeCost ? '供应商（带出成本）' : '供应商'">
+          <el-select
+            v-model="form.supplierId"
+            clearable
+            :disabled="!form.projectTypeId"
+            :placeholder="!form.projectTypeId ? '先选项目类型' : suppliers.length ? '选择供应商' : '该类型暂无成本模板'"
+            @change="applyTemplate"
+          >
+            <el-option v-for="s in suppliers" :key="s.supplier_id" :value="s.supplier_id" :label="s.supplier_name" />
           </el-select>
         </el-form-item>
+
         <el-form-item label="报价有效期" required>
           <el-date-picker v-model="form.validUntil" value-format="YYYY-MM-DD" type="date" />
         </el-form-item>
-        <el-form-item label="报价与成本的统一口径">
-          <el-select v-model="form.taxBasis">
-            <el-option label="待核实" value="UNKNOWN" />
-            <el-option label="含税" value="INCLUDED" />
-            <el-option label="未税" value="EXCLUDED" />
+        <el-form-item label="税口径 / 税率（%）">
+          <div class="tax-pair">
+            <el-select v-model="form.taxBasis">
+              <el-option label="含税" value="INCLUDED" />
+              <el-option label="未税" value="EXCLUDED" />
+              <el-option label="待核实" value="UNKNOWN" />
+            </el-select>
+            <el-input-number
+              v-if="form.taxBasis !== 'UNKNOWN'"
+              v-model="form.taxPercent"
+              :min="0"
+              :max="100"
+              :precision="2"
+              :controls="false"
+            />
+          </div>
+        </el-form-item>
+        <el-form-item label="报价单版式">
+          <el-select v-model="form.templateId" placeholder="默认版式">
+            <el-option
+              v-for="t in templates"
+              :key="t.id"
+              :value="t.id"
+              :label="`${t.name}${t.is_default ? '（默认）' : ''}`"
+            />
           </el-select>
         </el-form-item>
-        <el-form-item v-if="form.taxBasis !== 'UNKNOWN'" label="税率（%）">
-          <el-input-number v-model="form.taxPercent" :min="0" :max="100" :precision="2" />
+        <el-form-item label="我方签约主体">
+          <el-select v-model="form.companyId" placeholder="默认签约主体">
+            <el-option
+              v-for="c in activeCompanies"
+              :key="c.id"
+              :value="c.id"
+              :label="`${companyLabel(c)}${c.is_default ? '（默认）' : ''}`"
+            />
+          </el-select>
         </el-form-item>
-      </div>
-      <div class="inline-note">
-        选择产品后带入历史单价及成本参考，请核实当前配置和税口径。成本只用于内部测算，对客报价单不包含成本和利润。
-      </div>
-      <el-table :data="lines" class="editor-table">
-        <el-table-column label="产品 / 规格" min-width="280">
-          <template #default="{ row }">
-            <el-select v-model="row.productId" filterable @change="selectProduct(row)" placeholder="选择标准产品">
+        <el-form-item label="参考已签约项目（可选）" class="span-2">
+          <div class="reference-pair">
+            <el-select
+              v-model="referenceId"
+              filterable
+              clearable
+              :placeholder="referenceProjects.length ? '选一个已签合同的门店' : '暂无已签约项目可参考'"
+            >
               <el-option
-                v-for="p in products"
+                v-for="p in referenceProjects"
                 :key="p.id"
                 :value="p.id"
-                :label="`${p.brand} / ${p.name} / ${p.specification}${p.model ? ' / ' + p.model : ''}`"
+                :label="`${p.name} · ${p.customer_name} · ${p.brand}${p.contract_no ? ' · ' + p.contract_no : ''}`"
               />
+            </el-select>
+            <el-button :disabled="!referenceId" :loading="referencing" @click="applyReference">带入</el-button>
+          </div>
+        </el-form-item>
+      </div>
+
+      <!-- 报价明细：产品多时只在表内滚动 -->
+      <div class="qe-detail-head">
+        <strong>{{ seeCost ? '报价明细与毛利' : '报价明细' }}</strong>
+        <span class="muted qe-note" :title="prefillNote">{{ prefillNote }}</span>
+        <el-button v-if="form.projectTypeId" size="small" link type="primary" :loading="filling" @click="applyTemplate">
+          按模板重新带出
+        </el-button>
+        <el-button :icon="Plus" size="small" @click="addLine">添加产品</el-button>
+      </div>
+      <el-table ref="tableRef" :data="lines" class="editor-table qe-table" size="small" :max-height="tableMax">
+        <el-table-column label="产品 / 规格" min-width="230">
+          <template #default="{ row }">
+            <el-select
+              v-model="row.productId"
+              filterable
+              :title="productLabel(row.productId)"
+              placeholder="选择标准产品"
+              @change="selectProduct(row)"
+            >
+              <el-option v-for="p in products" :key="p.id" :value="p.id" :label="productLabel(p.id)" />
             </el-select>
           </template>
         </el-table-column>
-        <el-table-column label="数量" width="130">
+        <el-table-column label="数量" width="86">
           <template #default="{ row }">
-            <el-input-number v-model="row.quantity" :min="0.001" :max="999999" :precision="3" :controls="false" />
+            <el-input-number v-model="row.quantity" :min="0.001" :max="999999" :precision="0" :controls="false" />
           </template>
         </el-table-column>
-        <el-table-column label="销售单价（元）" width="165">
+        <el-table-column label="销售单价" width="124">
           <template #default="{ row }">
-            <el-input-number
-              v-model="row.unitPrice"
-              :min="0"
-              :max="999999999"
-              :precision="6"
-              :controls="false"
-              placeholder="必填"
-            />
+            <el-input-number v-model="row.unitPrice" :min="0" :precision="2" :controls="false" placeholder="必填" />
           </template>
         </el-table-column>
-        <el-table-column label="单台成本（元）" width="165">
+        <el-table-column v-if="seeCost" label="材料成本" width="116">
           <template #default="{ row }">
-            <el-input-number
-              v-model="row.unitCost"
-              :min="0"
-              :max="999999999"
-              :precision="6"
-              :controls="false"
-              placeholder="待补充"
-            />
+            <el-input-number v-model="row.materialCost" :min="0" :precision="2" :controls="false" placeholder="—" />
           </template>
         </el-table-column>
-        <el-table-column label="销售小计" width="135" align="right">
+        <el-table-column v-if="seeCost" label="人工成本" width="104">
           <template #default="{ row }">
-            {{ row.unitPrice == null ? '待补充' : money(Math.round(row.quantity * row.unitPrice * 100) / 100) }}
+            <el-input-number v-model="row.laborCost" :min="0" :precision="2" :controls="false" placeholder="—" />
           </template>
         </el-table-column>
-        <el-table-column width="60">
+        <el-table-column v-if="seeCost" label="财务成本" width="104">
+          <template #default="{ row }">
+            <el-input-number v-model="row.financeCost" :min="0" :precision="2" :controls="false" placeholder="—" />
+          </template>
+        </el-table-column>
+        <el-table-column v-if="seeCost" label="单台成本" width="104" align="right">
+          <template #default="{ row }">
+            <span :class="unitCost(row) == null ? 'muted' : ''">
+              {{ unitCost(row) == null ? '待补充' : money(unitCost(row)) }}
+            </span>
+          </template>
+        </el-table-column>
+        <el-table-column label="销售小计" width="112" align="right">
+          <template #default="{ row }">{{ lineAmount(row) == null ? '待补充' : money(lineAmount(row)) }}</template>
+        </el-table-column>
+        <el-table-column v-if="seeCost" label="毛利率" width="84" align="right">
+          <template #default="{ row }">
+            <span :class="lineMargin(row) != null && lineMargin(row)! < 0 ? 'danger-text' : ''">
+              {{ lineMargin(row) == null ? '—' : percent(lineMargin(row)) }}
+            </span>
+          </template>
+        </el-table-column>
+        <el-table-column width="48">
           <template #default="{ $index }">
             <el-button :icon="Delete" link type="danger" aria-label="删除报价明细" @click="lines.splice($index, 1)" />
           </template>
         </el-table-column>
       </el-table>
-      <el-button class="add-line" :icon="Plus" @click="add">添加产品</el-button>
-      <div class="quote-summary">
-        <div>
-          报价合计
+
+      <div class="margin-board">
+        <div class="mb-main">
+          <span>报价合计</span>
           <strong>{{ money(total) }}</strong>
         </div>
-        <div>
-          成本合计
-          <strong>{{ money(cost) }}</strong>
-        </div>
-        <div>
-          预计利润
-          <strong>{{ cost == null ? '待补充' : money(total - cost) }}</strong>
-        </div>
-        <div>
-          销售毛利率
-          <strong>{{ cost == null || total === 0 ? '待补充' : percent((total - cost) / total) }}</strong>
-        </div>
+        <template v-if="seeCost">
+          <div>
+            <span>材料成本</span>
+            <strong>{{ money(part('materialCost')) }}</strong>
+          </div>
+          <div>
+            <span>人工成本</span>
+            <strong>{{ money(part('laborCost')) }}</strong>
+          </div>
+          <div>
+            <span>财务成本</span>
+            <strong>{{ money(part('financeCost')) }}</strong>
+          </div>
+          <div :title="costComplete ? '' : '有明细未填成本，毛利与毛利率暂不计算'">
+            <span>成本合计</span>
+            <strong>{{ cost == null ? '待补充' : money(cost) }}</strong>
+          </div>
+          <div>
+            <span>预计毛利</span>
+            <strong :class="profit != null && profit < 0 ? 'danger-text' : ''">
+              {{ profit == null ? '待补充' : money(profit) }}
+            </strong>
+          </div>
+          <div class="mb-main">
+            <span>毛利率</span>
+            <strong :class="margin != null && margin < 0 ? 'danger-text' : ''">
+              {{ margin == null ? '待补充' : percent(margin) }}
+            </strong>
+          </div>
+        </template>
       </div>
-      <el-form-item label="对客备注 / 报价条款">
+
+      <div class="qe-remark">
+        <span>对客备注（本单）</span>
         <el-input
           v-model="form.note"
           type="textarea"
-          :rows="2"
+          :autosize="{ minRows: 1, maxRows: 2 }"
           maxlength="2000"
-          placeholder="例如：交货周期、运输范围、付款条件。请勿填写内部成本。"
+          placeholder="本单特别说明，如交货周期、运输范围；通用条款维护在报价单版式中。请勿填写内部成本。"
         />
-      </el-form-item>
+      </div>
     </el-form>
     <template #footer>
+      <span v-if="seeCost && !costComplete" class="muted qe-footnote">有明细未填成本，毛利与毛利率暂不计算。</span>
       <el-button @click="emit('update:modelValue', false)">取消</el-button>
-      <el-button type="primary" :loading="busy" @click="save">保存报价草稿</el-button>
+      <el-button type="primary" :loading="busy" @click="save">{{ edit ? '保存修改' : '保存报价草稿' }}</el-button>
     </template>
   </el-dialog>
 </template>
+<style scoped>
+.qe-head {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+.qe-tip {
+  font-size: 13px;
+}
+.quote-form :deep(.el-form-item) {
+  margin-bottom: 8px;
+}
+.quote-form :deep(.el-form-item__label) {
+  margin-bottom: 2px;
+  line-height: 20px;
+  white-space: nowrap;
+}
+.qe-grid {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 0 14px;
+}
+.span-2 {
+  grid-column: span 2;
+}
+.span-3 {
+  grid-column: span 3;
+}
+.label-extra {
+  margin-left: 8px;
+  font-size: 12px;
+}
+.label-check {
+  margin-left: 10px;
+  height: 20px;
+  vertical-align: top;
+}
+.store-info {
+  overflow: hidden;
+  font-size: 13px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.tax-pair {
+  display: grid;
+  grid-template-columns: 1fr 76px;
+  gap: 6px;
+  width: 100%;
+}
+.reference-pair {
+  display: flex;
+  gap: 8px;
+  width: 100%;
+}
+.reference-pair .el-select {
+  flex: 1;
+  min-width: 0;
+}
+.qe-detail-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 4px 0 6px;
+  font-size: 14px;
+  color: #253731;
+}
+.qe-note {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 13px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+/* 明细表用紧凑行：一屏多放几行产品 */
+.qe-table :deep(td.el-table__cell) {
+  height: 40px;
+  padding: 3px 0;
+}
+.qe-table :deep(th.el-table__cell) {
+  height: 34px;
+  padding: 4px 0;
+}
+.qe-table :deep(.cell) {
+  padding: 0 6px;
+  white-space: nowrap;
+}
+.qe-table :deep(.el-input__wrapper),
+.qe-table :deep(.el-select__wrapper) {
+  min-height: 30px;
+}
+.qe-table :deep(.el-input-number) {
+  width: 100%;
+  line-height: 28px;
+}
+.margin-board {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 1px;
+  margin: 8px 0;
+  border: 1px solid #e4eae0;
+  border-radius: 6px;
+  overflow: hidden;
+  background: #e4eae0;
+}
+.margin-board > div {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 7px 12px;
+  background: #fafcf8;
+}
+.margin-board span {
+  font-size: 12px;
+  color: #5d6a63;
+  white-space: nowrap;
+}
+.margin-board strong {
+  font-size: 14px;
+  font-weight: 500;
+  color: #253731;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.margin-board .mb-main {
+  background: #eef5ef;
+}
+.margin-board .mb-main strong {
+  font-size: 16px;
+}
+.qe-remark {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.qe-remark > span {
+  flex: none;
+  font-size: 13px;
+  color: #65745c;
+}
+.qe-footnote {
+  margin-right: auto;
+  font-size: 13px;
+}
+@media (max-width: 1000px) {
+  .qe-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .span-3 {
+    grid-column: span 2;
+  }
+  .margin-board {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .qe-tip {
+    display: none;
+  }
+}
+</style>
+<!-- 弹窗外框由 el-dialog 渲染，不带本组件的 scoped 标记，这里单独收紧留白 -->
+<style>
+.quote-editor.el-dialog {
+  margin-bottom: 16px;
+  padding: 16px 24px 14px;
+}
+.quote-editor .el-dialog__header {
+  padding-bottom: 6px;
+}
+.quote-editor .el-dialog__body {
+  padding-top: 8px;
+}
+.quote-editor .el-dialog__footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  margin-top: 10px;
+  padding-top: 12px;
+}
+</style>

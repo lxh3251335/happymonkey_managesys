@@ -24,19 +24,9 @@ public class MasterController {
         return service.partner(input);
     }
 
-    @GetMapping("/projects")
-    public List<Map<String, Object>> projects() {
-        return service.projects();
-    }
-
-    @PostMapping("/projects")
-    public Map<String, String> project(@Valid @RequestBody MasterService.ProjectInput input) {
-        return service.project(input);
-    }
-
-    @PutMapping("/projects/{id}")
-    public void update(@PathVariable String id, @Valid @RequestBody MasterService.ProjectInput input) {
-        service.updateProject(id, input);
+    @PutMapping("/partners/{id}")
+    public void updatePartner(@PathVariable String id, @Valid @RequestBody MasterService.PartnerInput input) {
+        service.updatePartner(id, input);
     }
 
     @GetMapping("/products")
@@ -47,5 +37,17 @@ public class MasterController {
     @PostMapping("/products")
     public Map<String, String> product(@Valid @RequestBody MasterService.ProductInput input) {
         return service.product(input);
+    }
+
+    @PutMapping("/products/{id}")
+    public void updateProduct(@PathVariable String id, @Valid @RequestBody MasterService.ProductInput input) {
+        service.updateProduct(id, input);
+    }
+
+    public record MainstreamInput(boolean mainstream) {}
+
+    @PutMapping("/products/{id}/mainstream")
+    public void mainstream(@PathVariable String id, @RequestBody MainstreamInput input) {
+        service.setMainstream(id, input.mainstream());
     }
 }

@@ -4,6 +4,7 @@ import jakarta.validation.Valid;
 import java.util.*;
 import org.springframework.web.bind.annotation.*;
 
+/** 回款流水查询与历史门店流水冲正；新回款按合同登记（/api/contracts/receipts）。 */
 @RestController
 @RequestMapping("/api/cash")
 public class CashController {
@@ -14,18 +15,13 @@ public class CashController {
         this.service = service;
     }
 
-    @GetMapping
-    public List<Map<String, Object>> entries() {
-        return service.entries();
+    @GetMapping("/ledger")
+    public List<Map<String, Object>> ledger() {
+        return service.ledger();
     }
 
-    @GetMapping("/balances")
-    public List<Map<String, Object>> balances() {
-        return service.balances();
-    }
-
-    @PostMapping
-    public Map<String, String> create(@Valid @RequestBody CashService.CashInput input) {
-        return service.create(input);
+    @PostMapping("/legacy-refund")
+    public Map<String, String> refundLegacy(@Valid @RequestBody CashService.RefundInput input) {
+        return service.refundLegacy(input);
     }
 }

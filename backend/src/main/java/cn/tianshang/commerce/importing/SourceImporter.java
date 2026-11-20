@@ -1,6 +1,7 @@
 package cn.tianshang.commerce.importing;
 
 import cn.tianshang.commerce.common.Database;
+import cn.tianshang.commerce.contract.Contracts;
 import com.fasterxml.jackson.databind.*;
 import java.math.*;
 import java.nio.file.*;
@@ -15,10 +16,19 @@ public class SourceImporter {
 
     private final Database db;
     private final ObjectMapper mapper;
+    private final cn.tianshang.commerce.business.BusinessService business;
+    private final cn.tianshang.commerce.dictionary.DictionaryService dictionary;
 
-    public SourceImporter(Database db, ObjectMapper mapper) {
+    public SourceImporter(
+        Database db,
+        ObjectMapper mapper,
+        cn.tianshang.commerce.business.BusinessService business,
+        cn.tianshang.commerce.dictionary.DictionaryService dictionary
+    ) {
         this.db = db;
         this.mapper = mapper;
+        this.business = business;
+        this.dictionary = dictionary;
     }
 
     @Transactional
@@ -45,14 +55,17 @@ public class SourceImporter {
                 String note =
                     "历史发货状态：" + r.path("shipping").asText() + "；原合同号：" + r.path("contract").asText();
                 db.jdbc.update(
-                    "INSERT INTO project(id,code,name,brand,customer_id,order_date,note) VALUES(?,?,?,?,?,?,?)",
+                    "INSERT INTO project(id,code,name,brand,customer_id,order_date,note,contract_no,shipping_status,city) VALUES(?,?,?,?,?,?,?,?,?,?)",
                     projectId,
                     code,
                     r.path("project").asText(),
-                    r.path("brand").asText(),
+                    business.resolveOrUnassigned(r.path("brand").asText()),
                     customer,
                     date,
-                    note
+                    note,
+                    Contracts.blankToNull(r.path("contract").asText()),
+                    Contracts.shipping(r.path("shipping").asText()),
+                    dictionary.detectCity(r.path("project").asText())
                 );
                 db.jdbc.update(
                     "INSERT INTO quotation(id,code,project_id,version,status,tax_basis,note,created_at) VALUES(?,?,?,1,'HISTORICAL','UNKNOWN',?,?)",
@@ -74,7 +87,7 @@ public class SourceImporter {
             String productId = products.get(productKey);
             if (productId == null) {
                 var existing = db.jdbc.queryForList(
-                    "SELECT id FROM product WHERE brand=? AND name=? AND specification=? AND model=?",
+                    "SELECT id FROM product WHERE scenario=? AND name=? AND specification=? AND model=?",
                     r.path("brand").asText(),
                     r.path("name").asText(),
                     r.path("specification").asText(),
@@ -82,8 +95,9 @@ public class SourceImporter {
                 );
                 productId = existing.isEmpty() ? db.id() : existing.get(0).get("id").toString();
                 products.put(productKey, productId);
+                if (existing.isEmpty()) dictionary.ensureScenario(r.path("brand").asText());
                 if (existing.isEmpty()) db.jdbc.update(
-                    "INSERT INTO product(id,brand,name,specification,model,unit) VALUES(?,?,?,?,?,'台')",
+                    "INSERT INTO product(id,scenario,name,specification,model,unit) VALUES(?,?,?,?,?,'台')",
                     productId,
                     r.path("brand").asText(),
                     r.path("name").asText(),
@@ -126,11 +140,7 @@ public class SourceImporter {
         var rows = db.jdbc.queryForList("SELECT id FROM partner WHERE kind='CUSTOMER' AND name=?", name);
         if (!rows.isEmpty()) return rows.get(0).get("id").toString();
         String id = db.id();
-        db.jdbc.update(
-            "INSERT INTO partner(id,name,kind,note) VALUES(?,?,'CUSTOMER','来源于历史客户工作表')",
-            id,
-            name
-        );
+        db.jdbc.update("INSERT INTO partner(id,name,kind) VALUES(?,?,'CUSTOMER')", id, name);
         return id;
     }
 }
