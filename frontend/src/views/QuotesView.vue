@@ -236,6 +236,10 @@ function more(command: string) {
   else if (command === 'reopen') reopen()
   else if (command === 'delete') openDelete()
 }
+/** 在报价里把新产品加进产品库后，刷新产品列表。 */
+async function reloadProducts() {
+  products.value = await api<Product[]>('/products').catch(() => products.value)
+}
 async function load() {
   try {
     ;[rows.value, projects.value, products.value] = await Promise.all([
@@ -460,6 +464,7 @@ onMounted(async () => {
       :seed="seed"
       :edit="editing"
       @saved="saved"
+      @products-changed="reloadProducts"
     />
     <el-dialog v-model="detailOpen" title="报价详情" width="min(1100px, 96vw)">
       <div v-if="detail?.stage === 'LOST'" class="inline-note warning">

@@ -1,5 +1,6 @@
 package cn.tianshang.commerce.master;
 
+import cn.tianshang.commerce.common.FileResponses;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
 import org.springframework.core.io.FileSystemResource;
@@ -38,26 +39,7 @@ public class DrawingController {
         @RequestParam(defaultValue = "false") boolean inline
     ) {
         var f = service.file(id);
-        boolean pdf = f.contentType().equals("application/pdf");
-        boolean preview =
-            inline && (pdf || f.contentType().startsWith("image/png") || f.contentType().startsWith("image/jpeg"));
-        var disposition = (preview ? ContentDisposition.inline() : ContentDisposition.attachment()).filename(
-            f.fileName(),
-            StandardCharsets.UTF_8
-        ).build();
-        return ResponseEntity.ok()
-            .contentType(MediaType.parseMediaType(f.contentType()))
-            .contentLength(f.size())
-            .header(HttpHeaders.CONTENT_DISPOSITION, disposition.toString())
-            .header("X-Content-Type-Options", "nosniff")
-            .header(
-                "Content-Security-Policy",
-                preview && pdf
-                    ? "default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:; object-src 'self'; frame-ancestors 'self'"
-                    : "sandbox"
-            )
-            .header(HttpHeaders.CACHE_CONTROL, "private, no-store")
-            .body(new FileSystemResource(f.path()));
+        return FileResponses.of(f.fileName(), f.contentType(), f.size(), f.path(), inline);
     }
 
     @DeleteMapping("/drawings/{id}")

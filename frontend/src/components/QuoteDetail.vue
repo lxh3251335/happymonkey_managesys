@@ -2,6 +2,7 @@
 import type { Quote } from '../types'
 import { money, unitMoney, percent, day, taxName } from '../utils'
 import StatusTag from './StatusTag.vue'
+import ProjectFiles from './ProjectFiles.vue'
 import { canSeeCost } from '../api'
 defineProps<{ quote: Quote }>()
 /** 成本与毛利只对系统管理员、管理层、财务展示（后端对其他角色已去掉这些字段）。 */
@@ -96,6 +97,7 @@ const split = (n: number | null) => (n == null ? '—' : Number(n).toLocaleStrin
       成本。未包含尚未登记的运输、安装及其他费用。税口径待核实时，仅作历史金额测算。
     </p>
     <p v-if="quote.note" class="detail-note">{{ quote.note }}</p>
+    <ProjectFiles :project-id="quote.project_id" />
   </div>
 </template>
 <style scoped>

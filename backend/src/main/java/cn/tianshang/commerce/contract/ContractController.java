@@ -1,5 +1,6 @@
 package cn.tianshang.commerce.contract;
 
+import cn.tianshang.commerce.common.FileResponses;
 import jakarta.validation.Valid;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
@@ -174,25 +175,7 @@ public class ContractController {
         @RequestParam(defaultValue = "false") boolean inline
     ) {
         var f = attachments.file(id);
-        boolean preview = inline && (f.contentType().startsWith("image/") || f.contentType().equals("application/pdf"));
-        var disposition = (preview ? ContentDisposition.inline() : ContentDisposition.attachment()).filename(
-            f.fileName(),
-            StandardCharsets.UTF_8
-        ).build();
-        return ResponseEntity.ok()
-            .contentType(MediaType.parseMediaType(f.contentType()))
-            .contentLength(f.size())
-            .header(HttpHeaders.CONTENT_DISPOSITION, disposition.toString())
-            .header("X-Content-Type-Options", "nosniff")
-            // Chrome 不渲染带 sandbox 的 PDF，内联预览 PDF 时改用不允许脚本和外部资源的策略
-            .header(
-                "Content-Security-Policy",
-                preview && f.contentType().equals("application/pdf")
-                    ? "default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:; object-src 'self'; frame-ancestors 'self'"
-                    : "sandbox"
-            )
-            .header(HttpHeaders.CACHE_CONTROL, "private, no-store")
-            .body(new FileSystemResource(f.path()));
+        return FileResponses.of(f.fileName(), f.contentType(), f.size(), f.path(), inline);
     }
 
     @DeleteMapping("/attachments/{id}")

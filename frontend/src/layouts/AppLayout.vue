@@ -18,6 +18,7 @@ import { api, session } from '../api'
 import { roleName, today } from '../utils'
 import GlobalSearch from '../components/GlobalSearch.vue'
 import PasteEntry from '../components/PasteEntry.vue'
+import TodayTodos from '../components/TodayTodos.vue'
 import { reopenCount } from '../navigation'
 const route = useRoute(),
   router = useRouter()
@@ -92,6 +93,7 @@ onMounted(() => loadBusinesses().catch(() => undefined))
         <div class="topbar-tools">
           <GlobalSearch />
           <PasteEntry />
+          <TodayTodos />
         </div>
         <div class="topbar-right">
           <span class="current-date">{{ today().replaceAll('-', ' / ') }}</span>
