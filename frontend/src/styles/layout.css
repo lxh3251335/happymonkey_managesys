@@ -178,6 +178,13 @@
   align-items: center;
   gap: 12px;
 }
+/* 顶栏中间：全局搜索和粘贴登记 */
+.topbar-tools {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 auto 0 32px;
+}
 .current-date {
   font-size: 12px;
   letter-spacing: 1px;

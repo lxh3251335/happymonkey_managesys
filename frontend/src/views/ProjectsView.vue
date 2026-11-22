@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
+import { onDataChanged } from '../dataEvents'
 import { useRoute, useRouter } from 'vue-router'
+import { useUrlState } from '../urlState'
 import { ElMessage } from 'element-plus'
 import { CopyDocument, Plus, Refresh, Search } from '@element-plus/icons-vue'
 import PageHeader from '../components/PageHeader.vue'
@@ -37,6 +39,20 @@ const keyword = ref(''),
   quick = ref('ALL'),
   // 项目台账默认只看已成交（已有合同或客户已确认）的门店；还在报价的门店在“客户报价”中跟进
   scope = ref<'DEAL' | 'QUOTING'>(route.query.scope === 'quoting' ? 'QUOTING' : 'DEAL')
+// 筛选和页码写进地址：刷新或从别的页面返回时保持原样
+{
+  const bind = useUrlState()
+  bind('q', keyword, '')
+  bind('customer', customer, '')
+  bind('line', brand, '')
+  bind('city', city, '')
+  bind('owner', owner, '')
+  bind('quick', quick, 'ALL')
+  bind('page', page, 1)
+  const scopeParam = ref(scope.value === 'QUOTING' ? 'quoting' : '')
+  bind('scope', scopeParam, '')
+  watch(scope, (s) => (scopeParam.value = s === 'QUOTING' ? 'quoting' : ''))
+}
 const todayStr = today()
 const inDays = (n: number) => {
   const d = new Date()
@@ -244,6 +260,7 @@ async function saveAssign() {
 const goContract = (p: Project) =>
   router.push({ path: '/cash', query: { tab: 'contracts', customer: p.customer_id, contract: p.contract_no } })
 
+onDataChanged(load)
 onMounted(async () => {
   await load()
   // 从合同台账跳转：直接打开该门店的发货物流

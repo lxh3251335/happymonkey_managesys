@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
+import { onDataChanged } from '../dataEvents'
 import { useRoute, useRouter } from 'vue-router'
+import { useUrlState } from '../urlState'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowDown, Plus, Search } from '@element-plus/icons-vue'
 import PageHeader from '../components/PageHeader.vue'
@@ -90,6 +92,14 @@ async function makeContract() {
   }
 }
 const projectId = computed(() => String(route.query.project || ''))
+// 筛选和页码写进地址：刷新或从别的页面返回时保持原样
+{
+  const bind = useUrlState()
+  bind('q', keyword, '')
+  bind('customer', customer, '')
+  bind('quick', quick, quick.value)
+  bind('page', page, 1)
+}
 /**
  * 跟进阶段筛选：报价转成合同前都留在这里跟进；转合同后到合同台账、项目台账办理，这里仍可查。
  * “跟进中”= 草稿 + 待客户确认 + 客户已确认待生成合同。
@@ -99,6 +109,8 @@ const STAGES: { key: string; label: string; test: (q: Quote) => boolean }[] = [
   { key: 'DRAFT', label: '草稿', test: (q) => q.stage === 'DRAFT' },
   { key: 'ISSUED', label: '待客户确认', test: (q) => q.stage === 'ISSUED' },
   { key: 'ACCEPTED', label: '待生成合同', test: (q) => q.stage === 'ACCEPTED' },
+  // 待客户确认但过了有效期：重新报价或标记未成交（数量为 0 时不显示）
+  { key: 'EXPIRED', label: '已过有效期', test: (q) => expired(q) },
   { key: 'CONTRACTED', label: '已转合同', test: (q) => q.stage === 'CONTRACTED' },
   { key: 'LOST', label: '未成交', test: (q) => q.stage === 'LOST' },
   { key: 'ALL', label: '全部', test: () => true },
@@ -346,6 +358,7 @@ async function output(kind: 'quote' | 'contract') {
   }
   window.open(kind === 'quote' ? `/print/${q.id}` : `/print/${q.id}/contract`, '_blank', 'noopener,noreferrer')
 }
+onDataChanged(load)
 onMounted(async () => {
   await load()
   if (route.query.new === '1') create()
@@ -365,7 +378,12 @@ onMounted(async () => {
       <div class="quick-row">
         <template v-for="s in STAGES" :key="s.key">
           <span v-if="s.key === 'CONTRACTED'" class="quick-sep"></span>
-          <button type="button" :class="['quick', { on: quick === s.key }]" @click="quick = s.key">
+          <button
+            v-if="s.key !== 'EXPIRED' || counts.EXPIRED || quick === 'EXPIRED'"
+            type="button"
+            :class="['quick', { on: quick === s.key }]"
+            @click="quick = s.key"
+          >
             {{ s.label }}
             <em>{{ counts[s.key] }}</em>
           </button>

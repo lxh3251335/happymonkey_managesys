@@ -191,6 +191,20 @@ class WecomSessionTest {
     }
 
     @Test
+    void proactivePushIsASingleChatMarkdownMessageAfterSubscribe() {
+        assertThat(session.push("zhangsan", "今日待办")).isFalse();
+        assertThat(sent).isEmpty();
+        ready();
+        assertThat(session.push("zhangsan", "**今日待办**")).isTrue();
+        assertThat(last().path("cmd").asText()).isEqualTo("aibot_send_msg");
+        assertThat(last().path("headers").path("req_id").asText()).startsWith("aibot_send_msg_");
+        assertThat(last().path("body").path("chatid").asText()).isEqualTo("zhangsan");
+        assertThat(last().path("body").path("chat_type").asInt()).isEqualTo(1);
+        assertThat(last().path("body").path("msgtype").asText()).isEqualTo("markdown");
+        assertThat(last().path("body").path("markdown").path("content").asText()).isEqualTo("**今日待办**");
+    }
+
+    @Test
     void longRepliesAreCutToTheByteLimit() {
         String cut = WecomSession.limit("应收".repeat(8000));
         assertThat(cut.getBytes(StandardCharsets.UTF_8).length).isLessThanOrEqualTo(WecomSession.MAX_REPLY_BYTES);

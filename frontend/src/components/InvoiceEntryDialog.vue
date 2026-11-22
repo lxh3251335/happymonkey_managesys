@@ -11,7 +11,12 @@ import { day, invoiceTypeName, money, today } from '../utils'
  * 把电子发票 PDF 选进来（或拖进来），系统读出发票号码、日期、价税合计、购买方并对到客户，
  * 再给出分配建议（备注里写了合同号的优先 / 正好凑齐 / 从最早的合同开始）。原件自动存进各合同的附件。
  */
-const props = defineProps<{ modelValue: boolean; contracts: Contract[] }>()
+const props = defineProps<{
+  modelValue: boolean
+  contracts: Contract[]
+  /** 从“粘贴登记”打开时带入的发票 PDF。 */
+  initialFile?: File
+}>()
 const emit = defineEmits<{ 'update:modelValue': [boolean]; saved: [] }>()
 
 const RULE_NOTE: Record<string, string> = {
@@ -89,6 +94,7 @@ watch(
     suggested.value = []
     if (!customers.value.length)
       customers.value = (await api<Partner[]>('/partners').catch(() => [])).filter((x) => x.kind === 'CUSTOMER')
+    if (props.initialFile) await read(props.initialFile)
   },
 )
 

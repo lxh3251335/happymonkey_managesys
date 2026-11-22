@@ -16,6 +16,9 @@ import {
 } from '@element-plus/icons-vue'
 import { api, session } from '../api'
 import { roleName, today } from '../utils'
+import GlobalSearch from '../components/GlobalSearch.vue'
+import PasteEntry from '../components/PasteEntry.vue'
+import { reopenCount } from '../navigation'
 const route = useRoute(),
   router = useRouter()
 /** 菜单；报价配置中的成本相关标签页按角色显示。 */
@@ -86,6 +89,10 @@ onMounted(() => loadBusinesses().catch(() => undefined))
           <el-icon><ArrowRight /></el-icon>
           <strong>{{ current }}</strong>
         </div>
+        <div class="topbar-tools">
+          <GlobalSearch />
+          <PasteEntry />
+        </div>
         <div class="topbar-right">
           <span class="current-date">{{ today().replaceAll('-', ' / ') }}</span>
           <span class="top-divider"></span>
@@ -108,7 +115,8 @@ onMounted(() => loadBusinesses().catch(() => undefined))
           </el-dropdown>
         </div>
       </header>
-      <main class="page-content"><router-view /></main>
+      <!-- 从顶栏跳到同一页面的不同筛选时，让页面重新打开一次以读取新的筛选（见 navigation.ts） -->
+      <main class="page-content"><router-view :key="`${route.path}:${reopenCount}`" /></main>
       <footer class="workspace-footer">
         天商 · 项目经营管理
         <span>数据随业务沉淀，让每一笔报价有据可查。</span>

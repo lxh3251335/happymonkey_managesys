@@ -1,6 +1,9 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
+import { onDataChanged } from '../dataEvents'
 import { useRoute } from 'vue-router'
+import { useUrlState } from '../urlState'
+import { reviewChange } from '../changeReview'
 import ContractTable from '../components/ContractTable.vue'
 import ContractAttachments from '../components/ContractAttachments.vue'
 import ContractDrawer from '../components/ContractDrawer.vue'
@@ -21,12 +24,14 @@ import { money, today, day, afterDays } from '../utils'
 const route = useRoute(),
   legacyTabs: Record<string, string> = { receipts: 'ledger', balances: 'ledger', entries: 'ledger' },
   tab = ref(legacyTabs[String(route.query.tab)] || String(route.query.tab || 'contracts')),
+  urlState = useUrlState(),
   contracts = ref<Contract[]>([]),
   ledger = ref<ReceiptRow[]>([]),
   invoices = ref<ContractInvoice[]>([]),
   changes = ref<ContractChange[]>([]),
   drawerOpen = ref(false),
   drawerKey = ref({ customerId: '', contractKey: '' }),
+  drawerTab = ref(''),
   createOpen = ref(false),
   drawer = ref<InstanceType<typeof ContractDrawer>>(),
   attachDialog = ref(false),
@@ -34,6 +39,7 @@ const route = useRoute(),
   busy = ref(false),
   error = ref('')
 /** 回款单：一笔到账分到多份合同；unallocated > 0 的还有余额待分配。 */
+urlState('tab', tab, 'contracts')
 const batches = ref<ReceiptBatch[]>([])
 const pendingBatches = computed(() => batches.value.filter((b) => Number(b.unallocated) > 0))
 const entryOpen = ref(false),
@@ -193,9 +199,22 @@ async function saveContract() {
     busy.value = false
   }
 }
-function openDrawer(customerId: string, contractKey: string) {
+/** 打开合同详情；打开着的合同也写进地址，刷新或返回时还在。 */
+function openDrawer(customerId: string, contractKey: string, initialTab = '') {
   drawerKey.value = { customerId, contractKey }
+  drawerTab.value = initialTab
   drawerOpen.value = true
+  urlState.write('customer', customerId)
+  urlState.write('contract', contractKey)
+}
+watch(drawerOpen, (open) => {
+  if (open) return
+  urlState.write('customer', undefined)
+  urlState.write('contract', undefined)
+})
+/** 在审批列表里直接批准或驳回，不用先打开合同。 */
+async function reviewRow(x: ContractChange, action: 'approve' | 'reject') {
+  if (await reviewChange(x, action)) await load()
 }
 /** 抽屉中的操作完成后：刷新列表，并让抽屉重新加载。 */
 async function reloadAll() {
@@ -213,6 +232,7 @@ const filteredInvoices = computed(() =>
 const invoiceTotal = computed(() =>
   filteredInvoices.value.reduce((s, i) => s + (i.kind === 'RED' ? -1 : 1) * Number(i.amount), 0),
 )
+onDataChanged(load)
 onMounted(async () => {
   await load()
   if (route.query.customer && route.query.contract)
@@ -259,7 +279,7 @@ onMounted(async () => {
         <ContractTable
           :contracts="contracts"
           :page-size="20"
-          :initial-quick="String(route.query.quick || '')"
+          sync-url
           :batch-due="canWrite() || canFinance()"
           @batch-due="openBatchDue"
           @open="(c) => openDrawer(c.customer_id, c.contract_key)"
@@ -308,7 +328,7 @@ onMounted(async () => {
           :data="changes"
           empty-text="没有待审批的变更"
           class="clickable"
-          @row-click="(r: ContractChange) => openDrawer(r.customer_id!, r.contract_no!)"
+          @row-click="(r: ContractChange) => openDrawer(r.customer_id!, r.contract_no!, 'changes')"
         >
           <el-table-column label="提交时间" width="150">
             <template #default="{ row }">{{ String(row.requested_at).replace('T', ' ').slice(0, 16) }}</template>
@@ -332,7 +352,13 @@ onMounted(async () => {
             </template>
           </el-table-column>
           <el-table-column label="原因" prop="reason" min-width="160" show-overflow-tooltip />
-          <el-table-column label="状态" width="80">
+          <el-table-column v-if="canApprove()" label="审批" width="132" fixed="right">
+            <template #default="{ row }">
+              <el-button size="small" type="primary" @click.stop="reviewRow(row, 'approve')">批准</el-button>
+              <el-button size="small" @click.stop="reviewRow(row, 'reject')">驳回</el-button>
+            </template>
+          </el-table-column>
+          <el-table-column v-else label="状态" width="80">
             <template #default="{ row }">{{ changeStatusName[row.status] }}</template>
           </el-table-column>
         </el-table>
@@ -498,6 +524,7 @@ onMounted(async () => {
       v-model="drawerOpen"
       :customer-id="drawerKey.customerId"
       :contract-key="drawerKey.contractKey"
+      :initial-tab="drawerTab"
       @changed="load"
       @confirm="openConfirm"
       @receipt="(c) => openEntry({ customerId: c.customer_id, contractKey: c.contract_key })"

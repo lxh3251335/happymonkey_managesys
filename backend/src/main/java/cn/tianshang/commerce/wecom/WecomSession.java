@@ -107,6 +107,21 @@ final class WecomSession {
         send("aibot_subscribe", reqId("aibot_subscribe"), body);
     }
 
+    /**
+     * 主动给某人发一条消息（单聊）。对方要先和机器人聊过天才收得到；没认证时返回 false。
+     * 企业微信的应答只记日志：推送失败不影响其他人。
+     */
+    boolean push(String userId, String markdown) {
+        if (state != State.READY) return false;
+        ObjectNode body = mapper.createObjectNode();
+        body.put("chatid", userId);
+        body.put("chat_type", 1);
+        body.put("msgtype", "markdown");
+        body.putObject("markdown").put("content", limit(markdown));
+        send("aibot_send_msg", reqId("aibot_send_msg"), body);
+        return true;
+    }
+
     /** 定时调用。返回 false 表示对方已经连续几次没有应答，应当断开重连。 */
     synchronized boolean heartbeat() {
         if (state != State.READY) return true;

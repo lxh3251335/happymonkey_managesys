@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { askReason, reviewChange } from '../changeReview'
 import { api, canApprove, canFinance, canSeeCost, canWrite, post, session } from '../api'
 import StatusTag from './StatusTag.vue'
 import ContractInfoDialog from './ContractInfoDialog.vue'
@@ -10,7 +11,13 @@ import { actionName, dateTime, day, money, percent, today } from '../utils'
 import { useRouter } from 'vue-router'
 
 /** 合同详情：要素、执行（开票 / 回款 / 发货 / 成本）、变更审批与全程操作记录。 */
-const props = defineProps<{ modelValue: boolean; customerId: string; contractKey: string }>()
+const props = defineProps<{
+  modelValue: boolean
+  customerId: string
+  contractKey: string
+  /** 打开时先显示的标签，默认“合同信息”；从审批列表打开时直接到“变更记录”。 */
+  initialTab?: string
+}>()
 const emit = defineEmits<{
   'update:modelValue': [boolean]
   changed: []
@@ -52,7 +59,7 @@ watch(
   () => [props.modelValue, props.customerId, props.contractKey],
   () => {
     if (props.modelValue) {
-      tab.value = 'overview'
+      tab.value = props.initialTab || 'overview'
       load()
     }
   },
@@ -125,18 +132,6 @@ async function saveInvoice() {
     busy.value = false
   }
 }
-async function askReason(title: string) {
-  try {
-    const r = await ElMessageBox.prompt('请填写原因（保留在操作记录中）', title, {
-      confirmButtonText: '确定',
-      cancelButtonText: '取消',
-      inputValidator: (v) => !!v?.trim() || '请填写原因',
-    })
-    return r.value.trim()
-  } catch {
-    return null
-  }
-}
 async function deleteInvoice(i: ContractInvoice) {
   const reason = await askReason(`删除发票 ${i.invoice_no}`)
   if (!reason) return
@@ -200,24 +195,7 @@ async function deleteCost(x: ContractCost) {
 
 // ---------- 变更审批 ----------
 async function review(x: ContractChange, action: 'approve' | 'reject' | 'withdraw') {
-  let note: string | null = ''
-  if (action === 'reject') {
-    note = await askReason('驳回变更申请')
-    if (!note) return
-  } else if (action === 'approve') {
-    try {
-      await ElMessageBox.confirm('批准后合同内容立即按申请修改。', '批准变更', { type: 'warning' })
-    } catch {
-      return
-    }
-  }
-  try {
-    await post(`/contracts/changes/${x.id}/${action}`, action === 'withdraw' ? {} : { note })
-    ElMessage.success({ approve: '已批准，合同已更新', reject: '已驳回', withdraw: '已撤回' }[action])
-    await refresh()
-  } catch (e) {
-    ElMessage.error((e as Error).message)
-  }
+  if (await reviewChange(x, action)) await refresh()
 }
 </script>
 <template>

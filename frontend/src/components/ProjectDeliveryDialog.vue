@@ -8,7 +8,12 @@ import { copyText, deliveryText, today } from '../utils'
 import { parseDelivery } from '../parsing/delivery'
 
 /** 发货与物流登记：收货信息、预计发货、发货状态与日期、快递公司与运单号。填了运单号即视为已发货。 */
-const props = defineProps<{ modelValue: boolean; project?: Project | null }>()
+const props = defineProps<{
+  modelValue: boolean
+  project?: Project | null
+  /** 从“粘贴登记”打开时带入的收货信息或运单文字。 */
+  initialText?: string
+}>()
 const emit = defineEmits<{ 'update:modelValue': [boolean]; saved: [] }>()
 
 const couriers = ref<string[]>([]),
@@ -46,6 +51,7 @@ watch(
     pasted.value = ''
     pasteNote.value = null
     if (!couriers.value.length) couriers.value = await api<string[]>('/projects/couriers').catch(() => [])
+    if (props.initialText) pasted.value = props.initialText
   },
 )
 /** 粘贴识别：只覆盖认出来的字段，其余保持原样。 */
