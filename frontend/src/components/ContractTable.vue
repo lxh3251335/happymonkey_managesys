@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { ArrowDown, Search } from '@element-plus/icons-vue'
+import { ArrowDown, Filter, Search } from '@element-plus/icons-vue'
 import type { Contract } from '../types'
 import { money, percent, day } from '../utils'
 import { contractStatusName, invoiceStatusName } from '../dictionaries'
@@ -62,7 +62,6 @@ const MORE_QUICK = ['UNDATED', 'INV_UNPAID', 'UNARCHIVED', 'DRAFT', 'CHANGES']
 const quickOf = (key: string) => QUICK.find((q) => q.key === key)!
 
 const quick = ref(props.initialQuick || 'ALL'),
-  moreFilters = ref(false),
   keyword = ref(''),
   customer = ref(''),
   company = ref(''),
@@ -85,8 +84,6 @@ if (props.syncUrl) {
   bind('status', status, '')
   bind('period', period, '')
   bind('page', page, 1)
-  // 藏在“更多条件”里的筛选有值时，展开它，免得看不到为什么数据变少了
-  if (company.value || city.value || owner.value || status.value) moreFilters.value = true
 }
 
 const showOwner = computed(() => session.user?.role !== 'SALES')
@@ -201,7 +198,10 @@ const anyFilter = computed(
     ) || quick.value !== 'ALL',
 )
 /** 平时收起的筛选条件（城市、负责人、合同状态、签约主体）里有没有正在生效的。 */
-const hiddenActive = computed(() => [company, city, owner, status].filter((x) => x.value).length)
+/** “筛选”里设了几个条件（显示在按钮上，免得看不出为什么数据变少了）。 */
+const activeFilters = computed(
+  () => [customer, brand, period, city, owner, status, company].filter((x) => x.value).length,
+)
 /** 当前在行内显示的快捷筛选：常驻四项 + 有数量的提醒项 + 从“更多”里选中的那一项。 */
 const shownQuick = computed(() => {
   const keys = [...MAIN_QUICK, ...ALERT_QUICK.filter((k) => counts.value[k] > 0)]
@@ -212,7 +212,6 @@ const shownQuick = computed(() => {
 const moreQuick = computed(() => MORE_QUICK.filter((k) => !shownQuick.value.some((q) => q.key === k)).map(quickOf))
 function reset() {
   quick.value = 'ALL'
-  moreFilters.value = false
   keyword.value = customer.value = company.value = brand.value = city.value = owner.value = status.value = ''
   period.value = ''
 }
@@ -226,80 +225,107 @@ defineExpose({ filtered })
 </script>
 <template>
   <div class="contract-table">
-    <!-- 第一行：按待办看。只有“全部”和少数几项常驻，数量为 0 的变淡 -->
-    <div class="quick-row todo-row">
-      <button type="button" :class="['quick', { on: quick === 'ALL' }]" @click="quick = 'ALL'">
-        全部
-        <em>{{ counts.ALL }}</em>
-      </button>
-      <span class="todo-label">待办</span>
-      <button
-        v-for="q in shownQuick"
-        :key="q.key"
-        type="button"
-        :class="[
-          'quick',
-          {
-            on: quick === q.key,
-            zero: !counts[q.key],
-            danger: q.key === 'OVERDUE' && counts[q.key] > 0,
-            warn: ALERT_QUICK.includes(q.key) && counts[q.key] > 0,
-          },
-        ]"
-        @click="quick = quick === q.key ? 'ALL' : q.key"
-      >
-        {{ q.label }}
-        <em>{{ counts[q.key] }}</em>
-      </button>
-      <el-dropdown v-if="moreQuick.length" trigger="click" @command="(k: string) => (quick = k)">
-        <button type="button" class="quick more">
-          更多
-          <el-icon><ArrowDown /></el-icon>
+    <!-- 一行：左边按待办看（数量为 0 的变淡），右边搜索和“筛选”（条件收在弹出的面板里） -->
+    <div class="table-toolbar">
+      <div class="quick-row todo-row">
+        <button type="button" :class="['quick', { on: quick === 'ALL' }]" @click="quick = 'ALL'">
+          全部
+          <em>{{ counts.ALL }}</em>
         </button>
-        <template #dropdown>
-          <el-dropdown-menu>
-            <el-dropdown-item v-for="q in moreQuick" :key="q.key" :command="q.key">
-              <span class="more-item">
-                {{ q.label }}
-                <em>{{ counts[q.key] }}</em>
-              </span>
-            </el-dropdown-item>
-          </el-dropdown-menu>
-        </template>
-      </el-dropdown>
-    </div>
-    <!-- 第二行：按条件找。常用的三个条件在外面，其余点“更多条件”展开 -->
-    <div class="filter-bar contract-filters">
-      <el-input v-model="keyword" clearable :prefix-icon="Search" placeholder="搜索合同号、名称、客户或门店" />
-      <el-select v-model="customer" clearable filterable placeholder="客户">
-        <el-option v-for="c in customers" :key="c" :label="c" :value="c" />
-      </el-select>
-      <el-select v-model="brand" clearable filterable placeholder="业务线">
-        <el-option v-for="c in brands" :key="c" :label="c" :value="c" />
-      </el-select>
-      <el-select v-model="period" clearable placeholder="签订期间">
-        <el-option v-for="p in periods" :key="p.key" :label="p.label" :value="p.key" />
-      </el-select>
-      <template v-if="moreFilters || hiddenActive">
-        <el-select v-model="city" clearable filterable placeholder="城市">
-          <el-option v-for="c in cities" :key="c" :label="c" :value="c" />
-        </el-select>
-        <el-select v-if="showOwner && !compact" v-model="owner" clearable filterable placeholder="负责人">
-          <el-option label="未分配" value="-" />
-          <el-option v-for="c in owners" :key="c" :label="c" :value="c" />
-        </el-select>
-        <el-select v-if="!compact" v-model="status" clearable placeholder="合同状态">
-          <el-option v-for="(n, k) in contractStatusName" :key="k" :label="n" :value="k" />
-        </el-select>
-        <el-select v-if="!compact && companies.length > 1" v-model="company" clearable placeholder="签约主体">
-          <el-option label="未指定" value="-" />
-          <el-option v-for="c in companies" :key="c" :label="c" :value="c" />
-        </el-select>
-      </template>
-      <el-button v-if="!hiddenActive" link class="more-filters" @click="moreFilters = !moreFilters">
-        {{ moreFilters ? '收起' : '更多条件' }}
-      </el-button>
-      <el-button v-if="anyFilter" link type="primary" @click="reset">清除筛选</el-button>
+        <span class="todo-label">待办</span>
+        <button
+          v-for="q in shownQuick"
+          :key="q.key"
+          type="button"
+          :class="[
+            'quick',
+            {
+              on: quick === q.key,
+              zero: !counts[q.key],
+              danger: q.key === 'OVERDUE' && counts[q.key] > 0,
+              warn: ALERT_QUICK.includes(q.key) && counts[q.key] > 0,
+            },
+          ]"
+          @click="quick = quick === q.key ? 'ALL' : q.key"
+        >
+          {{ q.label }}
+          <em>{{ counts[q.key] }}</em>
+        </button>
+        <el-dropdown v-if="moreQuick.length" trigger="click" @command="(k: string) => (quick = k)">
+          <button type="button" class="quick more">
+            更多
+            <el-icon><ArrowDown /></el-icon>
+          </button>
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item v-for="q in moreQuick" :key="q.key" :command="q.key">
+                <span class="more-item">
+                  {{ q.label }}
+                  <em>{{ counts[q.key] }}</em>
+                </span>
+              </el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
+      </div>
+      <div class="toolbar-right">
+        <el-input
+          v-model="keyword"
+          clearable
+          :prefix-icon="Search"
+          placeholder="搜合同号、名称、客户或门店"
+          class="toolbar-search"
+        />
+        <el-popover trigger="click" placement="bottom-end" :width="300" popper-class="contract-filter-popper">
+          <template #reference>
+            <el-button :class="['filter-btn', { active: activeFilters }]">
+              <el-icon><Filter /></el-icon>
+              筛选
+              <em v-if="activeFilters">{{ activeFilters }}</em>
+            </el-button>
+          </template>
+          <div class="filter-panel">
+            <!-- 下拉框不挂到 body 上，否则点选项会被当成点在面板外而关掉面板 -->
+            <label>客户</label>
+            <el-select v-model="customer" clearable filterable placeholder="全部" :teleported="false">
+              <el-option v-for="c in customers" :key="c" :label="c" :value="c" />
+            </el-select>
+            <label>业务线</label>
+            <el-select v-model="brand" clearable filterable placeholder="全部" :teleported="false">
+              <el-option v-for="c in brands" :key="c" :label="c" :value="c" />
+            </el-select>
+            <label>签订期间</label>
+            <el-select v-model="period" clearable placeholder="全部" :teleported="false">
+              <el-option v-for="p in periods" :key="p.key" :label="p.label" :value="p.key" />
+            </el-select>
+            <label>城市</label>
+            <el-select v-model="city" clearable filterable placeholder="全部" :teleported="false">
+              <el-option v-for="c in cities" :key="c" :label="c" :value="c" />
+            </el-select>
+            <template v-if="showOwner && !compact">
+              <label>负责人</label>
+              <el-select v-model="owner" clearable filterable placeholder="全部" :teleported="false">
+                <el-option label="未分配" value="-" />
+                <el-option v-for="c in owners" :key="c" :label="c" :value="c" />
+              </el-select>
+            </template>
+            <template v-if="!compact">
+              <label>合同状态</label>
+              <el-select v-model="status" clearable placeholder="全部" :teleported="false">
+                <el-option v-for="(n, k) in contractStatusName" :key="k" :label="n" :value="k" />
+              </el-select>
+            </template>
+            <template v-if="!compact && companies.length > 1">
+              <label>签约主体</label>
+              <el-select v-model="company" clearable placeholder="全部" :teleported="false">
+                <el-option label="未指定" value="-" />
+                <el-option v-for="c in companies" :key="c" :label="c" :value="c" />
+              </el-select>
+            </template>
+          </div>
+        </el-popover>
+        <el-button v-if="anyFilter" link type="primary" @click="reset">清除</el-button>
+      </div>
     </div>
     <!-- 合计随筛选变化：不筛选时即全部合同的总览 -->
     <div class="contract-sum">
@@ -443,8 +469,49 @@ defineExpose({ filtered })
   </div>
 </template>
 <style scoped>
-.contract-table .quick-row {
-  padding-top: 10px;
+.table-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+  padding: 10px 24px 8px;
+}
+.table-toolbar .quick-row {
+  padding: 0;
+}
+.toolbar-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+.toolbar-search {
+  width: 230px;
+}
+.filter-btn em {
+  margin-left: 4px;
+  min-width: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: #24634f;
+  color: #fff;
+  font-style: normal;
+  font-size: 12px;
+  line-height: 18px;
+}
+.filter-btn.active {
+  border-color: #24634f;
+  color: #24634f;
+}
+.filter-panel {
+  display: grid;
+  grid-template-columns: 64px 1fr;
+  align-items: center;
+  gap: 8px 10px;
+}
+.filter-panel label {
+  color: var(--muted);
+  font-size: 13px;
 }
 .todo-label {
   margin: 0 2px 0 10px;
@@ -490,20 +557,6 @@ defineExpose({ filtered })
   font-style: normal;
   color: var(--muted);
   font-variant-numeric: tabular-nums;
-}
-.more-filters {
-  color: var(--muted);
-}
-.contract-filters {
-  flex-wrap: wrap;
-  gap: 8px;
-  padding: 8px 24px;
-}
-.contract-filters .el-input {
-  max-width: 250px;
-}
-.contract-filters .el-select {
-  width: 118px;
 }
 .contract-sum {
   display: flex;
