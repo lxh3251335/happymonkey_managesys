@@ -163,7 +163,7 @@ class ExcelImportExportTest extends ApiTestSupport {
             List.of(
                 List.of(scenario, "物联网电控箱", "250*300*160", "mini", sup, "是"),
                 List.of(scenario, "总配电箱", "650*850*250", "", sup, "否"),
-                List.of(scenario, "平台及触摸屏软件", "", "", "", "否") // 软件类无规格
+                List.of(scenario, "平台及触摸屏软件", "", "", sup, "否") // 软件类无规格，供应商仍必填
             )
         );
         assertThat(ok("products", "import", products).path("created").asInt()).isEqualTo(3);

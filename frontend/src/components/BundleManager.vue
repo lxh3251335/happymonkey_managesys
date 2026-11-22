@@ -2,8 +2,9 @@
 import { computed, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Delete, Plus, Search } from '@element-plus/icons-vue'
-import { api, canWrite, post, put } from '../api'
-import type { Bundle, Product } from '../types'
+import { api, canSeeCost, canWrite, post, put } from '../api'
+import type { Bundle, Partner, Product } from '../types'
+import { productLabel } from '../products'
 import { money } from '../utils'
 import { dict, loadDictionaries } from '../dictionaries'
 
@@ -21,11 +22,13 @@ const bundles = ref<Bundle[]>([]),
   editingId = ref('')
 const form = ref({
   scenario: '',
+  supplierId: '',
   name: '',
   note: '',
   active: true,
   items: [] as { productId: string; quantity: number }[],
 })
+const suppliers = ref<Partner[]>([])
 
 const scenarios = computed(() => dict.scenarios.map((s) => s.name))
 const selectableScenarios = computed(() =>
@@ -38,13 +41,22 @@ const filtered = computed(() =>
       `${b.scenario}${b.name}${b.items.map((i) => i.name + i.specification).join('')}`.includes(keyword.value.trim()),
   ),
 )
-const label = (p: Product) => `${p.scenario} / ${p.name} / ${p.specification}${p.model ? ' / ' + p.model : ''}`
+const label = productLabel
 /** 同场景的标准品排在前面。 */
+/** 只列这家供应商的标准品，同场景的排在前面。 */
 const productOptions = computed(() =>
-  [...props.products].sort(
-    (a, b) => Number(b.scenario === form.value.scenario) - Number(a.scenario === form.value.scenario),
-  ),
+  props.products
+    .filter((p) => p.supplier_id === form.value.supplierId)
+    .sort((a, b) => Number(b.scenario === form.value.scenario) - Number(a.scenario === form.value.scenario)),
 )
+/** 换了供应商：别家的标准品从组合里去掉。 */
+function onSupplierChange() {
+  form.value.items = form.value.items.filter((i) => {
+    const p = byId.value.get(i.productId)
+    return !p || p.supplier_id === form.value.supplierId
+  })
+  if (!form.value.items.length) form.value.items.push({ productId: '', quantity: 1 })
+}
 const byId = computed(() => new Map(props.products.map((p) => [p.id, p])))
 const formPrice = computed(() => {
   let sum = 0,
@@ -59,6 +71,8 @@ const formPrice = computed(() => {
 
 async function load() {
   bundles.value = await api<Bundle[]>('/bundles').catch(() => [])
+  if (!suppliers.value.length)
+    suppliers.value = (await api<Partner[]>('/partners').catch(() => [])).filter((x) => x.kind === 'SUPPLIER')
 }
 onMounted(() => {
   load()
@@ -70,16 +84,25 @@ function open(b?: Bundle) {
   form.value = b
     ? {
         scenario: b.scenario,
+        supplierId: b.supplier_id || '',
         name: b.name,
         note: b.note || '',
         active: b.active,
         items: b.items.map((i) => ({ productId: i.product_id, quantity: Number(i.quantity) })),
       }
-    : { scenario: scenario.value || '', name: '', note: '', active: true, items: [{ productId: '', quantity: 1 }] }
+    : {
+        scenario: scenario.value || '',
+        supplierId: '',
+        name: '',
+        note: '',
+        active: true,
+        items: [{ productId: '', quantity: 1 }],
+      }
   dialog.value = true
 }
 async function save() {
   const items = form.value.items.filter((i) => i.productId)
+  if (!form.value.supplierId) return ElMessage.warning('请选择供应商')
   if (!form.value.scenario || !form.value.name.trim()) return ElMessage.warning('请选择应用场景并填写组合名称')
   if (!items.length) return ElMessage.warning('组合里至少要有一个标准品')
   if (items.some((i) => !(i.quantity > 0))) return ElMessage.warning('数量要大于 0')
@@ -115,6 +138,12 @@ defineExpose({ open })
       <span class="muted count">共 {{ filtered.length }} 个组合</span>
     </div>
     <el-table :data="filtered" empty-text="还没有标准组合">
+      <el-table-column label="供应商" min-width="130" show-overflow-tooltip>
+        <template #default="{ row }">
+          <span v-if="row.supplier_name">{{ row.supplier_name }}</span>
+          <span v-else class="danger-text">未指定，请编辑补上</span>
+        </template>
+      </el-table-column>
       <el-table-column label="应用场景" prop="scenario" width="120" />
       <el-table-column label="组合名称" min-width="160">
         <template #default="{ row }">
@@ -138,6 +167,14 @@ defineExpose({ open })
           </small>
         </template>
       </el-table-column>
+      <el-table-column v-if="canSeeCost()" label="采购成本" align="right" width="130">
+        <template #default="{ row }">
+          {{ row.reference_cost == null ? '—' : money(row.reference_cost) }}
+          <small v-if="row.reference_cost != null && !row.cost_complete" class="cell-secondary">
+            部分标准品没填采购成本
+          </small>
+        </template>
+      </el-table-column>
       <el-table-column v-if="canWrite()" label="操作" width="80" fixed="right">
         <template #default="{ row }"><el-button link type="primary" @click="open(row)">编辑</el-button></template>
       </el-table-column>
@@ -150,6 +187,11 @@ defineExpose({ open })
       append-to-body
     >
       <el-form label-position="top" class="bundle-form">
+        <el-form-item label="供应商" required>
+          <el-select v-model="form.supplierId" filterable placeholder="选择供应商" @change="onSupplierChange">
+            <el-option v-for="x in suppliers" :key="x.id" :label="x.name" :value="x.id" />
+          </el-select>
+        </el-form-item>
         <el-form-item label="应用场景" required>
           <el-select v-model="form.scenario" filterable placeholder="选择应用场景">
             <el-option v-for="x in selectableScenarios" :key="x" :label="x" :value="x" />
@@ -180,7 +222,12 @@ defineExpose({ open })
       <el-table :data="form.items" size="small" class="editor-table" max-height="360">
         <el-table-column label="标准品" min-width="360">
           <template #default="{ row }">
-            <el-select v-model="row.productId" filterable placeholder="选择标准品">
+            <el-select
+              v-model="row.productId"
+              filterable
+              :placeholder="form.supplierId ? '选择这家供应商的标准品' : '先选供应商'"
+              :disabled="!form.supplierId"
+            >
               <el-option v-for="p in productOptions" :key="p.id" :value="p.id" :label="label(p)" />
             </el-select>
           </template>
@@ -228,7 +275,7 @@ defineExpose({ open })
 }
 .bundle-form {
   display: grid;
-  grid-template-columns: 180px 1fr 80px;
+  grid-template-columns: 200px 160px 1fr 80px;
   gap: 0 14px;
 }
 .span-3 {

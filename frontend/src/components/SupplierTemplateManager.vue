@@ -4,6 +4,7 @@ import { ElMessage } from 'element-plus'
 import { Delete } from '@element-plus/icons-vue'
 import { api, post, canSeeCost } from '../api'
 import type { Offer, Partner, Product, ProjectType, SupplierTemplate } from '../types'
+import { productLabel } from '../products'
 import { day, money, percent, taxName, today } from '../utils'
 
 const emit = defineEmits<{ configure: [string] }>()
@@ -133,8 +134,6 @@ const addable = computed(() => {
   const listed = new Set(form.value.items.map((l) => l.productId))
   return products.value.filter((p) => !listed.has(p.id))
 })
-const productLabel = (p: Product) =>
-  `${p.scenario} / ${p.name}${p.specification ? ' / ' + p.specification : ''}${p.model ? ' / ' + p.model : ''}`
 function addExtra() {
   const p = products.value.find((x) => x.id === extraProductId.value)
   if (!p) return

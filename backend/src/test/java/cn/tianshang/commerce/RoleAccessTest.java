@@ -42,7 +42,18 @@ class RoleAccessTest extends ApiTestSupport {
     private String[] catalog() throws Exception {
         String box = postJson(
             "/api/products",
-            Map.of("scenario", "小象前置仓", "name", "电控箱" + UUID.randomUUID(), "specification", "s", "unit", "台")
+            Map.of(
+                "supplierId",
+                testSupplier(),
+                "scenario",
+                "小象前置仓",
+                "name",
+                "电控箱" + UUID.randomUUID(),
+                "specification",
+                "s",
+                "unit",
+                "台"
+            )
         )
             .path("id")
             .asText();

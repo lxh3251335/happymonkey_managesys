@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
-import { post, upload } from '../api'
-import type { Product } from '../types'
+import { api, post, upload } from '../api'
+import type { Partner, Product } from '../types'
+import { productLabel } from '../products'
 import { activeScenarios, loadDictionaries } from '../dictionaries'
 
 /**
@@ -40,6 +41,8 @@ const file = ref<File>(),
   reading = ref(false),
   dragging = ref(false),
   scenario = ref(''),
+  supplierId = ref(''),
+  suppliers = ref<Partner[]>([]),
   adding = ref<number | null>(null)
 
 watch(
@@ -52,6 +55,10 @@ watch(
     loadDictionaries()
       .then(() => (scenario.value ||= activeScenarios.value[0] || ''))
       .catch(() => {})
+    if (!suppliers.value.length)
+      api<Partner[]>('/partners')
+        .then((r) => (suppliers.value = r.filter((x) => x.kind === 'SUPPLIER')))
+        .catch(() => {})
   },
 )
 
@@ -94,7 +101,7 @@ function onPick(e: Event) {
   ;(e.target as HTMLInputElement).value = ''
 }
 
-const label = (p: Product) => `${p.scenario} / ${p.name} / ${p.specification}${p.model ? ' / ' + p.model : ''}`
+const label = productLabel
 /** 有候选时先列候选，下面接全部产品，方便搜。 */
 function options(r: Row) {
   const ids = new Set(r.candidates.map((c) => c.id))
@@ -123,10 +130,12 @@ const pending = computed(() => rows.value.length - ready.value.length)
 /** 把清单里这一行加进产品库，并选中它。 */
 async function addProduct(r: Row) {
   if (!scenario.value) return ElMessage.warning('请先选择新产品的应用场景')
+  if (!supplierId.value) return ElMessage.warning('请先选择新产品的供应商')
   adding.value = r.row
   try {
     const { id } = await post<{ id: string }>('/products', {
       scenario: scenario.value,
+      supplierId: supplierId.value,
       name: r.name.trim(),
       specification: r.specification.trim(),
       model: r.model.trim(),
@@ -183,6 +192,10 @@ function apply() {
       <span>新产品的应用场景</span>
       <el-select v-model="scenario" filterable size="small" class="scenario">
         <el-option v-for="s in activeScenarios" :key="s" :label="s" :value="s" />
+      </el-select>
+      <span>供应商</span>
+      <el-select v-model="supplierId" filterable size="small" class="scenario" placeholder="选择供应商">
+        <el-option v-for="x in suppliers" :key="x.id" :label="x.name" :value="x.id" />
       </el-select>
     </div>
     <el-table v-if="rows.length" v-loading="reading" :data="rows" size="small" class="editor-table" max-height="440">

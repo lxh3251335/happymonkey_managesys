@@ -83,7 +83,7 @@ class ProductLibraryTest extends ApiTestSupport {
 
     @Test
     void drawingsUploadDownloadAndSoftDelete() throws Exception {
-        String id = postJson("/api/products", input(null, false)).path("id").asText();
+        String id = postJson("/api/products", input(supplier(), false)).path("id").asText();
         String dwg = read(upload(id, "电控箱 总装图.dwg", DWG).andExpect(status().isOk()).andReturn())
             .path("id")
             .asText();
@@ -111,7 +111,7 @@ class ProductLibraryTest extends ApiTestSupport {
 
     @Test
     void viewerCannotUploadDrawings() throws Exception {
-        String id = postJson("/api/products", input(null, false)).path("id").asText();
+        String id = postJson("/api/products", input(supplier(), false)).path("id").asText();
         mvc
             .perform(
                 multipart("/api/products/" + id + "/drawings")

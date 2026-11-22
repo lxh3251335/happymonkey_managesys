@@ -4,6 +4,7 @@ import cn.tianshang.commerce.common.*;
 import cn.tianshang.commerce.dictionary.DictionaryService;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.*;
+import java.math.BigDecimal;
 import java.util.*;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.stereotype.Service;
@@ -137,37 +138,74 @@ public class MasterService {
         );
     }
 
-    /** 标准产品：应用场景（如小象前置仓、快乐猴、冷库）、默认供应商、主流配置标签。 */
+    /**
+     * 标准产品：应用场景（如小象前置仓、快乐猴、冷库）、供应商、采购成本、主流配置标签。
+     * 同一种产品不同供应商是不同的标准品（拿货价不一样），所以供应商必填，唯一性含供应商。
+     */
     public record ProductInput(
         @NotBlank @Size(max = 60) String scenario,
         @NotBlank @Size(max = 200) String name,
         @Size(max = 200) String specification,
         @Size(max = 100) String model,
         @NotBlank @Size(max = 30) String unit,
-        @Size(max = 36) String supplierId,
-        boolean mainstream
-    ) {}
+        @NotBlank(message = "请选择供应商") @Size(max = 36) String supplierId,
+        boolean mainstream,
+        /** 这家供应商的单台拿货价；只有能看成本的角色能填和看。 */
+        @DecimalMin("0") @DecimalMax("999999999") @Digits(integer = 9, fraction = 6) BigDecimal purchaseCost
+    ) {
+        public ProductInput(
+            String scenario,
+            String name,
+            String specification,
+            String model,
+            String unit,
+            String supplierId,
+            boolean mainstream
+        ) {
+            this(scenario, name, specification, model, unit, supplierId, mainstream, null);
+        }
+    }
 
     private String supplier(String id) {
         String v = blankToNull(id);
-        if (v != null) db.one("SELECT id FROM partner WHERE id=? AND kind='SUPPLIER'", v);
+        if (v == null) throw new ApiException("请选择供应商");
+        db.one("SELECT id FROM partner WHERE id=? AND kind='SUPPLIER'", v);
         return v;
+    }
+
+    /** 同一家供应商不能有两条同场景、同名、同规格、同型号的产品。 */
+    private void requireUniqueProduct(ProductInput p, String supplierId, String exceptId) {
+        int n = db.jdbc.queryForObject(
+            "SELECT COUNT(*) FROM product WHERE scenario=? AND name=? AND specification=? AND model=? AND supplier_id=? AND id<>?",
+            Integer.class,
+            p.scenario().trim(),
+            p.name().trim(),
+            Objects.toString(p.specification(), "").trim(),
+            Objects.toString(p.model(), "").trim(),
+            supplierId,
+            exceptId == null ? "" : exceptId
+        );
+        if (n > 0) throw new ApiException("这家供应商已经有同名、同规格、同型号的产品");
     }
 
     @PreAuthorize("hasAnyRole('ADMIN','MANAGER','SALES')")
     @Transactional
     public Map<String, String> product(@Valid ProductInput p) {
         String id = db.id();
+        String scenario = dictionary.scenario(p.scenario(), null);
+        String supplierId = supplier(p.supplierId());
+        requireUniqueProduct(p, supplierId, null);
         db.jdbc.update(
-            "INSERT INTO product(id,scenario,name,specification,model,unit,supplier_id,mainstream) VALUES(?,?,?,?,?,?,?,?)",
+            "INSERT INTO product(id,scenario,name,specification,model,unit,supplier_id,mainstream,purchase_cost) VALUES(?,?,?,?,?,?,?,?,?)",
             id,
-            dictionary.scenario(p.scenario(), null),
+            scenario,
             p.name().trim(),
             Objects.toString(p.specification(), "").trim(),
             Objects.toString(p.model(), "").trim(),
             p.unit(),
-            supplier(p.supplierId()),
-            p.mainstream()
+            supplierId,
+            p.mainstream(),
+            Roles.canSeeCost() ? p.purchaseCost() : null
         );
         db.audit("PRODUCT_CREATED", id, p.name());
         return Map.of("id", id);
@@ -221,15 +259,19 @@ public class MasterService {
     @Transactional
     public void updateProduct(String id, @Valid ProductInput p) {
         var original = db.one("SELECT * FROM product WHERE id=? FOR UPDATE", id);
+        String supplierId = supplier(p.supplierId());
+        requireUniqueProduct(p, supplierId, id);
         db.jdbc.update(
-            "UPDATE product SET scenario=?,name=?,specification=?,model=?,unit=?,supplier_id=?,mainstream=? WHERE id=?",
+            "UPDATE product SET scenario=?,name=?,specification=?,model=?,unit=?,supplier_id=?,mainstream=?,purchase_cost=? WHERE id=?",
             dictionary.scenario(p.scenario(), db.text(original, "scenario")),
             p.name().trim(),
             Objects.toString(p.specification(), "").trim(),
             Objects.toString(p.model(), "").trim(),
             p.unit(),
-            supplier(p.supplierId()),
+            supplierId,
             p.mainstream(),
+            // 看不到成本的角色改产品时，采购成本保持原值
+            Roles.canSeeCost() ? p.purchaseCost() : original.get("purchase_cost"),
             id
         );
         db.audit(

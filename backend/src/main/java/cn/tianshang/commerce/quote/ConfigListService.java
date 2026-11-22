@@ -114,13 +114,15 @@ public class ConfigListService {
 
     private static String label(Map<String, Object> p) {
         String model = Objects.toString(p.get("model"), "");
+        String supplier = Objects.toString(p.get("supplier_name"), "");
         return (
             p.get("scenario") +
             " / " +
             p.get("name") +
             " / " +
             p.get("specification") +
-            (model.isEmpty() ? "" : " / " + model)
+            (model.isEmpty() ? "" : " / " + model) +
+            (supplier.isEmpty() ? " · 未指定供应商" : " · " + supplier)
         );
     }
 }

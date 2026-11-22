@@ -44,6 +44,7 @@ const freshProduct = () => ({
   unit: '台',
   supplierId: '',
   mainstream: false,
+  purchaseCost: undefined as number | undefined,
 })
 const scenario = ref(''),
   drawingsOpen = ref(false),
@@ -122,6 +123,7 @@ function edit(row: Partner | Product) {
       unit: p.unit,
       supplierId: p.supplier_id || '',
       mainstream: p.mainstream,
+      purchaseCost: p.purchase_cost == null ? undefined : Number(p.purchase_cost),
     }
   } else {
     const p = row as Partner
@@ -158,14 +160,18 @@ async function afterImport() {
 const kindName = computed(() => (tab.value === 'PRODUCT' ? '标准产品' : tab.value === 'CUSTOMER' ? '客户' : '供应商'))
 async function save() {
   if (
-    tab.value === 'PRODUCT' ? !product.value.scenario.trim() || !product.value.name.trim() : !partner.value.name.trim()
+    tab.value === 'PRODUCT'
+      ? !product.value.scenario.trim() || !product.value.name.trim() || !product.value.supplierId
+      : !partner.value.name.trim()
   )
     return ElMessage.warning('请填写必填资料')
   busy.value = true
   try {
     const path = tab.value === 'PRODUCT' ? '/products' : '/partners'
     const body =
-      tab.value === 'PRODUCT' ? { ...product.value, supplierId: product.value.supplierId || null } : partner.value
+      tab.value === 'PRODUCT'
+        ? { ...product.value, supplierId: product.value.supplierId, purchaseCost: product.value.purchaseCost ?? null }
+        : partner.value
     if (editingId.value) await put(`${path}/${editingId.value}`, body)
     else await post(path, body)
     dialog.value = false
@@ -269,6 +275,15 @@ onMounted(load)
           </el-table-column>
           <el-table-column label="规格" prop="specification" min-width="130" />
           <el-table-column label="型号" prop="model" min-width="90" />
+          <el-table-column label="供应商" min-width="130" show-overflow-tooltip>
+            <template #default="{ row }">
+              <span v-if="row.supplier_name">{{ row.supplier_name }}</span>
+              <span v-else class="danger-text">未指定，请编辑补上</span>
+            </template>
+          </el-table-column>
+          <el-table-column v-if="canSeeCost()" label="采购成本" align="right" min-width="110">
+            <template #default="{ row }">{{ row.purchase_cost == null ? '—' : money(row.purchase_cost) }}</template>
+          </el-table-column>
           <el-table-column label="电气件" width="80" align="center">
             <template #default="{ row }">
               <el-button link :type="row.components ? 'primary' : 'info'" @click="openComponents(row)">
@@ -359,10 +374,20 @@ onMounted(load)
               <small class="muted">新场景请在 系统管理 → 数据字典 → 应用场景 中添加</small>
             </el-form-item>
             <el-form-item label="单位" required><el-input v-model="product.unit" maxlength="30" /></el-form-item>
-            <el-form-item label="供应商">
-              <el-select v-model="product.supplierId" filterable clearable placeholder="未指定">
+            <el-form-item label="供应商" required>
+              <el-select v-model="product.supplierId" filterable placeholder="选择供应商">
                 <el-option v-for="x in suppliers" :key="x.id" :label="x.name" :value="x.id" />
               </el-select>
+              <small class="muted">同一种产品不同供应商各建一条，价格分开记</small>
+            </el-form-item>
+            <el-form-item v-if="canSeeCost()" label="采购成本（元 / 台）">
+              <el-input-number
+                v-model="product.purchaseCost"
+                :min="0"
+                :precision="2"
+                :controls="false"
+                placeholder="这家供应商的拿货价"
+              />
             </el-form-item>
           </div>
           <el-form-item label="产品名称" required><el-input v-model="product.name" maxlength="200" /></el-form-item>
