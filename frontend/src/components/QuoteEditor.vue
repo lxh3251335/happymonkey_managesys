@@ -2,8 +2,9 @@
 import { ref, computed, watch, nextTick, onBeforeUnmount, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Plus, Delete } from '@element-plus/icons-vue'
-import { api, canApprove, canSeeCost, post, put } from '../api'
+import { api, canApprove, canSeeCost, post, put, upload } from '../api'
 import CitySelect from './CitySelect.vue'
+import ConfigListDialog from './ConfigListDialog.vue'
 import { activeCompanies, companyLabel, defaultCompany, loadDictionaries } from '../dictionaries'
 import type {
   Partner,
@@ -26,7 +27,7 @@ const props = defineProps<{
   seed?: Quote
   edit?: boolean
 }>()
-const emit = defineEmits<{ 'update:modelValue': [boolean]; saved: [string] }>()
+const emit = defineEmits<{ 'update:modelValue': [boolean]; saved: [string]; 'products-changed': [] }>()
 
 interface LineDraft {
   productId: string
@@ -186,6 +187,7 @@ watch(
     }
     prefillNote.value = ''
     prefillSnapshot.value = ''
+    configFile.value = undefined
     lines.value = props.seed
       ? props.seed.items.map((i) => ({
           productId: i.product_id,
@@ -323,6 +325,75 @@ function fit() {
 onMounted(() => window.addEventListener('resize', fit))
 onBeforeUnmount(() => window.removeEventListener('resize', fit))
 watch([mode, prefillNote], () => nextTick(fit))
+// ---------- 按客户的配置清单带入 ----------
+const configOpen = ref(false),
+  /** 带入时用的清单文件；保存报价后存到门店附件里。 */
+  configFile = ref<File>(),
+  /** 当前项目类型（客户模板）里的产品，清单里同名同规格有几个时优先选它们。 */
+  preferredProducts = ref<string[]>([])
+/** 当前客户 / 项目类型 / 供应商对应的模板明细（没选项目类型时为空）。 */
+async function templateLines(): Promise<PrefillLine[]> {
+  if (!form.value.projectTypeId) return []
+  const params = new URLSearchParams()
+  if (form.value.supplierId) params.set('supplierId', form.value.supplierId)
+  if (customerId.value) params.set('customerId', customerId.value)
+  const q = params.size ? `?${params}` : ''
+  return (
+    await api<{ items: PrefillLine[] }>(`/project-types/${form.value.projectTypeId}/prefill${q}`).catch(() => ({
+      items: [] as PrefillLine[],
+    }))
+  ).items
+}
+async function openConfig() {
+  preferredProducts.value = (await templateLines()).map((i) => i.product_id)
+  configOpen.value = true
+}
+/**
+ * 清单里的产品和数量替换当前明细。售价、成本按当前的客户报价模板 / 项目类型标准配置 / 供应商成本模板取，
+ * 模板里没有的产品取它最近一次的报价，都没有的留空由人填。
+ */
+async function applyConfig(r: { lines: { productId: string; quantity: number }[]; file: File }) {
+  configFile.value = r.file
+  const prices = new Map<string, PrefillLine>()
+  for (const i of await templateLines()) prices.set(i.product_id, i)
+  const n = (v: number | null | undefined) => (v == null ? undefined : Number(v))
+  lines.value = r.lines.map((l) => {
+    const line: LineDraft = { ...blankLine(), productId: l.productId, quantity: l.quantity }
+    const p = prices.get(l.productId)
+    if (p) {
+      line.unitPrice = n(p.unit_price)
+      line.materialCost = n(p.material_cost)
+      line.laborCost = n(p.labor_cost)
+      line.financeCost = n(p.finance_cost)
+    } else selectProduct(line)
+    return line
+  })
+  // 明细已按清单改过：之后换客户、项目类型不再自动按模板覆盖
+  prefillSnapshot.value = ''
+  const noPrice = lines.value.filter((l) => l.unitPrice == null).length
+  prefillNote.value =
+    `已按客户配置清单「${r.file.name}」带入 ${lines.value.length} 项` +
+    (noPrice ? `，${noPrice} 项没有参考售价，请填写` : '，售价按模板或最近一次报价带出，请核对') +
+    '。清单会在保存后存到门店附件里。'
+}
+/** 保存报价后把配置清单存到门店附件；同一个文件已存过时不重复存。 */
+async function keepConfigFile(quoteId: string) {
+  if (!configFile.value) return
+  try {
+    const projectId =
+      mode.value === 'existing'
+        ? form.value.projectId
+        : (await api<{ project_id: string }>(`/quotes/${quoteId}`)).project_id
+    const data = new FormData()
+    data.append('category', 'CONFIG_LIST')
+    data.append('file', configFile.value)
+    await upload(`/projects/${projectId}/attachments`, data)
+  } catch (e) {
+    const msg = (e as Error).message
+    if (!msg.includes('重复')) ElMessage.warning(`报价已保存，但配置清单没有存进门店附件：${msg}`)
+  }
+}
+
 async function addLine() {
   lines.value.push(blankLine())
   await nextTick()
@@ -371,6 +442,7 @@ async function save() {
       await put(`/quotes/${props.seed.id}`, body)
       id = props.seed.id
     } else id = (await post<{ id: string }>('/quotes', body)).id
+    await keepConfigFile(id)
     emit('update:modelValue', false)
     emit('saved', id)
     ElMessage.success(
@@ -536,6 +608,7 @@ async function save() {
         <el-button v-if="form.projectTypeId" size="small" link type="primary" :loading="filling" @click="applyTemplate">
           按模板重新带出
         </el-button>
+        <el-button size="small" @click="openConfig">按客户配置清单带入</el-button>
         <el-button :icon="Plus" size="small" @click="addLine">添加产品</el-button>
       </div>
       <el-table ref="tableRef" :data="lines" class="editor-table qe-table" size="small" :max-height="tableMax">
@@ -654,6 +727,13 @@ async function save() {
       <el-button @click="emit('update:modelValue', false)">取消</el-button>
       <el-button type="primary" :loading="busy" @click="save">{{ edit ? '保存修改' : '保存报价草稿' }}</el-button>
     </template>
+    <ConfigListDialog
+      v-model="configOpen"
+      :products="products"
+      :preferred="preferredProducts"
+      @apply="applyConfig"
+      @product-added="emit('products-changed')"
+    />
   </el-dialog>
 </template>
 <style scoped>

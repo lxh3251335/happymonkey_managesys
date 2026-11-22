@@ -203,6 +203,8 @@ export const actionName: Record<string, string> = {
   PROJECT_UPDATED: '修改门店',
   PROJECT_DELETED: '删除门店',
   PROJECT_DELIVERY: '发货物流',
+  PROJECT_ATTACHMENT_UPLOADED: '上传门店附件',
+  PROJECT_ATTACHMENT_DELETED: '删除门店附件',
   PROJECT_OWNER_ASSIGNED: '分配负责人',
   PROJECT_TYPE_SAVED: '保存项目类型',
   QUOTE_CREATED: '新建报价',

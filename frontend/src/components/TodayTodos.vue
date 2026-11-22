@@ -1,11 +1,13 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
+import { Bell } from '@element-plus/icons-vue'
 import { useRouter } from 'vue-router'
 import { api } from '../api'
 import { money } from '../utils'
 import { onDataChanged } from '../dataEvents'
+import { openFromTopbar } from '../navigation'
 
-/** 首页顶部的今日待办：今天需要有人处理的事，按当前角色排好顺序，点一下直接到对应的列表。 */
+/** 顶栏的今日待办：今天需要有人处理的事，按当前角色排好顺序；点开是清单，点一项直接到对应的列表。 */
 interface Todo {
   key: string
   label: string
@@ -19,6 +21,11 @@ const items = ref<Todo[]>([]),
   loaded = ref(false)
 // 需要尽快处理的用醒目的颜色
 const URGENT = new Set(['CHANGES', 'OVERDUE', 'LATE_SHIP'])
+const total = computed(() => items.value.length)
+function go(link: string) {
+  document.body.click() // 关掉弹出的清单
+  openFromTopbar(router, link)
+}
 
 async function load() {
   items.value = await api<Todo[]>('/todos').catch(() => [])
@@ -28,98 +35,107 @@ onDataChanged(load)
 onMounted(load)
 </script>
 <template>
-  <section v-if="loaded" class="today" aria-label="今日待办">
-    <h2>今日待办</h2>
-    <p v-if="!items.length" class="none">今天没有需要处理的事。</p>
-    <div v-else class="cards">
-      <button
-        v-for="i in items"
-        :key="i.key"
-        type="button"
-        :class="['card', { urgent: URGENT.has(i.key) }]"
-        @click="router.push(i.link)"
-      >
-        <span class="label">{{ i.label }}</span>
-        <span class="count">
-          <strong>{{ i.count }}</strong>
-          {{ i.unit }}
-        </span>
-        <span v-if="i.amount != null" class="amount">{{ money(i.amount) }}</span>
+  <el-popover
+    v-if="loaded"
+    trigger="click"
+    placement="bottom-end"
+    :width="320"
+    popper-class="today-popper"
+    @show="load"
+  >
+    <template #reference>
+      <button type="button" :class="['today-btn', { has: items.length }]" aria-label="今日待办">
+        <el-icon><Bell /></el-icon>
+        待办
+        <em v-if="items.length">{{ total }}</em>
       </button>
-    </div>
-  </section>
+    </template>
+    <p v-if="!items.length" class="none">今天没有需要处理的事。</p>
+    <ul v-else class="list">
+      <li v-for="i in items" :key="i.key">
+        <button type="button" :class="{ urgent: URGENT.has(i.key) }" @click="go(i.link)">
+          <span class="label">{{ i.label }}</span>
+          <span class="count">
+            {{ i.count }} {{ i.unit }}
+            <template v-if="i.amount != null">· {{ money(i.amount) }}</template>
+          </span>
+        </button>
+      </li>
+    </ul>
+  </el-popover>
 </template>
 <style scoped>
-.today {
-  display: flex;
+.today-btn {
+  display: inline-flex;
   align-items: center;
-  gap: 16px;
-  margin-bottom: 16px;
+  gap: 5px;
+  height: 32px;
+  padding: 0 11px;
+  border: 1px solid #d3dbd3;
+  border-radius: 6px;
+  background: #fff;
+  color: #33443b;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
 }
-h2 {
-  margin: 0;
-  flex: none;
-  font-size: 15px;
-  font-weight: 700;
-  color: var(--ink);
+.today-btn:hover {
+  border-color: #24634f;
+  color: #24634f;
+}
+.today-btn em {
+  min-width: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: #b54a2c;
+  color: #fff;
+  font-style: normal;
+  font-size: 12px;
+  line-height: 18px;
+  text-align: center;
 }
 .none {
-  margin: 0;
+  margin: 4px 0;
   color: var(--muted);
-  font-size: 14px;
+  font-size: 13px;
 }
-.cards {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
+.list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
 }
-.card {
+.list button {
   display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 2px;
-  min-width: 132px;
-  padding: 9px 14px;
-  border: 1px solid #d3dbd3;
-  border-left: 3px solid #8baf9d;
-  border-radius: 8px;
-  background: #fff;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  width: 100%;
+  padding: 8px 6px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
   color: var(--ink);
   font: inherit;
+  font-size: 13px;
   text-align: left;
   cursor: pointer;
 }
-.card:hover {
-  border-color: #24634f;
-  background: #f5f9f6;
+.list button:hover {
+  background: #f3f6f2;
 }
-.card:focus-visible {
-  outline: 2px solid #24634f;
-  outline-offset: 2px;
-}
-.card.urgent {
-  border-left-color: #b54a2c;
-}
-.label {
-  font-size: 13px;
-  color: #33443b;
+.list .urgent .label::before {
+  content: '';
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-right: 6px;
+  border-radius: 50%;
+  background: #b54a2c;
+  vertical-align: middle;
 }
 .count {
-  font-size: 13px;
+  flex: none;
   color: var(--muted);
-}
-.count strong {
-  font-size: 20px;
-  font-weight: 700;
-  color: var(--ink);
-  font-variant-numeric: tabular-nums;
-}
-.urgent .count strong {
-  color: #a23f24;
-}
-.amount {
-  font-size: 13px;
-  color: #33443b;
   font-variant-numeric: tabular-nums;
 }
 </style>
