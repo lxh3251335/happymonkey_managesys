@@ -47,7 +47,13 @@ function openContract() {
     paymentTerms: '',
   }
   dueDate.value = afterDays(30)
-  loadDictionaries().catch(() => {})
+  // 签约主体字典可能还没加载完：加载完后再补上默认主体，否则下拉框显示“请选择”
+  loadDictionaries()
+    .then(() => {
+      if (accepting.value && !contractForm.value.companyId)
+        contractForm.value.companyId = defaultCompany.value?.id || ''
+    })
+    .catch(() => {})
   accepting.value = true
   // 门店还没有合同号：按该客户的编号规律预填下一个合同号（可改）
   if (!q.contract_no && q.customer_id)

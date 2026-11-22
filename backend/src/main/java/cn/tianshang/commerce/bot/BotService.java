@@ -33,12 +33,10 @@ public class BotService {
 
     private static final Pattern MENTIONS = Pattern.compile("^(@\\S+\\s+)+");
     private static final Pattern BIND = Pattern.compile("^绑定\\s*(\\d{6,10})$");
-    private static final Pattern CONFIRM = Pattern.compile(
-        "^(确认|确定|是|对|好|好的|可以|ok|yes|y)[。.!！]?$",
-        Pattern.CASE_INSENSITIVE
-    );
+    // 只认明确的“确认”：“好”“对”“是”这类话在聊天里太常见，群里随口一句就可能把内容写进去
+    private static final Pattern CONFIRM = Pattern.compile("^(确认|确定)[。.!！]?$");
     private static final Pattern CANCEL = Pattern.compile(
-        "^(取消|不|不要|算了|否|no|n)[。.!！]?$",
+        "^(取消|不要|算了|否|no)[。.!！]?$",
         Pattern.CASE_INSENSITIVE
     );
     private static final Pattern COMMAND = Pattern.compile(
@@ -92,7 +90,7 @@ public class BotService {
     }
 
     private static final String UNBOUND =
-        "你还没有绑定系统账号。请登录项目经营管理系统，在“系统设置 → 账户安全”里点“生成绑定码”，把得到的 8 位数字发给我，例如：\n绑定 12345678";
+        "你还没有绑定系统账号。请登录项目经营管理系统，在“系统管理 → 账户安全”里点“生成绑定码”，把得到的 8 位数字发给我，例如：\n绑定 12345678";
 
     public String handle(BotMessage m) {
         String text = clean(m.text());
@@ -165,6 +163,8 @@ public class BotService {
             String reply = entries.delivery(key, body);
             if (reply != null) return reply;
         }
+        // 有等待确认的预览时，对方多半是在回应它：提示怎么确认，而不是说没看懂
+        if (entries.waiting(key)) return "还有一份预览在等你确认。要登记请回复“确认”，放弃请回复“取消”。";
         return "没看懂这条消息。发“帮助”看我能做什么。";
     }
 

@@ -31,9 +31,10 @@ const DIM_LIMIT = 10
 /** 业务（品牌）筛选，空字符串为全部业务；写入地址栏便于分享。 */
 const brand = ref(String(route.query.brand || '')),
   group = ref(brand.value ? '' : String(route.query.group || ''))
-/** 业务选择器的值：'' 全部；'g:集团' 整个集团；'l:业务线' 单条业务线。 */
+/** 业务选择器的值：ALL 全部；'g:集团' 整个集团；'l:业务线' 单条业务线。 */
 const scope = computed({
-  get: () => (brand.value ? `l:${brand.value}` : group.value ? `g:${group.value}` : ''),
+  // “全部”用 ALL：下拉框把空字符串当作没选，会显示“请选择”
+  get: () => (brand.value ? `l:${brand.value}` : group.value ? `g:${group.value}` : 'ALL'),
   set: (v: string) => {
     brand.value = v.startsWith('l:') ? v.slice(2) : ''
     group.value = v.startsWith('g:') ? v.slice(2) : ''
@@ -177,7 +178,7 @@ const openQuote = (q: Quote) => router.push(`/quotes?detail=${q.id}`)
       </template>
       <div class="biz-switch" role="group" aria-label="按业务筛选">
         <el-select v-model="scope" size="small" class="scope-select" :disabled="loading || !data">
-          <el-option label="全部业务" value="" />
+          <el-option label="全部业务" value="ALL" />
           <el-option-group v-for="g in scopeGroups" :key="g.group" :label="g.group">
             <el-option :label="`${g.group}（全部）`" :value="`g:${g.group}`" />
             <el-option v-for="l in g.lines" :key="l" :label="l" :value="`l:${l}`" />

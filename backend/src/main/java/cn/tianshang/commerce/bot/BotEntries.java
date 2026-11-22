@@ -85,6 +85,12 @@ class BotEntries {
         return p.run().get();
     }
 
+    /** 这个人有没有还在有效期内、等待确认的预览。 */
+    boolean waiting(String key) {
+        var p = pending.get(key);
+        return p != null && !p.at().plus(PENDING_TTL).isBefore(Instant.now());
+    }
+
     String cancel(String key) {
         return pending.remove(key) == null ? "现在没有等待确认的内容。" : "已取消，什么都没有登记。";
     }

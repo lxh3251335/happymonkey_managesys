@@ -19,7 +19,8 @@ const split = (n: number | null) => (n == null ? '—' : Number(n).toLocaleStrin
           <span class="muted">/ {{ quote.code }}</span>
         </p>
       </div>
-      <StatusTag :status="quote.status" />
+      <StatusTag v-if="quote.stage" :status="quote.stage" kind="stage" />
+      <StatusTag v-else :status="quote.status" />
     </div>
     <div class="detail-meta">
       <span>业务线：{{ quote.brand }}</span>

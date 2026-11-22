@@ -77,7 +77,6 @@ onMounted(() => loadBusinesses().catch(() => undefined))
       <div class="sidebar-bottom">
         <span class="online-dot"></span>
         企业工作空间
-        <small>V 0.1</small>
       </div>
     </aside>
     <div class="main-shell">
