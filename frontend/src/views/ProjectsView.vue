@@ -4,8 +4,10 @@ import { onDataChanged } from '../dataEvents'
 import { useRoute, useRouter } from 'vue-router'
 import { useUrlState } from '../urlState'
 import { ElMessage } from 'element-plus'
-import { CopyDocument, Plus, Refresh, Search } from '@element-plus/icons-vue'
+import { CopyDocument, Plus } from '@element-plus/icons-vue'
 import PageHeader from '../components/PageHeader.vue'
+import FilterToolbar from '../components/FilterToolbar.vue'
+import QuickMore from '../components/QuickMore.vue'
 import BusinessSelect from '../components/BusinessSelect.vue'
 import CitySelect from '../components/CitySelect.vue'
 import ExcelTools from '../components/ExcelTools.vue'
@@ -84,6 +86,23 @@ const QUICK: { key: string; label: string; test: (p: Project) => boolean }[] = [
 const showOwner = computed(() => session.user?.role !== 'SALES')
 const customers = computed(() => partners.value.filter((p) => p.kind === 'CUSTOMER'))
 const cities = computed(() => [...new Set(rows.value.map((p) => p.city).filter((c): c is string => !!c))].sort())
+const brands = computed(() => [...new Set(rows.value.map((p) => p.brand).filter(Boolean))].sort())
+/** 常驻的快捷标签；其余收进“更多”，笔记本宽度下放得下一行。 */
+const MAIN_QUICK = ['ALL', 'PENDING', 'LATE', 'NO_ADDRESS']
+const mainQuick = computed(() => QUICK.filter((q) => MAIN_QUICK.includes(q.key)))
+const moreQuick = computed(() =>
+  QUICK.filter((q) => !MAIN_QUICK.includes(q.key)).map((q) => ({
+    key: q.key,
+    label: q.label,
+    count: counts.value[q.key],
+  })),
+)
+const activeFilters = computed(() => [customer, brand, city, owner].filter((x) => x.value).length)
+const anyFilter = computed(() => !!keyword.value || activeFilters.value > 0 || quick.value !== 'ALL')
+function reset() {
+  keyword.value = customer.value = brand.value = city.value = owner.value = ''
+  quick.value = 'ALL'
+}
 /** 除“范围”以外的筛选结果，用于统计两个范围各有多少门店。 */
 const matched = computed(() => {
   const k = keyword.value.trim().toLowerCase()
@@ -236,6 +255,7 @@ async function copyDelivery(p: Project) {
 }
 
 // ---------- 负责人 ----------
+const tableRef = ref<{ clearSelection: () => void }>()
 const selected = ref<Project[]>([]),
   assignDialog = ref(false),
   assign = ref({ ownerId: '', includeContracts: true })
@@ -280,14 +300,20 @@ onMounted(async () => {
     </PageHeader>
     <el-alert v-if="error" :title="error" type="error" :closable="false" />
     <div class="panel">
-      <div class="quick-row">
+      <FilterToolbar
+        v-model="keyword"
+        placeholder="搜门店、编号、收货人、电话、地址或运单号"
+        :active-filters="activeFilters"
+        :any-filter="anyFilter"
+        @reset="reset"
+      >
         <el-radio-group v-model="scope" size="small" class="scope-switch">
           <el-radio-button value="DEAL">已成交 {{ scopeCounts.DEAL }}</el-radio-button>
-          <el-radio-button value="QUOTING">报价中（未签合同） {{ scopeCounts.QUOTING }}</el-radio-button>
+          <el-radio-button value="QUOTING">报价中 {{ scopeCounts.QUOTING }}</el-radio-button>
         </el-radio-group>
         <span class="quick-sep"></span>
         <button
-          v-for="q in QUICK"
+          v-for="q in mainQuick"
           :key="q.key"
           type="button"
           :class="['quick', { on: quick === q.key, warn: q.key === 'LATE' && counts.LATE > 0 }]"
@@ -296,33 +322,37 @@ onMounted(async () => {
           {{ q.label }}
           <em>{{ counts[q.key] }}</em>
         </button>
-      </div>
-      <div class="filter-bar project-filters">
-        <el-input
-          v-model="keyword"
-          clearable
-          :prefix-icon="Search"
-          placeholder="门店、编号、收货人、电话、地址或运单号"
-        />
-        <el-select v-model="customer" clearable filterable placeholder="全部客户">
-          <el-option v-for="c in customers" :key="c.id" :label="c.name" :value="c.id" />
-        </el-select>
-        <BusinessSelect v-model="brand" clearable placeholder="全部业务线" class="business-filter" />
-        <el-select v-model="city" clearable filterable placeholder="全部城市">
-          <el-option label="未填城市" value="未填" />
-          <el-option v-for="c in cities" :key="c" :label="c" :value="c" />
-        </el-select>
-        <el-select v-if="showOwner" v-model="owner" clearable filterable placeholder="全部负责人">
-          <el-option label="未分配负责人" value="-" />
-          <el-option v-for="o in dict.owners" :key="o.id" :label="o.display_name" :value="o.id" />
-        </el-select>
-        <el-button :icon="Refresh" @click="load">刷新</el-button>
-        <el-button v-if="canApprove()" :disabled="!selected.length" @click="assignDialog = true">
-          分配负责人{{ selected.length ? `（${selected.length}）` : '' }}
-        </el-button>
-        <span class="filter-count">共 {{ filtered.length }} 个项目</span>
+        <QuickMore :items="moreQuick" :current="quick" @pick="(k) => (quick = k)" />
+        <template #filters>
+          <label>客户</label>
+          <el-select v-model="customer" clearable filterable placeholder="全部" :teleported="false">
+            <el-option v-for="c in customers" :key="c.id" :label="c.name" :value="c.id" />
+          </el-select>
+          <label>业务线</label>
+          <el-select v-model="brand" clearable filterable placeholder="全部" :teleported="false">
+            <el-option v-for="c in brands" :key="c" :label="c" :value="c" />
+          </el-select>
+          <label>城市</label>
+          <el-select v-model="city" clearable filterable placeholder="全部" :teleported="false">
+            <el-option label="未填城市" value="未填" />
+            <el-option v-for="c in cities" :key="c" :label="c" :value="c" />
+          </el-select>
+          <template v-if="showOwner">
+            <label>负责人</label>
+            <el-select v-model="owner" clearable filterable placeholder="全部" :teleported="false">
+              <el-option label="未分配" value="-" />
+              <el-option v-for="o in dict.owners" :key="o.id" :label="o.display_name" :value="o.id" />
+            </el-select>
+          </template>
+        </template>
+      </FilterToolbar>
+      <div v-if="canApprove() && selected.length" class="selection-bar">
+        已选 {{ selected.length }} 个门店
+        <el-button size="small" type="primary" @click="assignDialog = true">分配负责人</el-button>
+        <el-button size="small" link @click="tableRef?.clearSelection()">取消选择</el-button>
       </div>
       <el-table
+        ref="tableRef"
         :data="filtered.slice((page - 1) * PAGE, page * PAGE)"
         :empty-text="scope === 'DEAL' ? '没有符合条件的已成交项目' : '没有报价中的项目'"
         row-key="id"
@@ -490,17 +520,6 @@ onMounted(async () => {
 .scope-switch {
   margin-right: 2px;
 }
-.project-filters {
-  flex-wrap: wrap;
-  gap: 8px;
-}
-.project-filters > .el-input {
-  max-width: 280px;
-}
-.project-filters > .el-select,
-.business-filter {
-  width: 140px;
-}
 .ship-tag {
   display: inline-block;
   padding: 1px 8px;
@@ -542,5 +561,16 @@ onMounted(async () => {
   font-size: 14px;
   font-weight: 600;
   color: #253731;
+}
+.selection-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 24px 8px;
+  padding: 6px 12px;
+  border-radius: 6px;
+  background: #edf4ef;
+  font-size: 13px;
+  color: var(--ink);
 }
 </style>

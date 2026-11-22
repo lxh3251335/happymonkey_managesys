@@ -4,9 +4,11 @@ import { onDataChanged } from '../dataEvents'
 import { useRoute, useRouter } from 'vue-router'
 import { useUrlState } from '../urlState'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { ArrowDown, Plus, Search } from '@element-plus/icons-vue'
+import { ArrowDown, Plus } from '@element-plus/icons-vue'
 import PageHeader from '../components/PageHeader.vue'
 import StatusTag from '../components/StatusTag.vue'
+import FilterToolbar from '../components/FilterToolbar.vue'
+import QuickMore from '../components/QuickMore.vue'
 import QuoteEditor from '../components/QuoteEditor.vue'
 import QuoteDetail from '../components/QuoteDetail.vue'
 import CostCorrection from '../components/CostCorrection.vue'
@@ -133,6 +135,28 @@ const base = computed(() => {
 const counts = computed(() => Object.fromEntries(STAGES.map((s) => [s.key, base.value.filter(s.test).length])))
 const filtered = computed(() => base.value.filter((STAGES.find((s) => s.key === quick.value) || STAGES[0]).test))
 watch([keyword, customer, quick, incomplete], () => (page.value = 1))
+/** 常驻：跟进中的几个阶段，以及有数量时的“已过有效期”；已转合同、未成交、全部收进“更多”。 */
+const mainStages = computed(() =>
+  STAGES.filter(
+    (s) =>
+      ['ACTIVE', 'DRAFT', 'ISSUED', 'ACCEPTED'].includes(s.key) ||
+      (s.key === 'EXPIRED' && (counts.value.EXPIRED > 0 || quick.value === 'EXPIRED')),
+  ),
+)
+const moreStages = computed(() =>
+  STAGES.filter((s) => ['CONTRACTED', 'LOST', 'ALL'].includes(s.key)).map((s) => ({
+    key: s.key,
+    label: s.label,
+    count: counts.value[s.key],
+  })),
+)
+const activeFilters = computed(() => Number(!!customer.value) + Number(incomplete.value))
+const anyFilter = computed(() => !!keyword.value || activeFilters.value > 0 || quick.value !== 'ACTIVE')
+function reset() {
+  keyword.value = customer.value = ''
+  incomplete.value = false
+  quick.value = 'ACTIVE'
+}
 /** 待客户确认的报价过了有效期：需要重新报价或标记未成交。 */
 const expired = (q: Quote) => q.stage === 'ISSUED' && !!q.valid_until && day(q.valid_until) < today()
 
@@ -379,28 +403,32 @@ onMounted(async () => {
     </PageHeader>
     <el-alert v-if="error" :title="error" type="error" :closable="false" />
     <div class="panel">
-      <div class="quick-row">
-        <template v-for="s in STAGES" :key="s.key">
-          <span v-if="s.key === 'CONTRACTED'" class="quick-sep"></span>
-          <button
-            v-if="s.key !== 'EXPIRED' || counts.EXPIRED || quick === 'EXPIRED'"
-            type="button"
-            :class="['quick', { on: quick === s.key }]"
-            @click="quick = s.key"
-          >
-            {{ s.label }}
-            <em>{{ counts[s.key] }}</em>
-          </button>
+      <FilterToolbar
+        v-model="keyword"
+        placeholder="搜项目、客户或报价编号"
+        :active-filters="activeFilters"
+        :any-filter="anyFilter"
+        @reset="reset"
+      >
+        <button
+          v-for="s in mainStages"
+          :key="s.key"
+          type="button"
+          :class="['quick', { on: quick === s.key, warn: s.key === 'EXPIRED' && counts.EXPIRED > 0 }]"
+          @click="quick = s.key"
+        >
+          {{ s.label }}
+          <em>{{ counts[s.key] }}</em>
+        </button>
+        <QuickMore :items="moreStages" :current="quick" @pick="(k) => (quick = k)" />
+        <template #filters>
+          <label>客户</label>
+          <el-select v-model="customer" clearable filterable placeholder="全部" :teleported="false">
+            <el-option v-for="[id, name] in customers" :key="id" :label="name" :value="id" />
+          </el-select>
+          <el-checkbox v-if="canSeeCost()" v-model="incomplete" class="span-2">只看缺金额或成本的</el-checkbox>
         </template>
-      </div>
-      <div class="filter-bar quote-filters">
-        <el-input v-model="keyword" clearable :prefix-icon="Search" placeholder="搜索项目、客户或报价编号" />
-        <el-select v-model="customer" clearable filterable placeholder="全部客户">
-          <el-option v-for="[id, name] in customers" :key="id" :label="name" :value="id" />
-        </el-select>
-        <el-checkbox v-if="canSeeCost()" v-model="incomplete">只看缺金额或成本的</el-checkbox>
-        <span class="filter-count">{{ filtered.length }} 份报价</span>
-      </div>
+      </FilterToolbar>
       <el-table
         :data="filtered.slice((page - 1) * 12, page * 12)"
         :empty-text="quick === 'ACTIVE' ? '没有跟进中的报价' : '没有符合条件的报价'"
@@ -677,12 +705,6 @@ onMounted(async () => {
   </div>
 </template>
 <style scoped>
-.quote-filters > .el-input {
-  max-width: 300px;
-}
-.quote-filters > .el-select {
-  width: 200px;
-}
 .more-menu {
   margin: 0 12px;
   vertical-align: middle;
