@@ -24,9 +24,21 @@ finish() {
 [ -z "$(git status --porcelain)" ] || finish "没有更新：这个文件夹里有改过的文件。正式系统的文件夹不应该改代码：
 $(git status --short)" 1
 
+# 双击打开的终端不带代理设置。这台电脑如果在“系统设置 → 网络”里配了 HTTPS 代理，访问 GitHub 时也走它
+proxy="${HTTPS_PROXY:-${https_proxy:-}}"
+if [ -z "$proxy" ]; then
+  sys="$(scutil --proxy 2>/dev/null)"
+  if print -r -- "$sys" | grep -q "HTTPSEnable : 1"; then
+    host="$(print -r -- "$sys" | awk '/HTTPSProxy :/{print $3}')"
+    port="$(print -r -- "$sys" | awk '/HTTPSPort :/{print $3}')"
+    [ -n "$host" ] && [ -n "$port" ] && proxy="http://$host:$port"
+  fi
+fi
+github() { if [ -n "$proxy" ]; then git -c http.proxy="$proxy" "$@"; else git "$@"; fi; }
+
 # 先看有没有新版本：没有就不用停机
 echo "正在查看 GitHub 上的最新版本…"
-git fetch --quiet origin main || finish "没有更新：连不上 GitHub，请检查网络后再试。系统没有受影响。" 1
+github fetch --quiet origin main || finish "没有更新：连不上 GitHub，请检查网络后再试。系统没有受影响。" 1
 before="$(git rev-parse --short HEAD)"
 after="$(git rev-parse --short origin/main)"
 if [ "$before" = "$after" ]; then finish "已经是最新版本（$before），不需要更新。系统没有受影响。" 0; fi
