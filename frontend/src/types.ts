@@ -1,3 +1,4 @@
+import type { BundleFields } from './bundles'
 export interface User {
   id: string
   username: string
@@ -67,8 +68,10 @@ export interface Product {
   unit: string
   reference_price: number | null
   reference_cost: number | null
+  /** 电气件清单的项数 */
+  components?: number
 }
-export interface QuoteItem {
+export interface QuoteItem extends BundleFields {
   id: string
   product_id: string
   name: string
@@ -538,7 +541,7 @@ export interface ContractAttachment {
   uploaded_by: string
   created_at: string
 }
-export interface ProjectTypeItem {
+export interface ProjectTypeItem extends BundleFields {
   id: string
   product_id: string
   position: number
@@ -603,7 +606,7 @@ export interface CustomerTemplate {
   updated_at: string
   items: CustomerTemplateItem[]
 }
-export interface PrefillLine {
+export interface PrefillLine extends BundleFields {
   product_id: string
   name: string
   specification: string
@@ -657,4 +660,42 @@ export interface ReceiptBatch {
   payer: string | null
   note: string | null
   items: { id: string; contract_no: string; kind: string; amount: number; reference: string }[]
+}
+
+/** 标准品的一项电气件（只作技术资料）。 */
+export interface ProductComponent {
+  id?: string
+  name: string
+  model: string | null
+  brand: string | null
+  quantity: number
+  unit: string | null
+  note: string | null
+}
+/** 标准组合里的一个标准品。 */
+export interface BundleItem {
+  product_id: string
+  quantity: number
+  name: string
+  specification: string
+  model: string
+  unit: string
+  reference_price: number | null
+}
+/** 标准组合（像套餐）：按应用场景把几个标准品打包，组合价 = 标准品单价 × 数量之和。 */
+export interface Bundle {
+  id: string
+  scenario: string
+  name: string
+  note: string | null
+  active: boolean
+  items: BundleItem[]
+  reference_price: number | null
+  price_complete: boolean
+}
+/** 明细行属于哪个组合（同一组 no 相同；数量为总数量 = 每套数量 × 套数）。 */
+export interface LineGroup {
+  no: number
+  bundleId: string
+  sets: number
 }

@@ -22,10 +22,18 @@ public class CatalogService {
     private final BusinessService business;
     private final CustomerTemplateService customerTemplates;
 
-    public CatalogService(Database db, BusinessService business, CustomerTemplateService customerTemplates) {
+    private final cn.tianshang.commerce.master.BundleService bundles;
+
+    public CatalogService(
+        Database db,
+        BusinessService business,
+        CustomerTemplateService customerTemplates,
+        cn.tianshang.commerce.master.BundleService bundles
+    ) {
         this.db = db;
         this.business = business;
         this.customerTemplates = customerTemplates;
+        this.bundles = bundles;
     }
 
     // ---------- 项目类型 ----------
@@ -54,8 +62,14 @@ public class CatalogService {
     public record TypeLine(
         @NotBlank String productId,
         @NotNull @DecimalMin("0.001") @DecimalMax("999999") @Digits(integer = 6, fraction = 3) BigDecimal quantity,
-        @DecimalMin("0") @DecimalMax("999999999") @Digits(integer = 9, fraction = 6) BigDecimal unitPrice
-    ) {}
+        @DecimalMin("0") @DecimalMax("999999999") @Digits(integer = 9, fraction = 6) BigDecimal unitPrice,
+        /** 这一行属于哪个组合；不属于组合时为空。 */
+        @Valid cn.tianshang.commerce.master.LineGroup group
+    ) {
+        public TypeLine(String productId, BigDecimal quantity, BigDecimal unitPrice) {
+            this(productId, quantity, unitPrice, null);
+        }
+    }
 
     public record TypeInput(
         @NotBlank @Size(max = 100) String name,
@@ -68,7 +82,15 @@ public class CatalogService {
     @PreAuthorize("hasAnyRole('ADMIN','MANAGER','SALES')")
     @Transactional
     public String saveType(String id, @Valid TypeInput t) {
-        requireDistinct(t.items().stream().map(TypeLine::productId).toList());
+        // 同一产品在同一组（或都不在组合里）只能出现一次；不同组合里可以有同一个产品
+        requireDistinct(
+            t
+                .items()
+                .stream()
+                .map(l -> (l.group() == null ? "-" : l.group().no()) + ":" + l.productId())
+                .toList()
+        );
+        var groups = bundles.resolve(t.items(), TypeLine::group);
         String current =
             id == null
                 ? null
@@ -103,14 +125,22 @@ public class CatalogService {
         int pos = 0;
         for (var line : t.items()) {
             db.one("SELECT id FROM product WHERE id=?", line.productId());
+            var group = line.group() == null ? null : groups.get(line.group().no());
             db.jdbc.update(
-                "INSERT INTO project_type_item(id,project_type_id,product_id,position,quantity,unit_price) VALUES(?,?,?,?,?,?)",
+                """
+                INSERT INTO project_type_item(id,project_type_id,product_id,position,quantity,unit_price,
+                  bundle_id,bundle_name,bundle_sets,bundle_group) VALUES(?,?,?,?,?,?,?,?,?,?)
+                """,
                 db.id(),
                 id,
                 line.productId(),
                 ++pos,
                 line.quantity(),
-                line.unitPrice()
+                line.unitPrice(),
+                group == null ? null : group.bundleId(),
+                group == null ? null : group.bundleName(),
+                group == null ? null : group.sets(),
+                group == null ? null : group.no()
             );
         }
         db.audit("PROJECT_TYPE_SAVED", id, t.name().trim() + "，" + t.items().size() + " 项标准配置");
@@ -346,7 +376,8 @@ public class CatalogService {
             ? (List<Map<String, Object>>) customerTemplate.get().get("items")
             : db.jdbc.queryForList(
                   """
-                  SELECT i.product_id,i.quantity,i.unit_price,p.name,p.specification,p.unit
+                  SELECT i.product_id,i.quantity,i.unit_price,i.bundle_id,i.bundle_name,i.bundle_sets,i.bundle_group,
+                    p.name,p.specification,p.unit
                   FROM project_type_item i JOIN product p ON p.id=i.product_id WHERE i.project_type_id=? ORDER BY i.position
                   """,
                   typeId

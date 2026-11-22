@@ -25,6 +25,7 @@ public class QuoteService {
     private final Ownership ownership;
     private final cn.tianshang.commerce.dictionary.DictionaryService dictionary;
     private final cn.tianshang.commerce.catalog.CatalogService catalog;
+    private final cn.tianshang.commerce.master.BundleService bundles;
 
     public QuoteService(
         Database db,
@@ -33,8 +34,10 @@ public class QuoteService {
         @Lazy ProjectService projects,
         Ownership ownership,
         cn.tianshang.commerce.dictionary.DictionaryService dictionary,
-        cn.tianshang.commerce.catalog.CatalogService catalog
+        cn.tianshang.commerce.catalog.CatalogService catalog,
+        cn.tianshang.commerce.master.BundleService bundles
     ) {
+        this.bundles = bundles;
         this.db = db;
         this.templates = templates;
         this.json = json;
@@ -284,16 +287,18 @@ public class QuoteService {
     /** 写入报价明细。看不到成本的角色（业务员）提交的成本一律忽略，按供应商成本模板取成本。 */
     private void writeItems(String id, List<QuoteInput.Line> items, String supplierId, String projectTypeId) {
         int pos = 0;
+        var groups = bundles.resolve(items, QuoteInput.Line::group);
         // 看不到成本的角色（业务员）提交的成本一律忽略，按供应商成本模板取成本；模板没有的产品成本待财务补充
         var templateCosts = Roles.canSeeCost() ? null : catalog.supplierCosts(supplierId, projectTypeId);
         for (var submitted : items) {
             var line = templateCosts == null ? submitted : withTemplateCost(submitted, templateCosts);
             var product = db.one("SELECT * FROM product WHERE id=?", line.productId());
+            var group = line.group() == null ? null : groups.get(line.group().no());
             db.jdbc.update(
                 """
                 INSERT INTO quotation_item(id,quotation_id,product_id,position,name,specification,unit,quantity,unit_price,unit_cost,amount,cost,
-                  material_cost,labor_cost,finance_cost)
-                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                  material_cost,labor_cost,finance_cost,bundle_id,bundle_name,bundle_sets,bundle_group)
+                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 """,
                 db.id(),
                 id,
@@ -309,7 +314,11 @@ public class QuoteService {
                 QuoteMath.line(line.quantity(), line.effectiveCost()),
                 line.materialCost(),
                 line.laborCost(),
-                line.financeCost()
+                line.financeCost(),
+                group == null ? null : group.bundleId(),
+                group == null ? null : group.bundleName(),
+                group == null ? null : group.sets(),
+                group == null ? null : group.no()
             );
         }
     }
@@ -531,7 +540,19 @@ public class QuoteService {
                 .stream()
                 .map(i -> {
                     var line = new LinkedHashMap<String, Object>();
-                    for (String key : List.of("name", "specification", "unit", "quantity", "unit_price", "amount"))
+                    // 对客只给名称、规格、数量、价格和所属组合，不给成本
+                    for (String key : List.of(
+                        "name",
+                        "specification",
+                        "unit",
+                        "quantity",
+                        "unit_price",
+                        "amount",
+                        "bundle_id",
+                        "bundle_name",
+                        "bundle_sets",
+                        "bundle_group"
+                    ))
                         line.put(key, i.get(key));
                     return line;
                 })
@@ -573,7 +594,8 @@ public class QuoteService {
             null,
             v.apply("material_cost"),
             v.apply("labor_cost"),
-            v.apply("finance_cost")
+            v.apply("finance_cost"),
+            l.group()
         );
     }
 
@@ -613,7 +635,8 @@ public class QuoteService {
                 unitCost,
                 materialCost,
                 laborCost,
-                financeCost
+                financeCost,
+                null
             ).effectiveCost();
         }
     }

@@ -205,6 +205,8 @@ export const actionName: Record<string, string> = {
   PROJECT_DELIVERY: '发货物流',
   PROJECT_ATTACHMENT_UPLOADED: '上传门店附件',
   PROJECT_ATTACHMENT_DELETED: '删除门店附件',
+  PRODUCT_COMPONENTS_SAVED: '保存电气件清单',
+  BUNDLE_SAVED: '保存标准组合',
   PROJECT_OWNER_ASSIGNED: '分配负责人',
   PROJECT_TYPE_SAVED: '保存项目类型',
   QUOTE_CREATED: '新建报价',

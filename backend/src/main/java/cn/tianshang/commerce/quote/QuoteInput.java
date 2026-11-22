@@ -39,7 +39,9 @@ public record QuoteInput(
         @DecimalMin("0") @DecimalMax("999999999") @Digits(integer = 9, fraction = 6) BigDecimal unitCost,
         @DecimalMin("0") @DecimalMax("999999999") @Digits(integer = 9, fraction = 6) BigDecimal materialCost,
         @DecimalMin("0") @DecimalMax("999999999") @Digits(integer = 9, fraction = 6) BigDecimal laborCost,
-        @DecimalMin("0") @DecimalMax("999999999") @Digits(integer = 9, fraction = 6) BigDecimal financeCost
+        @DecimalMin("0") @DecimalMax("999999999") @Digits(integer = 9, fraction = 6) BigDecimal financeCost,
+        /** 这一行属于哪个组合；不属于组合时为空。 */
+        @Valid cn.tianshang.commerce.master.LineGroup group
     ) {
         /** 单台成本：有拆分时为三项之和，否则为 unitCost；都没有则为空（待补充）。 */
         public BigDecimal effectiveCost() {

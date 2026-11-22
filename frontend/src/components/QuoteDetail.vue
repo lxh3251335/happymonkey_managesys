@@ -1,10 +1,17 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import type { Quote } from '../types'
+import { displayRows, groupOf, rowClass, spanGroups } from '../bundles'
 import { money, unitMoney, percent, day, taxName } from '../utils'
 import StatusTag from './StatusTag.vue'
 import ProjectFiles from './ProjectFiles.vue'
 import { canSeeCost } from '../api'
-defineProps<{ quote: Quote }>()
+const props = defineProps<{ quote: Quote }>()
+const rows = computed(() =>
+  displayRows(props.quote.items.map((i) => ({ ...i, quantity: Number(i.quantity), group: groupOf(i) }))),
+)
+const spanMethod = spanGroups(() => (seeCost ? 8 : 5))
+const groupTotal = (xs: { amount: number | null }[]) => xs.reduce((s, x) => s + Number(x.amount || 0), 0)
 /** 成本与毛利只对系统管理员、管理层、财务展示（后端对其他角色已去掉这些字段）。 */
 const seeCost = canSeeCost()
 const split = (n: number | null) => (n == null ? '—' : Number(n).toLocaleString('zh-CN', { maximumFractionDigits: 2 }))
@@ -40,33 +47,54 @@ const split = (n: number | null) => (n == null ? '—' : Number(n).toLocaleStrin
     <div v-if="seeCost && !quote.complete" class="inline-note warning">
       金额或成本缺失，整份报价的毛利和毛利率暂不计算。
     </div>
-    <el-table :data="quote.items">
-      <el-table-column label="产品" prop="name" min-width="160" />
-      <el-table-column label="规格" prop="specification" min-width="150" />
-      <el-table-column label="数量" prop="quantity" width="70" align="right" />
+    <el-table :data="rows" row-key="key" :span-method="spanMethod" :row-class-name="rowClass">
+      <el-table-column label="产品" min-width="160">
+        <template #default="{ row }">
+          <div v-if="row.kind === 'group'" class="group-head">
+            <span class="group-name">组合 · {{ row.name }} × {{ row.sets }} 套</span>
+            <span class="muted">{{ row.lines.length }} 种标准品 · 小计 {{ money(groupTotal(row.lines)) }}</span>
+          </div>
+          <template v-else>{{ row.line.name }}</template>
+        </template>
+      </el-table-column>
+      <el-table-column label="规格" min-width="150">
+        <template #default="{ row }">{{ row.kind === 'line' ? row.line.specification : '' }}</template>
+      </el-table-column>
+      <el-table-column label="数量" width="70" align="right">
+        <template #default="{ row }">{{ row.kind === 'line' ? Number(row.line.quantity) : '' }}</template>
+      </el-table-column>
       <el-table-column label="销售单价" width="125" align="right">
-        <template #default="{ row }">{{ unitMoney(row.unit_price) }}</template>
+        <template #default="{ row }">{{ row.kind === 'line' ? unitMoney(row.line.unit_price) : '' }}</template>
       </el-table-column>
       <el-table-column label="销售金额" width="125" align="right">
-        <template #default="{ row }">{{ money(row.amount) }}</template>
+        <template #default="{ row }">{{ row.kind === 'line' ? money(row.line.amount) : '' }}</template>
       </el-table-column>
       <el-table-column v-if="seeCost" label="单台成本（材料 / 人工 / 财务）" min-width="210" align="right">
         <template #default="{ row }">
-          {{ unitMoney(row.unit_cost) }}
-          <small
-            v-if="row.material_cost != null || row.labor_cost != null || row.finance_cost != null"
-            class="cell-sub"
-          >
-            {{ split(row.material_cost) }} / {{ split(row.labor_cost) }} / {{ split(row.finance_cost) }}
-          </small>
+          <template v-if="row.kind === 'line'">
+            {{ unitMoney(row.line.unit_cost) }}
+            <small
+              v-if="row.line.material_cost != null || row.line.labor_cost != null || row.line.finance_cost != null"
+              class="cell-sub"
+            >
+              {{ split(row.line.material_cost) }} / {{ split(row.line.labor_cost) }} /
+              {{ split(row.line.finance_cost) }}
+            </small>
+          </template>
         </template>
       </el-table-column>
       <el-table-column v-if="seeCost" label="成本金额" width="115" align="right">
-        <template #default="{ row }">{{ money(row.cost) }}</template>
+        <template #default="{ row }">{{ row.kind === 'line' ? money(row.line.cost) : '' }}</template>
       </el-table-column>
       <el-table-column v-if="seeCost" label="毛利率" width="88" align="right">
         <template #default="{ row }">
-          {{ row.amount && row.cost != null ? percent((row.amount - row.cost) / row.amount) : '—' }}
+          <template v-if="row.kind === 'line'">
+            {{
+              row.line.amount && row.line.cost != null
+                ? percent((row.line.amount - row.line.cost) / row.line.amount)
+                : '—'
+            }}
+          </template>
         </template>
       </el-table-column>
     </el-table>

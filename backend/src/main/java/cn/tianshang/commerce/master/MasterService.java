@@ -126,6 +126,7 @@ public class MasterService {
             """
             SELECT p.*,s.name AS supplier_name,
             (SELECT COUNT(*) FROM product_drawing d WHERE d.product_id=p.id AND d.deleted_at IS NULL) AS drawings,
+            (SELECT COUNT(*) FROM product_component c WHERE c.product_id=p.id) AS components,
             (SELECT i.unit_price FROM quotation_item i JOIN quotation q ON q.id=i.quotation_id
                WHERE i.product_id=p.id AND i.unit_price IS NOT NULL ORDER BY q.created_at DESC,i.id LIMIT 1) AS reference_price,
             (SELECT i.unit_cost FROM quotation_item i JOIN quotation q ON q.id=i.quotation_id

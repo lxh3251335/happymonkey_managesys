@@ -1,10 +1,24 @@
 <script setup lang="ts">
 import { ref, computed, watch, nextTick, onBeforeUnmount, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
-import { Plus, Delete } from '@element-plus/icons-vue'
+import { Plus, Delete, ArrowDown } from '@element-plus/icons-vue'
 import { api, canApprove, canSeeCost, post, put, upload } from '../api'
 import CitySelect from './CitySelect.vue'
 import ConfigListDialog from './ConfigListDialog.vue'
+import {
+  displayRows,
+  groupOf,
+  groupPayload,
+  linesOfBundle,
+  nextGroupNo,
+  rowClass,
+  setSets,
+  spanGroups,
+  syncPerSet,
+  type DisplayRow,
+  type GroupDraft,
+} from '../bundles'
+import type { Bundle } from '../types'
 import { activeCompanies, companyLabel, defaultCompany, loadDictionaries } from '../dictionaries'
 import type {
   Partner,
@@ -36,6 +50,8 @@ interface LineDraft {
   materialCost: number | undefined
   laborCost: number | undefined
   financeCost: number | undefined
+  /** 属于哪个组合；不在组合里时为空。 */
+  group?: GroupDraft
 }
 const blankLine = (): LineDraft => ({
   productId: '',
@@ -106,11 +122,31 @@ const referenceProjects = computed(() => {
     .filter((p) => p.contract_state === 'SIGNED' || p.contract_state === 'COMPLETED')
     .sort((a, b) => Number(b.brand === brand) - Number(a.brand === brand) || a.name.localeCompare(b.name, 'zh-CN'))
 })
+/** 选了参考项目先看它的清单（按组合分组、规格、金额），确认了再带入。 */
+const referencePreview = ref<Quote>()
+watch(referenceId, async (id) => {
+  referencePreview.value = undefined
+  if (!id) return
+  try {
+    const q = await api<Quote>(`/quotes/reference?projectId=${encodeURIComponent(id)}`)
+    if (referenceId.value === id) referencePreview.value = q
+  } catch (e) {
+    ElMessage.error((e as Error).message)
+  }
+})
+const referenceRows = computed(() =>
+  referencePreview.value
+    ? displayRows(referencePreview.value.items.map((i) => ({ ...i, quantity: Number(i.quantity), group: groupOf(i) })))
+    : [],
+)
+const sum = (xs: { amount: number | null }[]) => xs.reduce((s, x) => s + Number(x.amount || 0), 0)
 async function applyReference() {
   if (!referenceId.value) return
   referencing.value = true
   try {
-    const q = await api<Quote>(`/quotes/reference?projectId=${encodeURIComponent(referenceId.value)}`)
+    const q =
+      referencePreview.value ??
+      (await api<Quote>(`/quotes/reference?projectId=${encodeURIComponent(referenceId.value)}`))
     const n = (v: number | null | undefined) => (v == null ? undefined : Number(v))
     // 已选供应商且看得到成本时，成本仍按供应商成本模板（当前有效成本），不沿用旧报价的成本
     const keepCost = new Map(lines.value.map((l) => [l.productId, l]))
@@ -126,6 +162,7 @@ async function applyReference() {
           (i.labor_cost == null && i.finance_cost == null ? n(i.unit_cost) : undefined),
         laborCost: old?.laborCost ?? n(i.labor_cost),
         financeCost: old?.financeCost ?? n(i.finance_cost),
+        group: groupOf(i),
       }
     })
     if (!lines.value.length) lines.value.push(blankLine())
@@ -166,6 +203,9 @@ watch(
     store.value = { customerId: '', name: '', city: '' }
     referenceId.value = ''
     includeSigned.value = false
+    api<Bundle[]>('/bundles')
+      .then((r) => (bundles.value = r.filter((b) => b.active)))
+      .catch(() => {})
     const project = props.projects.find((p) => p.id === fromProject)
     form.value = {
       projectId: fromProject,
@@ -202,6 +242,7 @@ watch(
                 : undefined,
           laborCost: i.labor_cost == null ? undefined : Number(i.labor_cost),
           financeCost: i.finance_cost == null ? undefined : Number(i.finance_cost),
+          group: groupOf(i),
         }))
       : []
     if (!lines.value.length) lines.value.push(blankLine())
@@ -247,6 +288,7 @@ async function applyTemplate() {
       materialCost: n(i.material_cost),
       laborCost: n(i.labor_cost),
       financeCost: n(i.finance_cost),
+      group: groupOf(i),
     }))
     if (!lines.value.length) lines.value.push(blankLine())
     prefillSnapshot.value = JSON.stringify(lines.value)
@@ -354,20 +396,9 @@ async function openConfig() {
  */
 async function applyConfig(r: { lines: { productId: string; quantity: number }[]; file: File }) {
   configFile.value = r.file
-  const prices = new Map<string, PrefillLine>()
-  for (const i of await templateLines()) prices.set(i.product_id, i)
-  const n = (v: number | null | undefined) => (v == null ? undefined : Number(v))
-  lines.value = r.lines.map((l) => {
-    const line: LineDraft = { ...blankLine(), productId: l.productId, quantity: l.quantity }
-    const p = prices.get(l.productId)
-    if (p) {
-      line.unitPrice = n(p.unit_price)
-      line.materialCost = n(p.material_cost)
-      line.laborCost = n(p.labor_cost)
-      line.financeCost = n(p.finance_cost)
-    } else selectProduct(line)
-    return line
-  })
+  const added: LineDraft[] = r.lines.map((l) => ({ ...blankLine(), productId: l.productId, quantity: l.quantity }))
+  await priceLines(added)
+  lines.value = added
   // 明细已按清单改过：之后换客户、项目类型不再自动按模板覆盖
   prefillSnapshot.value = ''
   const noPrice = lines.value.filter((l) => l.unitPrice == null).length
@@ -393,6 +424,43 @@ async function keepConfigFile(quoteId: string) {
     if (!msg.includes('重复')) ElMessage.warning(`报价已保存，但配置清单没有存进门店附件：${msg}`)
   }
 }
+
+// ---------- 标准组合：整组加入，套数联动 ----------
+const bundles = ref<Bundle[]>([])
+/** 新加入的行按客户模板 / 项目类型配置 / 供应商成本模板取价，模板里没有的取最近一次报价。 */
+async function priceLines(newLines: LineDraft[]) {
+  const prices = new Map<string, PrefillLine>()
+  for (const i of await templateLines()) prices.set(i.product_id, i)
+  const n = (v: number | null | undefined) => (v == null ? undefined : Number(v))
+  for (const line of newLines) {
+    const p = prices.get(line.productId)
+    if (p) {
+      line.unitPrice = n(p.unit_price)
+      line.materialCost = n(p.material_cost)
+      line.laborCost = n(p.labor_cost)
+      line.financeCost = n(p.finance_cost)
+    } else selectProduct(line)
+  }
+}
+async function addBundle(id: string) {
+  const b = bundles.value.find((x) => x.id === id)
+  if (!b) return
+  const added: LineDraft[] = linesOfBundle(b, nextGroupNo(lines.value)).map((l) => ({ ...blankLine(), ...l }))
+  await priceLines(added)
+  // 去掉还没选产品的空行
+  lines.value = [...lines.value.filter((l) => l.productId), ...added]
+  prefillSnapshot.value = ''
+  await nextTick()
+  tableRef.value?.setScrollTop(1e6)
+}
+const rows = computed(() => displayRows(lines.value))
+const spanMethod = spanGroups(() => (canSeeCost() ? 10 : 5))
+function removeRow(row: DisplayRow<LineDraft>) {
+  if (row.kind === 'group') lines.value = lines.value.filter((l) => l.group?.no !== row.no)
+  else lines.value.splice(lines.value.indexOf(row.line), 1)
+}
+const changeSets = (no: number, v: number | undefined) => setSets(lines.value, no, v)
+const groupTotal = (ls: LineDraft[]) => ls.reduce((s, l) => s + (lineAmount(l) || 0), 0)
 
 async function addLine() {
   lines.value.push(blankLine())
@@ -435,6 +503,7 @@ async function save() {
         materialCost: l.materialCost ?? null,
         laborCost: l.laborCost ?? null,
         financeCost: l.financeCost ?? null,
+        group: groupPayload(l.group),
       })),
     }
     let id: string
@@ -598,6 +667,30 @@ async function save() {
             </el-select>
             <el-button :disabled="!referenceId" :loading="referencing" @click="applyReference">带入</el-button>
           </div>
+          <div v-if="referencePreview" class="reference-preview">
+            <div class="rp-head">
+              <strong>{{ referencePreview.project_name }}</strong>
+              <span class="muted">
+                {{ referencePreview.contract_no || '合同' }} · V{{ referencePreview.version }} ·
+                {{ referencePreview.items.length }} 项
+              </span>
+              <span class="rp-total">合计 {{ money(referencePreview.amount) }}</span>
+            </div>
+            <ul>
+              <li v-for="r in referenceRows" :key="r.key" :class="r.kind">
+                <template v-if="r.kind === 'group'">
+                  <span>组合 · {{ r.name }} × {{ r.sets }} 套</span>
+                  <span>{{ money(sum(r.lines)) }}</span>
+                </template>
+                <template v-else>
+                  <span :class="{ indent: r.line.group }">
+                    {{ r.line.name }} {{ r.line.specification }} × {{ Number(r.line.quantity) }}
+                  </span>
+                  <span>{{ money(r.line.amount) }}</span>
+                </template>
+              </li>
+            </ul>
+          </div>
         </el-form-item>
       </div>
 
@@ -609,17 +702,62 @@ async function save() {
           按模板重新带出
         </el-button>
         <el-button size="small" @click="openConfig">按客户配置清单带入</el-button>
+        <el-dropdown trigger="click" @command="addBundle">
+          <el-button size="small">
+            添加组合
+            <el-icon class="el-icon--right"><ArrowDown /></el-icon>
+          </el-button>
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item v-if="!bundles.length" disabled>
+                还没有标准组合，可在“基础资料 → 标准组合”里建
+              </el-dropdown-item>
+              <el-dropdown-item v-for="b in bundles" :key="b.id" :command="b.id">
+                <span class="bundle-option">
+                  {{ b.scenario }} / {{ b.name }}
+                  <small>{{ b.items.length }} 种标准品</small>
+                </span>
+              </el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
         <el-button :icon="Plus" size="small" @click="addLine">添加产品</el-button>
       </div>
-      <el-table ref="tableRef" :data="lines" class="editor-table qe-table" size="small" :max-height="tableMax">
+      <el-table
+        ref="tableRef"
+        :data="rows"
+        row-key="key"
+        :span-method="spanMethod"
+        :row-class-name="rowClass"
+        class="editor-table qe-table"
+        size="small"
+        :max-height="tableMax"
+      >
         <el-table-column label="产品 / 规格" min-width="230">
           <template #default="{ row }">
+            <div v-if="row.kind === 'group'" class="group-head">
+              <span class="group-name">组合 · {{ row.name }}</span>
+              <span class="group-sets">
+                <el-input-number
+                  :model-value="row.sets"
+                  :min="1"
+                  :precision="0"
+                  :controls="false"
+                  size="small"
+                  @change="(v: number | undefined) => changeSets(row.no, v)"
+                />
+                套
+              </span>
+              <span class="muted">{{ row.lines.length }} 种标准品 · 小计 {{ money(groupTotal(row.lines)) }}</span>
+              <el-button link type="danger" size="small" @click="removeRow(row)">移除组合</el-button>
+            </div>
             <el-select
-              v-model="row.productId"
+              v-else
+              v-model="row.line.productId"
               filterable
-              :title="productLabel(row.productId)"
+              :title="productLabel(row.line.productId)"
               placeholder="选择标准产品"
-              @change="selectProduct(row)"
+              @change="selectProduct(row.line)"
             >
               <el-option v-for="p in products" :key="p.id" :value="p.id" :label="productLabel(p.id)" />
             </el-select>
@@ -627,49 +765,99 @@ async function save() {
         </el-table-column>
         <el-table-column label="数量" width="86">
           <template #default="{ row }">
-            <el-input-number v-model="row.quantity" :min="0.001" :max="999999" :precision="0" :controls="false" />
+            <el-input-number
+              v-if="row.kind === 'line'"
+              v-model="row.line.quantity"
+              :min="0.001"
+              :max="999999"
+              :precision="0"
+              :controls="false"
+              @change="syncPerSet(row.line)"
+            />
           </template>
         </el-table-column>
         <el-table-column label="销售单价" width="124">
           <template #default="{ row }">
-            <el-input-number v-model="row.unitPrice" :min="0" :precision="2" :controls="false" placeholder="必填" />
+            <el-input-number
+              v-if="row.kind === 'line'"
+              v-model="row.line.unitPrice"
+              :min="0"
+              :precision="2"
+              :controls="false"
+              placeholder="必填"
+            />
           </template>
         </el-table-column>
         <el-table-column v-if="seeCost" label="材料成本" width="116">
           <template #default="{ row }">
-            <el-input-number v-model="row.materialCost" :min="0" :precision="2" :controls="false" placeholder="—" />
+            <el-input-number
+              v-if="row.kind === 'line'"
+              v-model="row.line.materialCost"
+              :min="0"
+              :precision="2"
+              :controls="false"
+              placeholder="—"
+            />
           </template>
         </el-table-column>
         <el-table-column v-if="seeCost" label="人工成本" width="104">
           <template #default="{ row }">
-            <el-input-number v-model="row.laborCost" :min="0" :precision="2" :controls="false" placeholder="—" />
+            <el-input-number
+              v-if="row.kind === 'line'"
+              v-model="row.line.laborCost"
+              :min="0"
+              :precision="2"
+              :controls="false"
+              placeholder="—"
+            />
           </template>
         </el-table-column>
         <el-table-column v-if="seeCost" label="财务成本" width="104">
           <template #default="{ row }">
-            <el-input-number v-model="row.financeCost" :min="0" :precision="2" :controls="false" placeholder="—" />
+            <el-input-number
+              v-if="row.kind === 'line'"
+              v-model="row.line.financeCost"
+              :min="0"
+              :precision="2"
+              :controls="false"
+              placeholder="—"
+            />
           </template>
         </el-table-column>
         <el-table-column v-if="seeCost" label="单台成本" width="104" align="right">
           <template #default="{ row }">
-            <span :class="unitCost(row) == null ? 'muted' : ''">
-              {{ unitCost(row) == null ? '待补充' : money(unitCost(row)) }}
+            <span v-if="row.kind === 'line'" :class="unitCost(row.line) == null ? 'muted' : ''">
+              {{ unitCost(row.line) == null ? '待补充' : money(unitCost(row.line)) }}
             </span>
           </template>
         </el-table-column>
         <el-table-column label="销售小计" width="112" align="right">
-          <template #default="{ row }">{{ lineAmount(row) == null ? '待补充' : money(lineAmount(row)) }}</template>
+          <template #default="{ row }">
+            <template v-if="row.kind === 'line'">
+              {{ lineAmount(row.line) == null ? '待补充' : money(lineAmount(row.line)) }}
+            </template>
+          </template>
         </el-table-column>
         <el-table-column v-if="seeCost" label="毛利率" width="84" align="right">
           <template #default="{ row }">
-            <span :class="lineMargin(row) != null && lineMargin(row)! < 0 ? 'danger-text' : ''">
-              {{ lineMargin(row) == null ? '—' : percent(lineMargin(row)) }}
+            <span
+              v-if="row.kind === 'line'"
+              :class="lineMargin(row.line) != null && lineMargin(row.line)! < 0 ? 'danger-text' : ''"
+            >
+              {{ lineMargin(row.line) == null ? '—' : percent(lineMargin(row.line)) }}
             </span>
           </template>
         </el-table-column>
         <el-table-column width="48">
-          <template #default="{ $index }">
-            <el-button :icon="Delete" link type="danger" aria-label="删除报价明细" @click="lines.splice($index, 1)" />
+          <template #default="{ row }">
+            <el-button
+              v-if="row.kind === 'line'"
+              :icon="Delete"
+              link
+              type="danger"
+              aria-label="删除报价明细"
+              @click="removeRow(row)"
+            />
           </template>
         </el-table-column>
       </el-table>
@@ -914,5 +1102,54 @@ async function save() {
   justify-content: flex-end;
   margin-top: 10px;
   padding-top: 12px;
+}
+.bundle-option {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  min-width: 220px;
+}
+.bundle-option small {
+  color: var(--muted);
+}
+.reference-preview {
+  width: 100%;
+  margin-top: 8px;
+  padding: 8px 12px;
+  border: 1px solid #e1e7de;
+  border-radius: 8px;
+  background: #f7f9f6;
+  font-size: 13px;
+}
+.reference-preview .rp-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 4px;
+}
+.reference-preview .rp-total {
+  margin-left: auto;
+  font-weight: 600;
+}
+.reference-preview ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 150px;
+  overflow: auto;
+}
+.reference-preview li {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 2px 0;
+  line-height: 1.4;
+}
+.reference-preview li.group {
+  font-weight: 600;
+  color: var(--ink);
+}
+.reference-preview .indent {
+  padding-left: 16px;
 }
 </style>
