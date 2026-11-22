@@ -4,6 +4,8 @@ import { ElMessage } from 'element-plus'
 import { Plus, Search } from '@element-plus/icons-vue'
 import PageHeader from '../components/PageHeader.vue'
 import ProductDrawings from '../components/ProductDrawings.vue'
+import ProductComponents from '../components/ProductComponents.vue'
+import BundleManager from '../components/BundleManager.vue'
 import ExcelTools from '../components/ExcelTools.vue'
 import { api, post, put, canWrite, canSeeCost } from '../api'
 import { dict, loadDictionaries } from '../dictionaries'
@@ -45,7 +47,9 @@ const freshProduct = () => ({
 })
 const scenario = ref(''),
   drawingsOpen = ref(false),
-  drawingProduct = ref<Product>()
+  drawingProduct = ref<Product>(),
+  componentsOpen = ref(false),
+  bundleManager = ref<InstanceType<typeof BundleManager>>()
 const product = ref(freshProduct())
 /** 应用场景来自数据字典：筛选列出全部，新增/修改只能选启用的（当前值保留）。 */
 const scenarios = computed(() => dict.scenarios.map((s) => s.name))
@@ -74,6 +78,10 @@ async function copyInvoice(p: Partner) {
   } catch {
     ElMessage.warning('浏览器未允许复制，请手动选择文本')
   }
+}
+function openComponents(p: Product) {
+  drawingProduct.value = p
+  componentsOpen.value = true
 }
 function openDrawings(p: Product) {
   drawingProduct.value = p
@@ -142,7 +150,7 @@ const excel = computed(
       CUSTOMER: { dataset: 'customers', title: '客户资料', canImport: canWrite() },
       SUPPLIER: { dataset: 'suppliers', title: '供应商资料', canImport: canWrite() },
       PRODUCT: { dataset: 'products', title: '标准产品库', canImport: canWrite() },
-    })[tab.value]!,
+    })[tab.value],
 )
 async function afterImport() {
   await load()
@@ -175,13 +183,18 @@ onMounted(load)
   <div>
     <PageHeader title="基础资料">
       <ExcelTools
+        v-if="excel"
         :key="excel.dataset"
         :dataset="excel.dataset"
         :title="excel.title"
         :can-import="excel.canImport"
         @imported="afterImport"
       />
-      <el-button v-if="canWrite()" type="primary" size="small" @click="open">
+      <el-button v-if="canWrite() && tab === 'BUNDLE'" type="primary" size="small" @click="bundleManager?.open()">
+        <el-icon><Plus /></el-icon>
+        新增标准组合
+      </el-button>
+      <el-button v-else-if="canWrite()" type="primary" size="small" @click="open">
         <el-icon><Plus /></el-icon>
         {{ tab === 'PRODUCT' ? '新增标准产品' : tab === 'CUSTOMER' ? '新增客户' : '新增供应商' }}
       </el-button>
@@ -193,12 +206,13 @@ onMounted(load)
           <el-tab-pane label="客户资料" name="CUSTOMER" />
           <el-tab-pane label="供应商资料" name="SUPPLIER" />
           <el-tab-pane label="标准产品库" name="PRODUCT" />
+          <el-tab-pane label="标准组合" name="BUNDLE" />
         </el-tabs>
         <el-input
-          v-if="tab !== 'PRODUCT'"
+          v-if="tab === 'CUSTOMER' || tab === 'SUPPLIER'"
           v-model="keyword"
           :prefix-icon="Search"
-          :placeholder="tab === 'PRODUCT' ? '搜索名称、规格、型号或供应商' : '搜索名称或联系人'"
+          placeholder="搜索名称或联系人"
           clearable
           @input="page = 1"
         />
@@ -217,7 +231,8 @@ onMounted(load)
         />
         <span class="muted count">共 {{ filteredProducts.length }} 个产品</span>
       </div>
-      <el-table v-if="tab !== 'PRODUCT'" :data="filteredPartners.slice((page - 1) * 12, page * 12)">
+      <BundleManager v-if="tab === 'BUNDLE'" ref="bundleManager" :products="products" />
+      <el-table v-else-if="tab !== 'PRODUCT'" :data="filteredPartners.slice((page - 1) * 12, page * 12)">
         <el-table-column :label="tab === 'CUSTOMER' ? '客户名称' : '供应商名称'" prop="name" min-width="220" />
         <el-table-column label="联系人 / 电话" min-width="150">
           <template #default="{ row }">
@@ -254,6 +269,13 @@ onMounted(load)
           </el-table-column>
           <el-table-column label="规格" prop="specification" min-width="130" />
           <el-table-column label="型号" prop="model" min-width="90" />
+          <el-table-column label="电气件" width="80" align="center">
+            <template #default="{ row }">
+              <el-button link :type="row.components ? 'primary' : 'info'" @click="openComponents(row)">
+                {{ row.components ? `${row.components} 项` : canWrite() ? '填写' : '—' }}
+              </el-button>
+            </template>
+          </el-table-column>
           <el-table-column label="图纸" width="80" align="center">
             <template #default="{ row }">
               <el-button link :type="row.drawings ? 'primary' : 'info'" @click="openDrawings(row)">
@@ -277,7 +299,7 @@ onMounted(load)
           参考价格取最近一笔有记录的报价 / 成本，不代表供应商当前有效报价。报价时请核对配置、时间和税口径。
         </div>
       </template>
-      <div class="pagination">
+      <div v-if="tab !== 'BUNDLE'" class="pagination">
         <el-pagination
           v-model:current-page="page"
           :total="tab === 'PRODUCT' ? filteredProducts.length : filteredPartners.length"
@@ -356,6 +378,7 @@ onMounted(load)
       </template>
     </el-dialog>
     <ProductDrawings v-model="drawingsOpen" :product="drawingProduct" @changed="load" />
+    <ProductComponents v-model="componentsOpen" :product="drawingProduct" @changed="load" />
   </div>
 </template>
 <style scoped>

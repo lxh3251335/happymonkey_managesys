@@ -1,6 +1,21 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { MagicStick } from '@element-plus/icons-vue'
+import {
+  configText,
+  displayRows,
+  groupOf,
+  groupPayload,
+  linesOfBundle,
+  nextGroupNo,
+  rowClass,
+  setSets,
+  spanGroups,
+  syncPerSet,
+  type DisplayRow,
+  type GroupDraft,
+} from '../bundles'
+import type { Bundle } from '../types'
+import { MagicStick, ArrowDown } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { Delete, Plus } from '@element-plus/icons-vue'
 import { api, post, put, canWrite } from '../api'
@@ -19,12 +34,37 @@ interface Line {
   productId: string
   quantity: number
   unitPrice: number | undefined
+  /** 属于哪个组合；不在组合里时为空。 */
+  group?: GroupDraft
 }
 const form = ref({ name: '', brand: '未指定', note: '', active: true, items: [] as Line[] })
+
+/** 标准组合：可以整组加进标准配置。 */
+const bundles = ref<Bundle[]>([])
+const byId = computed(() => new Map(props.products.map((p) => [p.id, p])))
+function addBundle(id: string) {
+  const b = bundles.value.find((x) => x.id === id)
+  if (!b) return
+  const added: Line[] = linesOfBundle(b, nextGroupNo(form.value.items)).map((l) => ({
+    ...l,
+    unitPrice: byId.value.get(l.productId)?.reference_price ?? undefined,
+  }))
+  form.value.items = [...form.value.items.filter((i) => i.productId), ...added]
+}
+const rows = computed(() => displayRows(form.value.items))
+const spanMethod = spanGroups(() => 5)
+function removeRow(row: DisplayRow<Line>) {
+  if (row.kind === 'group') form.value.items = form.value.items.filter((l) => l.group?.no !== row.no)
+  else form.value.items.splice(form.value.items.indexOf(row.line), 1)
+}
+const groupTotal = (ls: Line[]) => ls.reduce((s, l) => s + l.quantity * (l.unitPrice || 0), 0)
+const typeConfig = (t: ProjectType) =>
+  configText(t.items.map((i) => ({ ...i, quantity: Number(i.quantity), group: groupOf(i) })))
 
 async function load() {
   try {
     types.value = await api<ProjectType[]>('/project-types')
+    bundles.value = (await api<Bundle[]>('/bundles').catch(() => [])).filter((b) => b.active)
   } catch (e) {
     ElMessage.error((e as Error).message)
   }
@@ -50,6 +90,7 @@ async function open(t?: ProjectType) {
           productId: i.product_id,
           quantity: Number(i.quantity),
           unitPrice: i.unit_price == null ? undefined : Number(i.unit_price),
+          group: groupOf(i),
         })),
       }
     : {
@@ -115,6 +156,7 @@ async function copyQuote() {
       productId: i.product_id,
       quantity: Number(i.quantity),
       unitPrice: i.unit_price == null ? undefined : Number(i.unit_price),
+      group: groupOf(i),
     }))
     ElMessage.success(`已带入 ${q.project_name} 的 ${q.items.length} 项配置和售价`)
   } catch (e) {
@@ -129,7 +171,12 @@ async function save() {
   try {
     const body = {
       ...f,
-      items: f.items.map((i) => ({ productId: i.productId, quantity: i.quantity, unitPrice: i.unitPrice ?? null })),
+      items: f.items.map((i) => ({
+        productId: i.productId,
+        quantity: i.quantity,
+        unitPrice: i.unitPrice ?? null,
+        group: groupPayload(i.group),
+      })),
     }
     if (editingId.value) await put(`/project-types/${editingId.value}`, body)
     else await post('/project-types', body)
@@ -159,9 +206,7 @@ async function save() {
       <el-table-column label="标准配置" min-width="320">
         <template #default="{ row }">
           <span v-if="!row.items.length" class="muted">未设置配置</span>
-          <span v-else class="config-list">
-            {{ row.items.map((i: { name: string; quantity: number }) => `${i.name}×${Number(i.quantity)}`).join('、') }}
-          </span>
+          <span v-else class="config-list">{{ typeConfig(row) }}</span>
         </template>
       </el-table-column>
       <el-table-column label="整套标准售价" width="130" align="right">
@@ -230,30 +275,69 @@ async function save() {
             <el-button :disabled="!copyFrom" @click="copyQuote">带入</el-button>
           </div>
         </el-form-item>
-        <el-table :data="form.items" size="small">
+        <el-table :data="rows" row-key="key" :span-method="spanMethod" :row-class-name="rowClass" size="small">
           <el-table-column label="产品 / 规格" min-width="320">
             <template #default="{ row }">
-              <el-select v-model="row.productId" filterable placeholder="选择标准产品">
+              <div v-if="row.kind === 'group'" class="group-head">
+                <span class="group-name">组合 · {{ row.name }}</span>
+                <span class="group-sets">
+                  <el-input-number
+                    :model-value="row.sets"
+                    :min="1"
+                    :precision="0"
+                    :controls="false"
+                    size="small"
+                    @change="(v: number | undefined) => setSets(form.items, row.no, v)"
+                  />
+                  套
+                </span>
+                <span class="muted">{{ row.lines.length }} 种标准品 · 小计 {{ money(groupTotal(row.lines)) }}</span>
+                <el-button link type="danger" size="small" @click="removeRow(row)">移除组合</el-button>
+              </div>
+              <el-select v-else v-model="row.line.productId" filterable placeholder="选择标准产品">
                 <el-option v-for="p in props.products" :key="p.id" :value="p.id" :label="label(p)" />
               </el-select>
             </template>
           </el-table-column>
           <el-table-column label="数量" width="100">
             <template #default="{ row }">
-              <el-input-number v-model="row.quantity" :min="1" :precision="0" :controls="false" />
+              <el-input-number
+                v-if="row.kind === 'line'"
+                v-model="row.line.quantity"
+                :min="1"
+                :precision="0"
+                :controls="false"
+                @change="syncPerSet(row.line)"
+              />
             </template>
           </el-table-column>
           <el-table-column label="标准售价（元）" width="150">
             <template #default="{ row }">
-              <el-input-number v-model="row.unitPrice" :min="0" :precision="2" :controls="false" placeholder="待定" />
+              <el-input-number
+                v-if="row.kind === 'line'"
+                v-model="row.line.unitPrice"
+                :min="0"
+                :precision="2"
+                :controls="false"
+                placeholder="待定"
+              />
             </template>
           </el-table-column>
           <el-table-column label="小计" width="120" align="right">
-            <template #default="{ row }">{{ money(row.quantity * (row.unitPrice || 0)) }}</template>
+            <template #default="{ row }">
+              <template v-if="row.kind === 'line'">{{ money(row.line.quantity * (row.line.unitPrice || 0)) }}</template>
+            </template>
           </el-table-column>
           <el-table-column width="60" align="center">
-            <template #default="{ $index }">
-              <el-button :icon="Delete" link type="danger" aria-label="删除" @click="form.items.splice($index, 1)" />
+            <template #default="{ row }">
+              <el-button
+                v-if="row.kind === 'line'"
+                :icon="Delete"
+                link
+                type="danger"
+                aria-label="删除"
+                @click="removeRow(row)"
+              />
             </template>
           </el-table-column>
         </el-table>
@@ -265,6 +349,20 @@ async function save() {
           >
             添加产品
           </el-button>
+          <el-dropdown trigger="click" @command="addBundle">
+            <el-button size="small">
+              添加组合
+              <el-icon class="el-icon--right"><ArrowDown /></el-icon>
+            </el-button>
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item v-if="!bundles.length" disabled>还没有标准组合</el-dropdown-item>
+                <el-dropdown-item v-for="b in bundles" :key="b.id" :command="b.id">
+                  {{ b.scenario }} / {{ b.name }}（{{ b.items.length }} 种标准品）
+                </el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
           <span>
             整套标准售价
             <strong>{{ money(formTotal) }}</strong>

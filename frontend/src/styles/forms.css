@@ -218,3 +218,30 @@
 .manager-bar > :only-child {
   margin-left: auto;
 }
+
+/* 明细里的标准组合：组标题行跨整行，组内的行缩进 */
+.el-table .group-row td.el-table__cell {
+  background: #f3f6f2;
+}
+.el-table .in-group td.el-table__cell:first-child {
+  padding-left: 26px;
+}
+.group-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+}
+.group-head .group-name {
+  font-weight: 600;
+  color: var(--ink);
+}
+.group-head .group-sets {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.group-head .group-sets .el-input-number {
+  width: 64px;
+}

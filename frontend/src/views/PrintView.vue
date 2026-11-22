@@ -1,9 +1,19 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { api } from '../api'
 import type { Quote } from '../types'
 import { day, money, unitMoney, percent, taxName } from '../utils'
+import { displayRows, groupOf } from '../bundles'
+/** 对客报价单按组合分组：组合占一行（名称、套数、小计），下面列里面的标准品；序号只给组合和单品。 */
+const rows = computed(() => {
+  if (!quote.value) return []
+  let seq = 0
+  return displayRows(quote.value.items.map((i) => ({ ...i, quantity: Number(i.quantity), group: groupOf(i) }))).map(
+    (r) => ({ ...r, seq: r.kind === 'group' || !r.line.group ? ++seq : null }),
+  )
+})
+const groupTotal = (xs: { amount: number | null }[]) => xs.reduce((s, x) => s + Number(x.amount || 0), 0)
 const quote = ref<Quote>(),
   error = ref(''),
   route = useRoute()
@@ -65,15 +75,24 @@ onMounted(async () => {
           </tr>
         </thead>
         <tbody>
-          <tr v-for="(item, i) in quote.items" :key="i">
-            <td>{{ i + 1 }}</td>
-            <td>{{ item.name }}</td>
-            <td>{{ item.specification }}</td>
-            <td>{{ item.unit }}</td>
-            <td>{{ item.quantity }}</td>
-            <td>{{ unitMoney(item.unit_price) }}</td>
-            <td>{{ money(item.amount) }}</td>
-          </tr>
+          <template v-for="r in rows" :key="r.key">
+            <tr v-if="r.kind === 'group'" class="print-group">
+              <td>{{ r.seq }}</td>
+              <td colspan="3">{{ r.name }}（组合，含 {{ r.lines.length }} 种产品）</td>
+              <td>{{ r.sets }} 套</td>
+              <td></td>
+              <td>{{ money(groupTotal(r.lines)) }}</td>
+            </tr>
+            <tr v-else :class="{ 'print-in-group': r.line.group }">
+              <td>{{ r.seq ?? '' }}</td>
+              <td>{{ r.line.name }}</td>
+              <td>{{ r.line.specification }}</td>
+              <td>{{ r.line.unit }}</td>
+              <td>{{ Number(r.line.quantity) }}</td>
+              <td>{{ unitMoney(r.line.unit_price) }}</td>
+              <td>{{ money(r.line.amount) }}</td>
+            </tr>
+          </template>
         </tbody>
       </table>
       <div class="print-total">

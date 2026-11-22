@@ -185,3 +185,12 @@
     min-width: 650px;
   }
 }
+
+/* 对客报价单里的组合：组合一行加粗，组内产品名缩进 */
+.customer-quote-table .print-group td {
+  background: #f3f3f3;
+  font-weight: 600;
+}
+.customer-quote-table .print-in-group td:nth-child(2) {
+  padding-left: 18px;
+}
