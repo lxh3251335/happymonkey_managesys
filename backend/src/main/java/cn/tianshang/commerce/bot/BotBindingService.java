@@ -153,7 +153,7 @@ public class BotBindingService {
             wrongCodes.merge(who, new Lock(1, Instant.now().plus(CODE_TTL)), (a, b) ->
                 new Lock(a.wrong() + 1, b.until())
             );
-            throw new ApiException("绑定码不对或已过期。请在系统的“系统设置 → 账户安全”里重新生成");
+            throw new ApiException("绑定码不对或已过期。请在系统的“系统管理 → 账户安全”里重新生成");
         }
         wrongCodes.remove(who);
         var r = rows.get(0);

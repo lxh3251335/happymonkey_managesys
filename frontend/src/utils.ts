@@ -188,7 +188,7 @@ export const actionName: Record<string, string> = {
   CONTRACT_QUOTE_REPLACED: '更换门店报价',
   CONTRACT_RECEIPT: '登记回款',
   CONTRACT_REFUND: '登记退款',
-  CONTRACT_INVOICE: '登记开票',
+  CONTRACT_INVOICE: '登记发票',
   CONTRACT_INVOICE_RED: '登记红字发票',
   CONTRACT_INVOICE_DELETED: '删除发票登记',
   CONTRACT_COST: '登记成本',

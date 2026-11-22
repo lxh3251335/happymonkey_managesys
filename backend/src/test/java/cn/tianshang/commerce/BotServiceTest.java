@@ -233,7 +233,10 @@ class BotServiceTest extends ApiTestSupport {
             .contains("将更新 **LK-5 小象丙城一号站**")
             .contains("收货人：李店长")
             .contains("电话：13800002222");
-        assertThat(say("u-admin", "好的")).contains("已更新");
+        // “好的”不算确认，什么都不写
+        assertThat(say("u-admin", "好的")).contains("回复“确认”");
+        assertThat(project(one).get("consignee")).isNull();
+        assertThat(say("u-admin", "确认")).contains("已更新");
         var p = project(one);
         assertThat(p).containsEntry("consignee", "李店长").containsEntry("consignee_phone", "13800002222");
         assertThat(p).containsEntry("ship_address", "浙江省杭州市临平区上环桥路12号1楼");

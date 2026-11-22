@@ -246,7 +246,7 @@ async function review(x: ContractChange, action: 'approve' | 'reject' | 'withdra
             <el-button v-if="canWrite() || canFinance()" size="small" type="primary" @click="editOpen = true">
               {{ c.status === 'DRAFT' || canApprove() ? '编辑合同' : '申请变更' }}
             </el-button>
-            <el-button v-if="canFinance()" size="small" @click="openInvoice('INVOICE')">登记开票</el-button>
+            <el-button v-if="canFinance()" size="small" @click="openInvoice('INVOICE')">登记发票</el-button>
             <el-button
               v-if="(canWrite() || canFinance()) && c.projects && (c.confirmation !== 'CONFIRMED' || c.undated > 0)"
               size="small"
@@ -532,7 +532,7 @@ async function review(x: ContractChange, action: 'approve' | 'reject' | 'withdra
 
     <el-dialog
       v-model="invoiceOpen"
-      :title="inv.kind === 'RED' ? '登记红字发票（冲销）' : '登记开票'"
+      :title="inv.kind === 'RED' ? '登记红字发票（冲销）' : '登记发票'"
       width="560px"
       append-to-body
     >
