@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import { onMounted, ref, computed, watch } from 'vue'
+import { onDataChanged } from '../dataEvents'
 import { useRoute, useRouter } from 'vue-router'
 import { Plus, ArrowRight, Document, Wallet, TrendCharts, Coin, Box } from '@element-plus/icons-vue'
 import PageHeader from '../components/PageHeader.vue'
 import StatusTag from '../components/StatusTag.vue'
 import GroupedBarChart from '../components/GroupedBarChart.vue'
 import ContractTable from '../components/ContractTable.vue'
+import TodayTodos from '../components/TodayTodos.vue'
 import { api, canSeeCost, canWrite, session } from '../api'
 import type { BizRow, BrandLines, Contract, Dashboard, Quote } from '../types'
 import { money, percent, wan, axisWan } from '../utils'
@@ -60,6 +62,7 @@ async function load() {
     loading.value = false
   }
 }
+onDataChanged(load)
 onMounted(load)
 watch([brand, group], ([b, g]) => {
   if (b && dim.value === 'brand') dim.value = 'customer'
@@ -191,6 +194,7 @@ const openQuote = (q: Quote) => router.push(`/quotes?detail=${q.id}`)
       </el-button>
     </PageHeader>
     <el-alert v-if="error" :title="error" type="error" show-icon :closable="false" />
+    <TodayTodos />
     <template v-if="data">
       <section :class="['metric-grid', 'biz-metrics', { 'no-cost': !seeCost }]">
         <article class="metric-card">

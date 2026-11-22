@@ -40,10 +40,17 @@ public class BotService {
         Pattern.CASE_INSENSITIVE
     );
     private static final Pattern COMMAND = Pattern.compile(
-        "^(帮助|菜单|help|\\?|应收|欠款|未回款|逾期|合同|发货|物流|待发货|未发货|本月|月报|解绑)\\s*(.*)$",
+        "^(帮助|菜单|help|\\?|今日|今天|待办|待审批|审批|批准|驳回|应收|欠款|未回款|逾期|合同|发货|物流|待发货|未发货|本月|月报|解绑)\\s*(.*)$",
         Pattern.CASE_INSENSITIVE
     );
     private static final List<String> MONEY_COMMANDS = List.of(
+        "今日",
+        "今天",
+        "待办",
+        "待审批",
+        "审批",
+        "批准",
+        "驳回",
         "应收",
         "欠款",
         "未回款",
@@ -55,6 +62,8 @@ public class BotService {
     private static final String PRIVATE_ONLY = "金额相关的内容请和我单聊。群里可以查发货、登记运单和收货信息。";
 
     static final String HELP = """
+        **今日**：今天要处理的事
+        **审批**（管理层）：发“待审批”看申请，回复“批准 1”或“驳回 1 原因”
         **查询**
         · 应收　或　应收 客户名
         · 逾期
@@ -72,13 +81,30 @@ public class BotService {
     private final BotBindingService bindings;
     private final BotQueries queries;
     private final BotEntries entries;
+    private final BotDaily daily;
     private final Database db;
 
-    public BotService(BotBindingService bindings, BotQueries queries, BotEntries entries, Database db) {
+    public BotService(BotBindingService bindings, BotQueries queries, BotEntries entries, BotDaily daily, Database db) {
         this.bindings = bindings;
         this.queries = queries;
         this.entries = entries;
+        this.daily = daily;
         this.db = db;
+    }
+
+    /**
+     * 每天早上推送给这个人的今日待办（按他绑定的系统账号计算）。没有绑定、账号停用或今天没有待办时返回 null。
+     */
+    public String morningDigest(String channel, String externalId) {
+        var user = bindings.resolve(channel, externalId);
+        if (user.isEmpty()) return null;
+        try {
+            var d = runAs(user.get(), daily::today);
+            return d.empty() ? null : d.text() + "\n\n发“今日”可以随时再看。";
+        } catch (RuntimeException e) {
+            log.warn("生成今日待办失败", e);
+            return null;
+        }
     }
 
     /** 刚进入和机器人的会话时的问候。 */
@@ -135,11 +161,21 @@ public class BotService {
 
         // 指令：一行、不长；带运单号的“发货 门店 单号”按录入处理
         Matcher c = COMMAND.matcher(text);
-        if (!text.contains("\n") && text.length() <= 60 && c.matches() && !BotEntries.looksLikeDelivery(text)) {
+        if (
+            !text.contains("\n") &&
+            text.length() <= 60 &&
+            c.matches() &&
+            !BotEntries.looksLikeDelivery(text) &&
+            isCommand(c.group(1), c.group(2).trim())
+        ) {
             String cmd = c.group(1).toLowerCase(Locale.ROOT),
                 arg = c.group(2).trim();
             if (m.group() && MONEY_COMMANDS.contains(cmd)) return PRIVATE_ONLY;
             return switch (cmd) {
+                case "今日", "今天", "待办" -> daily.today().text();
+                case "待审批", "审批" -> daily.pending(key);
+                case "批准" -> daily.approve(key, arg);
+                case "驳回" -> daily.reject(key, arg);
                 case "应收", "欠款", "未回款" -> queries.receivable(arg);
                 case "逾期" -> queries.overdue();
                 case "合同" -> queries.contract(arg);
@@ -166,6 +202,18 @@ public class BotService {
         // 有等待确认的预览时，对方多半是在回应它：提示怎么确认，而不是说没看懂
         if (entries.waiting(key)) return "还有一份预览在等你确认。要登记请回复“确认”，放弃请回复“取消”。";
         return "没看懂这条消息。发“帮助”看我能做什么。";
+    }
+
+    /**
+     * 这些词也常出现在普通的话里（“今天天气怎么样”“批准了吗”），只有后面不跟别的字、
+     * 或“批准 / 驳回”后面跟着序号时才当指令。
+     */
+    private static boolean isCommand(String cmd, String arg) {
+        return switch (cmd) {
+            case "今日", "今天", "待办", "待审批", "审批" -> arg.isEmpty();
+            case "批准", "驳回" -> arg.matches("^\\d.*");
+            default -> true;
+        };
     }
 
     /** 去掉群里 @机器人 的前缀和首尾空白。 */

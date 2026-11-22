@@ -17,6 +17,8 @@ export interface ReceiptPreset {
   contractKey?: string
   /** 继续分配一笔已登记回款的余额。 */
   batch?: { id: string; reference: string; unallocated: number; paid_on: string; customer_id: string }
+  /** 从“粘贴登记”打开时带入的到账短信或回单文字。 */
+  text?: string
 }
 const props = defineProps<{ modelValue: boolean; contracts: Contract[]; preset?: ReceiptPreset }>()
 const emit = defineEmits<{ 'update:modelValue': [boolean]; saved: [] }>()
@@ -85,6 +87,8 @@ watch(
     if (!customers.value.length)
       customers.value = (await api<Partner[]>('/partners').catch(() => [])).filter((x) => x.kind === 'CUSTOMER')
     if (p?.batch) await suggest()
+    // 客户列表加载完再填入，识别时才对得上客户
+    if (p?.text) pasted.value = p.text
   },
 )
 

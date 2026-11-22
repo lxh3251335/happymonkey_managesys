@@ -10,7 +10,12 @@ import { matchStores, parseTrackingLines } from '../parsing/delivery'
  * 批量粘贴运单：供应商或快递一次发来多行“门店 + 运单号”，整段贴进来，
  * 按门店名称（或项目编号、合同号）对到门店，核对后一起登记为已发货。
  */
-const props = defineProps<{ modelValue: boolean; projects: Project[] }>()
+const props = defineProps<{
+  modelValue: boolean
+  projects: Project[]
+  /** 从“粘贴登记”打开时带入的运单文字。 */
+  initialText?: string
+}>()
 const emit = defineEmits<{ 'update:modelValue': [boolean]; saved: [] }>()
 
 interface Row {
@@ -35,6 +40,7 @@ watch(
     text.value = ''
     rows.value = []
     if (!couriers.value.length) couriers.value = await api<string[]>('/projects/couriers').catch(() => [])
+    if (props.initialText) text.value = props.initialText
   },
 )
 watch(text, (t) => {

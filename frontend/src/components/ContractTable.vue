@@ -5,6 +5,7 @@ import type { Contract } from '../types'
 import { money, percent, day } from '../utils'
 import { contractStatusName, invoiceStatusName } from '../dictionaries'
 import { canSeeCost, session } from '../api'
+import { useUrlState } from '../urlState'
 
 /** 合同台账表：快捷筛选 + 条件筛选 + 合计；点击合同打开详情。 */
 const props = withDefaults(
@@ -15,6 +16,8 @@ const props = withDefaults(
     initialQuick?: string
     /** 显示“批量设置截止日”入口（对当前筛选结果中未设截止日的合同）。 */
     batchDue?: boolean
+    /** 把筛选和页码写进地址栏（合同台账页用；首页里的小表不用）。 */
+    syncUrl?: boolean
   }>(),
   {
     pageSize: 12,
@@ -70,6 +73,21 @@ const quick = ref(props.initialQuick || 'ALL'),
   period = ref(''),
   page = ref(1),
   sort = ref<{ prop: string; order: 'ascending' | 'descending' | null }>({ prop: '', order: null })
+if (props.syncUrl) {
+  const bind = useUrlState()
+  bind('quick', quick, 'ALL')
+  bind('q', keyword, '')
+  bind('cust', customer, '')
+  bind('co', company, '')
+  bind('line', brand, '')
+  bind('city', city, '')
+  bind('owner', owner, '')
+  bind('status', status, '')
+  bind('period', period, '')
+  bind('page', page, 1)
+  // 藏在“更多条件”里的筛选有值时，展开它，免得看不到为什么数据变少了
+  if (company.value || city.value || owner.value || status.value) moreFilters.value = true
+}
 
 const showOwner = computed(() => session.user?.role !== 'SALES')
 const uniq = (xs: (string | null | undefined)[]) =>

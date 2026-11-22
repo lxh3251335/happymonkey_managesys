@@ -18,6 +18,8 @@ interface Config {
   botId: string
   secretSet: boolean
   enabled: boolean
+  pushEnabled: boolean
+  pushTime: string
   updatedBy?: string | null
   updatedAt?: string | null
   status: Status
@@ -40,7 +42,7 @@ const STATES: Record<string, { text: string; type: 'success' | 'warning' | 'dang
   KICKED: { text: '已被别处的连接顶下线', type: 'danger' },
 }
 const config = ref<Config>(),
-  form = ref({ botId: '', secret: '', enabled: false }),
+  form = ref({ botId: '', secret: '', enabled: false, pushEnabled: false, pushTime: '09:00' }),
   bindings = ref<BindingRow[]>([]),
   busy = ref(false)
 const state = computed(() => STATES[config.value?.status.state || 'DISABLED'] || STATES.DISABLED)
@@ -52,7 +54,14 @@ async function load(fill = true) {
       api<Config>('/wecom/config'),
       api<BindingRow[]>('/bot/bindings'),
     ])
-    if (fill) form.value = { botId: config.value.botId, secret: '', enabled: config.value.enabled }
+    if (fill)
+      form.value = {
+        botId: config.value.botId,
+        secret: '',
+        enabled: config.value.enabled,
+        pushEnabled: config.value.pushEnabled,
+        pushTime: config.value.pushTime || '09:00',
+      }
   } catch (e) {
     if (fill) ElMessage.error((e as Error).message)
   }
@@ -137,6 +146,21 @@ onBeforeUnmount(() => window.clearInterval(timer))
       <el-form-item label="启用机器人">
         <el-switch v-model="form.enabled" />
       </el-form-item>
+      <el-form-item label="每天推送今日待办">
+        <div class="push-row">
+          <el-switch v-model="form.pushEnabled" :disabled="!form.enabled" />
+          <el-time-select
+            v-model="form.pushTime"
+            start="06:00"
+            step="00:30"
+            end="12:00"
+            :clearable="false"
+            :disabled="!form.enabled || !form.pushEnabled"
+            class="push-time"
+          />
+          <span class="muted">按各人账号计算，没有待办的人不推</span>
+        </div>
+      </el-form-item>
       <el-button type="primary" :loading="busy" @click="save">保存</el-button>
       <span v-if="config?.updatedAt" class="muted detail">
         上次修改：{{ config.updatedBy }}，{{ dateTime(config.updatedAt) }}
@@ -175,7 +199,15 @@ onBeforeUnmount(() => window.clearInterval(timer))
   margin-left: 4px;
 }
 .wecom-form {
-  max-width: 460px;
+  max-width: 560px;
+}
+.push-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.push-time {
+  width: 110px;
 }
 h3 {
   margin: 28px 0 10px;

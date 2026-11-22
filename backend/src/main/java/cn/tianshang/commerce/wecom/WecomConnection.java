@@ -72,6 +72,15 @@ final class WecomConnection implements AutoCloseable {
         net.scheduleWithFixedDelay(this::beat, heartbeat.toMillis(), heartbeat.toMillis(), TimeUnit.MILLISECONDS);
     }
 
+    /** 通过当前连接主动推送；没连上时返回 false。 */
+    boolean push(String userId, String markdown) {
+        final WecomSession s;
+        synchronized (this) {
+            s = socket == null ? null : session;
+        }
+        return s != null && s.push(userId, markdown);
+    }
+
     synchronized Status status() {
         return new Status(state, detail, since, session == null ? null : session.lastMessageAt());
     }

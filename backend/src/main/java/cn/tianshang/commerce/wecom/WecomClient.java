@@ -97,6 +97,11 @@ public class WecomClient {
         return at == null ? null : LocalDateTime.ofInstant(at, ZoneId.systemDefault());
     }
 
+    /** 主动给企业微信里的某人发消息；机器人没连上时返回 false。 */
+    public synchronized boolean push(String userId, String markdown) {
+        return connection != null && connection.push(userId, markdown);
+    }
+
     /** 连接状态：DISABLED 未启用；CONNECTING / CONNECTED / RETRYING / AUTH_FAILED / KICKED。 */
     public synchronized Map<String, Object> status() {
         var out = new LinkedHashMap<String, Object>();
