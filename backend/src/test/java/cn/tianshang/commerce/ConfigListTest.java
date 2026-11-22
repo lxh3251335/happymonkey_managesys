@@ -20,8 +20,15 @@ import org.springframework.security.test.context.support.WithMockUser;
 @WithMockUser(username = "admin", roles = "ADMIN")
 class ConfigListTest extends ApiTestSupport {
 
+    private String supplierId;
+
+    /** 本测试里的产品都属于同一家供应商。 */
     private String product(String name, String spec) throws Exception {
-        return postJson("/api/products", Map.of("scenario", "小象", "name", name, "specification", spec, "unit", "台"))
+        if (supplierId == null) supplierId = testSupplier();
+        return postJson(
+            "/api/products",
+            Map.of("supplierId", supplierId, "scenario", "小象", "name", name, "specification", spec, "unit", "台")
+        )
             .path("id")
             .asText();
     }

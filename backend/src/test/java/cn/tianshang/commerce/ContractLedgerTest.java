@@ -129,7 +129,16 @@ class ContractLedgerTest extends ApiTestSupport {
             .asText();
         String product = postJson(
             "/api/products",
-            Map.of("scenario", "冷库场景", "name", "冷库电箱" + UUID.randomUUID(), "unit", "台")
+            Map.of(
+                "supplierId",
+                testSupplier(),
+                "scenario",
+                "冷库场景",
+                "name",
+                "冷库电箱" + UUID.randomUUID(),
+                "unit",
+                "台"
+            )
         )
             .path("id")
             .asText();

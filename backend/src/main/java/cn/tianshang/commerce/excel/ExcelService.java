@@ -129,9 +129,11 @@ public class ExcelService {
                     .options(dictionary.activeScenarioNames().toArray(String[]::new)),
                 Column.of("name", "产品名称", 24).required(),
                 Column.of("specification", "规格", 18).note("软件、服务类可留空"),
-                Column.of("model", "型号", 14).note("应用场景 + 名称 + 规格 + 型号 不能重复"),
+                Column.of("model", "型号", 14).note("同一供应商下 应用场景 + 名称 + 规格 + 型号 不能重复"),
                 Column.of("unit", "单位", 8).note("留空为“台”"),
-                Column.of("supplier", "供应商", 20).note("填写已登记的供应商名称"),
+                Column.of("supplier", "供应商", 20)
+                    .required()
+                    .note("填写已登记的供应商名称；同一种产品不同供应商各一行"),
                 Column.of("mainstream", "主流配置", 10).options("是", "否"),
                 Column.of("drawings", "图纸数", 8).number().note(EXPORT_ONLY),
                 Column.of("reference_price", "历史售价参考", 14).number().note(EXPORT_ONLY)
@@ -493,8 +495,17 @@ public class ExcelService {
     private List<Op> planProducts(ExcelIo.Sheet sheet) {
         var existing = masters.products();
         var byId = index(existing, p -> p.get("id").toString());
-        var byKey = index(existing, p ->
-            productKey(db.text(p, "scenario"), db.text(p, "name"), db.text(p, "specification"), db.text(p, "model"))
+        var byKey = index(
+            existing,
+            p ->
+                productKey(
+                    db.text(p, "scenario"),
+                    db.text(p, "name"),
+                    db.text(p, "specification"),
+                    db.text(p, "model")
+                ) +
+                "|" +
+                db.text(p, "supplier_id")
         );
         var suppliers = supplierIndex();
         var seen = new HashMap<String, Integer>();
@@ -508,7 +519,11 @@ public class ExcelService {
             Map<String, Object> current;
             String id = row.get("id");
             String model = value(sheet, row, "model", id.isEmpty() ? null : byId.get(id), "model");
-            String key = productKey(scenario, name, spec, model);
+            String supplierName = row.get("supplier");
+            String supplierId = supplierName.isEmpty() ? null : suppliers.get(supplierName);
+            if (supplierName.isEmpty()) errors.add("供应商必填");
+            else if (supplierId == null) errors.add("供应商“" + supplierName + "”不存在，请先登记或导入供应商资料");
+            String key = productKey(scenario, name, spec, model) + "|" + Objects.toString(supplierId, "");
             if (!id.isEmpty()) {
                 current = byId.get(id);
                 if (current == null) errors.add("系统编号不存在");
@@ -521,20 +536,14 @@ public class ExcelService {
             }
             if (name.isEmpty()) errors.add("产品名称必填");
             if (seen.put(key, row.number()) != null) errors.add(
-                "与第 " + seen.get(key) + " 行重复（应用场景 + 名称 + 规格 + 型号）"
+                "与第 " + seen.get(key) + " 行重复（供应商 + 应用场景 + 名称 + 规格 + 型号）"
             );
             var other = byKey.get(key);
             if (current != null && other != null && !other.get("id").equals(current.get("id"))) errors.add(
-                "与已有产品重复（应用场景 + 名称 + 规格 + 型号）"
+                "与已有产品重复（供应商 + 应用场景 + 名称 + 规格 + 型号）"
             );
             String unit = value(sheet, row, "unit", current, "unit");
             if (unit.isEmpty()) unit = "台";
-            String supplierId;
-            if (sheet.present().contains("supplier")) {
-                String s = row.get("supplier");
-                supplierId = s.isEmpty() ? null : suppliers.get(s);
-                if (!s.isEmpty() && supplierId == null) errors.add("供应商“" + s + "”不存在，请先登记或导入供应商资料");
-            } else supplierId = current == null ? null : (String) current.get("supplier_id");
             boolean mainstream = sheet.present().contains("mainstream")
                 ? ExcelIo.yes(row.get("mainstream"))
                 : current != null && Boolean.TRUE.equals(current.get("mainstream"));

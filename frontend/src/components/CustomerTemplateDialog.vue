@@ -4,6 +4,7 @@ import { ElMessage } from 'element-plus'
 import { Delete, Plus } from '@element-plus/icons-vue'
 import { api, post } from '../api'
 import type { CustomerTemplate, Partner, Product, ProjectType } from '../types'
+import { productLabel } from '../products'
 import { money } from '../utils'
 
 /**
@@ -47,8 +48,6 @@ const standardPrice = (productId: string) => {
   return v == null ? null : Number(v)
 }
 const total = computed(() => form.value.items.reduce((s, l) => s + l.quantity * (l.unitPrice || 0), 0))
-const productLabel = (p: Product) =>
-  `${p.scenario} / ${p.name}${p.specification ? ' / ' + p.specification : ''}${p.model ? ' / ' + p.model : ''}`
 const toLines = (items: { product_id: string; quantity: number; unit_price: number | null }[]): Line[] =>
   items.map((i) => ({
     productId: i.product_id,

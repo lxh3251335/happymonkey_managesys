@@ -68,6 +68,8 @@ export interface Product {
   unit: string
   reference_price: number | null
   reference_cost: number | null
+  /** 这家供应商的单台拿货价；看不到成本的角色收不到这个字段 */
+  purchase_cost?: number | null
   /** 电气件清单的项数 */
   components?: number
 }
@@ -686,12 +688,18 @@ export interface BundleItem {
 export interface Bundle {
   id: string
   scenario: string
+  /** 一个组合一家供应商 */
+  supplier_id: string | null
+  supplier_name: string | null
   name: string
   note: string | null
   active: boolean
   items: BundleItem[]
   reference_price: number | null
   price_complete: boolean
+  /** 采购成本 = 组内各标准品采购成本 × 数量之和；看不到成本的角色收不到 */
+  reference_cost?: number | null
+  cost_complete?: boolean
 }
 /** 明细行属于哪个组合（同一组 no 相同；数量为总数量 = 每套数量 × 套数）。 */
 export interface LineGroup {

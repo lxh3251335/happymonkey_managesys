@@ -89,6 +89,13 @@ public abstract class ApiTestSupport {
             .asText();
     }
 
+    /** 测试用供应商（标准产品必须属于某家供应商）。 */
+    protected String testSupplier() throws Exception {
+        return postJson("/api/partners", Map.of("name", "测试供应商" + UUID.randomUUID(), "kind", "SUPPLIER"))
+            .path("id")
+            .asText();
+    }
+
     protected String project() throws Exception {
         return postJson("/api/projects", Map.of("name", "测试小象门店", "brand", "小象", "customerId", customer()))
             .path("id")
@@ -99,6 +106,8 @@ public abstract class ApiTestSupport {
         return postJson(
             "/api/products",
             Map.of(
+                "supplierId",
+                testSupplier(),
                 "scenario",
                 "小象",
                 "name",

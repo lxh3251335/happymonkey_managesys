@@ -19,6 +19,7 @@ import {
   type GroupDraft,
 } from '../bundles'
 import type { Bundle } from '../types'
+import { productLabel as labelOf } from '../products'
 import { activeCompanies, companyLabel, defaultCompany, loadDictionaries } from '../dictionaries'
 import type {
   Partner,
@@ -342,12 +343,14 @@ const margin = computed(() => (profit.value == null || total.value === 0 ? null 
 
 function productLabel(id: string) {
   const p = props.products.find((x) => x.id === id)
-  return p ? `${p.scenario} / ${p.name} / ${p.specification}${p.model ? ' / ' + p.model : ''}` : ''
+  return p ? labelOf(p) : ''
 }
 function selectProduct(line: LineDraft) {
   const p = props.products.find((p) => p.id === line.productId)
   line.unitPrice = p?.reference_price == null ? undefined : Number(p.reference_price)
-  line.materialCost = p?.reference_cost == null ? undefined : Number(p.reference_cost)
+  // 成本先取这家供应商的采购成本，没有填时取最近一次报价的成本
+  const cost = p?.purchase_cost ?? p?.reference_cost
+  line.materialCost = cost == null ? undefined : Number(cost)
   line.laborCost = undefined
   line.financeCost = undefined
 }
@@ -715,7 +718,7 @@ async function save() {
               <el-dropdown-item v-for="b in bundles" :key="b.id" :command="b.id">
                 <span class="bundle-option">
                   {{ b.scenario }} / {{ b.name }}
-                  <small>{{ b.items.length }} 种标准品</small>
+                  <small>{{ b.supplier_name || '未指定供应商' }} · {{ b.items.length }} 种标准品</small>
                 </span>
               </el-dropdown-item>
             </el-dropdown-menu>

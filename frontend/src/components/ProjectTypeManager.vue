@@ -15,6 +15,7 @@ import {
   type GroupDraft,
 } from '../bundles'
 import type { Bundle } from '../types'
+import { productLabel } from '../products'
 import { MagicStick, ArrowDown } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { Delete, Plus } from '@element-plus/icons-vue'
@@ -73,7 +74,7 @@ onMounted(load)
 
 const setPrice = (t: ProjectType) => t.items.reduce((s, i) => s + Number(i.quantity) * Number(i.unit_price || 0), 0)
 const formTotal = computed(() => form.value.items.reduce((s, i) => s + i.quantity * (i.unitPrice || 0), 0))
-const label = (p: Product) => `${p.scenario} / ${p.name} / ${p.specification}${p.model ? ' / ' + p.model : ''}`
+const label = productLabel
 /** 同业务线的最近报价可作为配置来源。 */
 const sourceQuotes = computed(() => quotes.value.filter((q) => q.brand === form.value.brand).slice(0, 300))
 
@@ -358,7 +359,8 @@ async function save() {
               <el-dropdown-menu>
                 <el-dropdown-item v-if="!bundles.length" disabled>还没有标准组合</el-dropdown-item>
                 <el-dropdown-item v-for="b in bundles" :key="b.id" :command="b.id">
-                  {{ b.scenario }} / {{ b.name }}（{{ b.items.length }} 种标准品）
+                  {{ b.scenario }} / {{ b.name }}（{{ b.supplier_name || '未指定供应商' }}，{{ b.items.length }}
+                  种标准品）
                 </el-dropdown-item>
               </el-dropdown-menu>
             </template>

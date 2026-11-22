@@ -15,8 +15,15 @@ import org.springframework.security.test.context.support.WithMockUser;
 @WithMockUser(username = "admin", roles = "ADMIN")
 class BundleTest extends ApiTestSupport {
 
+    private String supplierId;
+
+    /** 本测试里的产品都属于同一家供应商。 */
     private String product(String name, String spec) throws Exception {
-        return postJson("/api/products", Map.of("scenario", "小象", "name", name, "specification", spec, "unit", "台"))
+        if (supplierId == null) supplierId = testSupplier();
+        return postJson(
+            "/api/products",
+            Map.of("supplierId", supplierId, "scenario", "小象", "name", name, "specification", spec, "unit", "台")
+        )
             .path("id")
             .asText();
     }
@@ -24,6 +31,7 @@ class BundleTest extends ApiTestSupport {
     private Map<String, Object> bundleInput(String name, List<Map<String, Object>> items) {
         var m = new HashMap<String, Object>();
         m.put("scenario", "小象");
+        m.put("supplierId", supplierId);
         m.put("name", name);
         m.put("active", true);
         m.put("items", items);
@@ -88,6 +96,91 @@ class BundleTest extends ApiTestSupport {
                     .content("{\"items\":[]}")
             )
             .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void productsBelongToASupplierAndBundlesToOne() throws Exception {
+        String main = product("总配电箱", "650*850*250");
+        // 没有供应商不能建产品
+        mvc
+            .perform(
+                post("/api/products")
+                    .with(csrf())
+                    .contentType("application/json")
+                    .content(
+                        mapper.writeValueAsString(
+                            Map.of("scenario", "小象", "name", "无主产品", "specification", "1", "unit", "台")
+                        )
+                    )
+            )
+            .andExpect(status().isBadRequest());
+        // 同一家供应商同样的产品不能重复；换一家供应商可以再建一条
+        mvc
+            .perform(
+                post("/api/products")
+                    .with(csrf())
+                    .contentType("application/json")
+                    .content(
+                        mapper.writeValueAsString(
+                            Map.of(
+                                "supplierId",
+                                supplierId,
+                                "scenario",
+                                "小象",
+                                "name",
+                                "总配电箱",
+                                "specification",
+                                "650*850*250",
+                                "unit",
+                                "台"
+                            )
+                        )
+                    )
+            )
+            .andExpect(status().isBadRequest());
+        String other = testSupplier();
+        String otherMain = postJson(
+            "/api/products",
+            Map.of(
+                "supplierId",
+                other,
+                "scenario",
+                "小象",
+                "name",
+                "总配电箱",
+                "specification",
+                "650*850*250",
+                "unit",
+                "台",
+                "purchaseCost",
+                "2800"
+            )
+        )
+            .path("id")
+            .asText();
+        assertThat(otherMain).isNotEqualTo(main);
+        // 组合只能放同一家供应商的产品
+        mvc
+            .perform(
+                post("/api/bundles")
+                    .with(csrf())
+                    .contentType("application/json")
+                    .content(mapper.writeValueAsString(bundleInput("混装", List.of(line(main, 1), line(otherMain, 1)))))
+            )
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.containsString("同一家供应商")));
+        // 组合列表带供应商和采购成本；业务员看不到成本
+        var otherInput = bundleInput("另一家的组合", List.of(line(otherMain, 2)));
+        otherInput.put("supplierId", other);
+        String id = postJson("/api/bundles", otherInput).path("id").asText();
+        var b = bundle(id);
+        assertThat(b.path("supplier_name").asText()).startsWith("测试供应商");
+        assertThat(b.path("reference_cost").decimalValue()).isEqualByComparingTo("5600");
+        assertThat(b.path("cost_complete").asBoolean()).isTrue();
+        String asSales = read(
+            mvc.perform(get("/api/bundles").with(user("sales1").roles("SALES"))).andExpect(status().isOk()).andReturn()
+        ).toString();
+        assertThat(asSales).doesNotContain("reference_cost").doesNotContain("purchase_cost");
     }
 
     @Test

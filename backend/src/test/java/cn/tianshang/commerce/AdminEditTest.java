@@ -36,6 +36,8 @@ class AdminEditTest extends ApiTestSupport {
         putJson(
             "/api/products/" + product,
             Map.of(
+                "supplierId",
+                testSupplier(),
                 "scenario",
                 "小象前置仓",
                 "name",
