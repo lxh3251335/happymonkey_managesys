@@ -26,22 +26,35 @@ import org.springframework.web.multipart.MultipartFile;
 @Service
 public class ExcelService {
 
+    /** 数据表，按导入的先后顺序排列（后面的表依赖前面的资料）。 */
     public enum Dataset {
-        CUSTOMERS("customers", "客户资料"),
-        SUPPLIERS("suppliers", "供应商资料"),
-        PRODUCTS("products", "标准产品库"),
-        PROJECT_TYPES("project-types", "项目类型"),
-        SUPPLIER_TEMPLATES("supplier-templates", "供应商成本模板"),
-        PROJECTS("projects", "项目台账"),
-        CONTRACTS("contracts", "合同台账"),
-        CONTRACT_INVOICES("contract-invoices", "开票记录");
+        CUSTOMERS("customers", "客户资料", "客户名称、联系人、开票信息"),
+        SUPPLIERS("suppliers", "供应商资料", "供应商名称、联系人、开票信息"),
+        BUSINESS_LINES("business-lines", "客户集团与业务线", "如 美团 → 美团优选；项目、项目类型都挂在业务线下"),
+        SCENARIOS("scenarios", "应用场景", "标准产品库的分类，如 冷柜、照明"),
+        CITIES("cities", "城市", "门店所在城市及别名，用于从门店名称识别城市"),
+        COMPANIES("companies", "签约主体", "我方签合同、开票的公司"),
+        PRODUCTS("products", "标准产品库", "每家供应商一条：应用场景、名称、规格、型号、供应商、采购成本"),
+        PRODUCT_COMPONENTS("product-components", "电气件清单", "标准产品内部的电气元件构成，只记录构成"),
+        BUNDLES("bundles", "标准组合", "像套餐一样的一组标准品，一个组合一家供应商"),
+        PROJECT_TYPES("project-types", "项目类型", "各业务线下的门店类型及标准配置（可含组合）和标准售价"),
+        SUPPLIER_TEMPLATES("supplier-templates", "供应商成本模板", "某供应商做某项目类型时各产品的成本"),
+        CUSTOMER_TEMPLATES("customer-templates", "客户报价模板", "某客户在某项目类型下约定的配置与售价"),
+        PROJECTS("projects", "项目台账", "门店：客户、业务线、城市、合同号、负责人、发货"),
+        QUOTE_LINES("quote-lines", "门店报价明细", "每个门店的报价明细（产品或组合 + 套数），生成报价版本"),
+        CONTRACTS("contracts", "合同台账", "合同要素：标题、签订日期、签约主体、收款条件"),
+        CONTRACT_INVOICES("contract-invoices", "开票记录", "每张发票一行"),
+        RECEIPTS("receipts", "回款登记", "每笔到账及分到各合同的金额"),
+        COSTS("costs", "成本登记", "合同的实际成本：材料、人工、安装、运输等");
 
         public final String path;
         public final String title;
+        public final String about;
 
-        Dataset(String path, String title) {
+        Dataset(String path, String title, String about) {
             this.path = path;
             this.title = title;
+            this.about = about;
         }
 
         public static Dataset of(String path) {
@@ -72,6 +85,11 @@ public class ExcelService {
     private final cn.tianshang.commerce.dictionary.DictionaryService dictionary;
     private final ContractExcel contractExcel;
     private final ProjectExcel projectExcel;
+    private final DictionaryExcel dictionaryExcel;
+    private final BundleExcel bundleExcel;
+    private final CustomerTemplateExcel customerTemplateExcel;
+    private final QuoteExcel quoteExcel;
+    private final FinanceExcel financeExcel;
 
     public ExcelService(
         Database db,
@@ -81,7 +99,12 @@ public class ExcelService {
         cn.tianshang.commerce.business.BusinessService business,
         cn.tianshang.commerce.dictionary.DictionaryService dictionary,
         ContractExcel contractExcel,
-        ProjectExcel projectExcel
+        ProjectExcel projectExcel,
+        DictionaryExcel dictionaryExcel,
+        BundleExcel bundleExcel,
+        CustomerTemplateExcel customerTemplateExcel,
+        QuoteExcel quoteExcel,
+        FinanceExcel financeExcel
     ) {
         this.db = db;
         this.masters = masters;
@@ -91,6 +114,11 @@ public class ExcelService {
         this.dictionary = dictionary;
         this.contractExcel = contractExcel;
         this.projectExcel = projectExcel;
+        this.dictionaryExcel = dictionaryExcel;
+        this.bundleExcel = bundleExcel;
+        this.customerTemplateExcel = customerTemplateExcel;
+        this.quoteExcel = quoteExcel;
+        this.financeExcel = financeExcel;
     }
 
     /** 业务线下拉选项：启用的业务线 + “未指定”。 */
@@ -107,6 +135,13 @@ public class ExcelService {
             case PROJECTS -> projectExcel.columns();
             case CONTRACTS -> contractExcel.contractColumns();
             case CONTRACT_INVOICES -> contractExcel.invoiceColumns();
+            case BUSINESS_LINES, SCENARIOS, CITIES, COMPANIES -> dictionaryExcel.columns(d);
+            case PRODUCT_COMPONENTS -> bundleExcel.componentColumns();
+            case BUNDLES -> bundleExcel.bundleColumns();
+            case CUSTOMER_TEMPLATES -> customerTemplateExcel.columns();
+            case QUOTE_LINES -> quoteExcel.columns();
+            case RECEIPTS -> financeExcel.receiptColumns();
+            case COSTS -> financeExcel.costColumns();
             case CUSTOMERS, SUPPLIERS -> List.of(
                 Column.of("id", "系统编号", 38).note(ID_NOTE),
                 Column.of("name", "名称", 28).required().note("同类资料中名称不能重复"),
@@ -134,6 +169,9 @@ public class ExcelService {
                 Column.of("supplier", "供应商", 20)
                     .required()
                     .note("填写已登记的供应商名称；同一种产品不同供应商各一行"),
+                Column.of("purchase_cost", "采购成本", 12)
+                    .number()
+                    .note("这家供应商的单台拿货价（元）；只有能看成本的角色能导出和导入"),
                 Column.of("mainstream", "主流配置", 10).options("是", "否"),
                 Column.of("drawings", "图纸数", 8).number().note(EXPORT_ONLY),
                 Column.of("reference_price", "历史售价参考", 14).number().note(EXPORT_ONLY)
@@ -148,10 +186,15 @@ public class ExcelService {
                     .options(lineOptions()),
                 Column.of("active", "启用", 8).options("是", "否"),
                 Column.of("type_note", "类型备注", 20),
+                Column.of("bundle", "组合名称", 20).note(
+                    "填组合名称、产品留空：整个组合按套数展开；填了产品：该产品属于这个组合，相邻同名行同一组"
+                ),
+                Column.of("sets", "套数", 8).number().note("组合行用，留空为 1"),
                 Column.of("scenario", "产品应用场景", 14).note("与标准产品库一致，用于定位产品"),
                 Column.of("name", "产品名称", 22),
                 Column.of("specification", "规格", 16),
                 Column.of("model", "型号", 12),
+                Column.of("supplier", "供应商", 18).note("同一种产品有多家供应商时必填"),
                 Column.of("quantity", "数量", 8).number(),
                 Column.of("unit_price", "标准售价", 12).number().note("对客标准售价（元），可留空")
             );
@@ -177,49 +220,83 @@ public class ExcelService {
     // ===================== 导出 =====================
 
     public byte[] export(Dataset d, boolean template) {
-        if (d == Dataset.SUPPLIER_TEMPLATES && !Roles.canSeeCost()) throw new AccessDeniedException(
-            "供应商成本模板仅管理员、管理层、财务可导出"
-        );
+        if (
+            (d == Dataset.SUPPLIER_TEMPLATES || d == Dataset.COSTS) && !Roles.canSeeCost()
+        ) throw new AccessDeniedException(d.title + "仅管理员、管理层、财务可导出");
         List<Map<String, Object>> rows = template ? List.of() : exportRows(d);
         // 看不到成本的角色：导出时去掉成本、毛利列
         var columns = columns(d)
             .stream()
             .filter(c -> Roles.canSeeCost() || !CostRedaction.SENSITIVE.contains(c.key()))
             .toList();
-        var notes =
-            d == Dataset.PROJECTS
-                ? List.of(
-                      "项目台账 导入说明",
-                      "1. 有“系统编号”的行按编号更新；没有编号的按“客户 + 门店名称”匹配，匹配不到则新增。",
-                      "2. 业务线、城市须在数据字典中；负责人填写账户显示名称；填了运单号即视为已发货。",
-                      "3. 导入由管理员执行；删除不需要更新的列即可保持原值；有任何错误时整批不写入。",
-                      "4. 运单号、电话请保持文本格式，避免 Excel 改成科学计数法。"
-                  )
-                : d == Dataset.CONTRACTS
-                    ? List.of(
-                          "合同台账 导入说明",
-                          "1. 按“客户 + 合同号”匹配：已有合同更新合同要素，没有的新建合同（合同号以 # 开头的是未填合同号的单店订单）。",
-                          "2. 门店数、订单金额、开票、回款、成本、毛利等统计列只导出、不导入；开票请用“开票记录”导入，到款在系统中登记。",
-                          "3. 导入由管理员执行，每份合同的修改都会记入合同变更记录（原因：Excel 批量导入）。",
-                          "4. 删除不需要更新的列即可保持原值；有任何错误时整批不写入。"
-                      )
-                    : d == Dataset.CONTRACT_INVOICES
-                        ? List.of(
-                              "开票记录 导入说明",
-                              "1. 每行一张发票；按发票号码匹配，已登记的发票跳过，不能通过导入修改。",
-                              "2. 红字发票填写“原发票号码”，金额填正数；同一批次内可先蓝字后红字。",
-                              "3. 开票合计不能超过合同金额；有任何错误时整批不写入。",
-                              "4. 发票号码请保持文本格式，避免 Excel 改成科学计数法。"
-                          )
-                        : List.of(
-                              d.title + " 导入说明",
-                              "1. 第一张表为数据表，第一行是表头；列名带 * 的为必填。可删除不需要更新的列，缺少的列保持原值。",
-                              "2. 有“系统编号”的行按编号更新；没有编号的按名称匹配，匹配不到则新增。",
-                              "3. 导入前系统会逐行预览新增 / 更新 / 错误；有任何错误时整批不写入。",
-                              "4. 税号、银行账号等长数字请保持文本格式，避免 Excel 改成科学计数法。"
-                          );
+        var notes = notes(d);
         db.audit("EXCEL_EXPORT", d.path, d.title + (template ? " 模板" : " " + rows.size() + " 行"));
         return ExcelIo.write(d.title, columns, rows, notes);
+    }
+
+    /** 模板和导出文件里“填写说明”表开头的说明。 */
+    List<String> notes(Dataset d) {
+        return switch (d) {
+            case PROJECTS -> List.of(
+                "项目台账 导入说明",
+                "1. 有“系统编号”的行按编号更新；没有编号的按“客户 + 门店名称”匹配，匹配不到则新增。",
+                "2. 业务线、城市须在数据字典中；负责人填写账户显示名称；填了运单号即视为已发货。",
+                "3. 导入由管理员执行；删除不需要更新的列即可保持原值；有任何错误时整批不写入。",
+                "4. 运单号、电话请保持文本格式，避免 Excel 改成科学计数法。"
+            );
+            case CONTRACTS -> List.of(
+                "合同台账 导入说明",
+                "1. 按“客户 + 合同号”匹配：已有合同更新合同要素，没有的新建合同（合同号以 # 开头的是未填合同号的单店订单）。",
+                "2. 门店数、订单金额、开票、回款、成本、毛利等统计列只导出、不导入；开票请用“开票记录”导入，到款用“回款登记”导入。",
+                "3. 导入由管理员执行，每份合同的修改都会记入合同变更记录（原因：Excel 批量导入）。",
+                "4. 删除不需要更新的列即可保持原值；有任何错误时整批不写入。"
+            );
+            case CONTRACT_INVOICES -> List.of(
+                "开票记录 导入说明",
+                "1. 每行一张发票；按发票号码匹配，已登记的发票跳过，不能通过导入修改。",
+                "2. 红字发票填写“原发票号码”，金额填正数；同一批次内可先蓝字后红字。",
+                "3. 开票合计不能超过合同金额；有任何错误时整批不写入。",
+                "4. 发票号码请保持文本格式，避免 Excel 改成科学计数法。"
+            );
+            case PROJECT_TYPES, SUPPLIER_TEMPLATES, CUSTOMER_TEMPLATES, BUNDLES, PRODUCT_COMPONENTS -> List.of(
+                d.title + " 导入说明",
+                "1. 同一个" +
+                    (d == Dataset.PRODUCT_COMPONENTS ? "产品" : d == Dataset.BUNDLES ? "组合" : "模板") +
+                    "写多行，每行一个产品；导入时以文件中的内容整份替换。",
+                "2. 产品按“应用场景 + 名称 + 规格 + 型号”在标准产品库中定位；同一种产品有多家供应商时在“供应商”列指明。",
+                d == Dataset.PROJECT_TYPES
+                    ? "3. 标准组合可以只写“组合名称 + 套数”，导入时自动展开为组内各产品；也可以逐行列出组合里的产品。"
+                    : "3. 列名带 * 的为必填。",
+                "4. 导入前系统会逐行预览新增 / 更新 / 错误；有任何错误时整批不写入。"
+            );
+            case QUOTE_LINES -> List.of(
+                "门店报价明细 导入说明",
+                "1. 同一客户 + 门店写多行，每行一个产品，或一个标准组合（填组合名称和套数，产品留空）；每个门店生成一份新的报价版本。",
+                "2. 门店不存在时按“城市、项目类型、合同号、下单日期”登记新门店；门店有合同号时报价直接出具，否则为草稿。",
+                "3. 单价留空时按客户报价模板、项目类型标准售价取；税口径留空为含税 13%，有效期留空为 30 天后。",
+                "4. 门店最新版本的明细与文件相同时跳过，所以同一份文件重复导入不会生成重复版本；有任何错误时整批不写入。"
+            );
+            case RECEIPTS -> List.of(
+                "回款登记 导入说明",
+                "1. 一行是“一笔到账分到一份合同”的金额：同一客户、到账日期、流水号的行合成一笔到账；到账金额写这笔钱的总额。",
+                "2. 合同号留空表示这笔钱先不分配（待分配）；没分完的余额留作待分配，之后在合同台账里继续分。",
+                "3. 流水号已登记过的到账跳过，所以同一份对账单可以反复导入；没有流水号的无法识别重复。",
+                "4. 由管理员、财务导入；有任何错误时整批不写入。"
+            );
+            case COSTS -> List.of(
+                "成本登记 导入说明",
+                "1. 一行一笔实际成本，登记到客户的某份合同上；成本类别用下拉选项。",
+                "2. 客户、合同号、类别、金额、发生日期、单据号完全相同的一笔已登记过时跳过。",
+                "3. 由管理员、管理层、财务导入；有任何错误时整批不写入。"
+            );
+            default -> List.of(
+                d.title + " 导入说明",
+                "1. 第一张表为数据表，第一行是表头；列名带 * 的为必填。可删除不需要更新的列，缺少的列保持原值。",
+                "2. 有“系统编号”的行按编号更新；没有编号的按名称匹配，匹配不到则新增。",
+                "3. 导入前系统会逐行预览新增 / 更新 / 错误；有任何错误时整批不写入。",
+                "4. 税号、银行账号等长数字请保持文本格式，避免 Excel 改成科学计数法。"
+            );
+        };
     }
 
     private List<Map<String, Object>> exportRows(Dataset d) {
@@ -227,6 +304,13 @@ public class ExcelService {
             case PROJECTS -> projectExcel.rows();
             case CONTRACTS -> contractExcel.contractRows();
             case CONTRACT_INVOICES -> contractExcel.invoiceRows();
+            case BUSINESS_LINES, SCENARIOS, CITIES, COMPANIES -> dictionaryExcel.rows(d);
+            case PRODUCT_COMPONENTS -> bundleExcel.componentRows();
+            case BUNDLES -> bundleExcel.bundleRows();
+            case CUSTOMER_TEMPLATES -> customerTemplateExcel.rows();
+            case QUOTE_LINES -> quoteExcel.rows();
+            case RECEIPTS -> financeExcel.receiptRows();
+            case COSTS -> financeExcel.costRows();
             case CUSTOMERS, SUPPLIERS -> {
                 String kind = d == Dataset.CUSTOMERS ? "CUSTOMER" : "SUPPLIER";
                 var out = new ArrayList<Map<String, Object>>();
@@ -250,6 +334,7 @@ public class ExcelService {
                 .toList();
             case PROJECT_TYPES -> {
                 var out = new ArrayList<Map<String, Object>>();
+                var suppliers = productSuppliers();
                 for (var t : catalog.types()) {
                     @SuppressWarnings("unchecked")
                     var items = (List<Map<String, Object>>) t.get("items");
@@ -261,10 +346,13 @@ public class ExcelService {
                     if (items.isEmpty()) out.add(base);
                     for (var i : items) {
                         var r = new HashMap<String, Object>(base);
+                        r.put("bundle", i.get("bundle_name"));
+                        r.put("sets", i.get("bundle_sets"));
                         r.put("scenario", i.get("product_scenario"));
                         r.put("name", i.get("name"));
                         r.put("specification", i.get("specification"));
                         r.put("model", i.get("model"));
+                        r.put("supplier", suppliers.get(Objects.toString(i.get("supplier_id"), "")));
                         r.put("quantity", i.get("quantity"));
                         r.put("unit_price", i.get("unit_price"));
                         out.add(r);
@@ -318,14 +406,7 @@ public class ExcelService {
         if (report.errors() > 0) throw new ApiException(
             "有 " + report.errors() + " 处错误，整批未导入。请先在预览中修正"
         );
-        for (var op : ops) {
-            if (op.apply() == null) continue;
-            try {
-                op.apply().run();
-            } catch (ApiException e) {
-                throw new ApiException(op.result().rows() + "：" + e.getMessage());
-            }
-        }
+        apply(ops);
         db.audit(
             "EXCEL_IMPORT",
             d.path,
@@ -334,7 +415,19 @@ public class ExcelService {
         return report;
     }
 
-    private static Report report(Dataset d, List<Op> ops) {
+    /** 按预览的顺序逐条写入；某条写入失败时带上行号抛出。 */
+    static void apply(List<Op> ops) {
+        for (var op : ops) {
+            if (op.apply() == null) continue;
+            try {
+                op.apply().run();
+            } catch (ApiException e) {
+                throw new ApiException(op.result().rows() + "：" + e.getMessage());
+            }
+        }
+    }
+
+    static Report report(Dataset d, List<Op> ops) {
         var results = ops.stream().map(Op::result).toList();
         int c = 0,
             u = 0,
@@ -350,7 +443,7 @@ public class ExcelService {
         return new Report(d.path, c, u, s, e, results);
     }
 
-    private void requireImportRole(Dataset d) {
+    void requireImportRole(Dataset d) {
         var roles = SecurityContextHolder.getContext()
             .getAuthentication()
             .getAuthorities()
@@ -359,14 +452,25 @@ public class ExcelService {
             .collect(Collectors.toSet());
         var allowed = switch (d) {
             case SUPPLIER_TEMPLATES -> List.of("ROLE_ADMIN", "ROLE_MANAGER", "ROLE_FINANCE");
-            case CONTRACT_INVOICES -> List.of("ROLE_ADMIN", "ROLE_FINANCE");
-            case CONTRACTS, PROJECTS -> List.of("ROLE_ADMIN");
+            case CONTRACT_INVOICES, RECEIPTS -> List.of("ROLE_ADMIN", "ROLE_FINANCE");
+            case COSTS -> List.of("ROLE_ADMIN", "ROLE_MANAGER", "ROLE_FINANCE");
+            case CONTRACTS, PROJECTS, BUSINESS_LINES, SCENARIOS, CITIES, COMPANIES -> List.of("ROLE_ADMIN");
             default -> List.of("ROLE_ADMIN", "ROLE_MANAGER", "ROLE_SALES");
         };
         if (allowed.stream().noneMatch(roles::contains)) throw new AccessDeniedException("当前角色不能导入" + d.title);
     }
 
-    private List<Op> plan(Dataset d, ExcelIo.Sheet sheet) {
+    /** 当前角色可以导入哪些表（“数据导入”页用）。 */
+    public boolean canImport(Dataset d) {
+        try {
+            requireImportRole(d);
+            return true;
+        } catch (AccessDeniedException e) {
+            return false;
+        }
+    }
+
+    List<Op> plan(Dataset d, ExcelIo.Sheet sheet) {
         if (sheet.rows().isEmpty()) throw new ApiException("Excel 中没有数据行");
         return switch (d) {
             case CUSTOMERS -> planPartners(sheet, "CUSTOMER");
@@ -377,6 +481,11 @@ public class ExcelService {
             case PROJECTS -> projectExcel.plan(sheet);
             case CONTRACTS -> contractExcel.planContracts(sheet);
             case CONTRACT_INVOICES -> contractExcel.planInvoices(sheet);
+            case BUSINESS_LINES, SCENARIOS, CITIES, COMPANIES -> dictionaryExcel.plan(d, sheet);
+            case PRODUCT_COMPONENTS, BUNDLES -> bundleExcel.plan(d, sheet);
+            case CUSTOMER_TEMPLATES -> customerTemplateExcel.plan(sheet);
+            case QUOTE_LINES -> quoteExcel.plan(sheet);
+            case RECEIPTS, COSTS -> financeExcel.plan(d, sheet);
         };
     }
 
@@ -547,7 +656,24 @@ public class ExcelService {
             boolean mainstream = sheet.present().contains("mainstream")
                 ? ExcelIo.yes(row.get("mainstream"))
                 : current != null && Boolean.TRUE.equals(current.get("mainstream"));
-            var input = new MasterService.ProductInput(scenario, name, spec, model, unit, supplierId, mainstream);
+            // 采购成本：只有能看成本的角色能改；看不到成本的角色导入时保持原值
+            BigDecimal purchaseCost = current == null ? null : Rows.decimal(current, "purchase_cost");
+            if (sheet.present().contains("purchase_cost") && Roles.canSeeCost()) try {
+                purchaseCost = ExcelIo.decimal(row.get("purchase_cost"), "采购成本");
+                if (purchaseCost != null && purchaseCost.signum() < 0) errors.add("采购成本不能为负数");
+            } catch (ApiException e) {
+                errors.add(e.getMessage());
+            }
+            var input = new MasterService.ProductInput(
+                scenario,
+                name,
+                spec,
+                model,
+                unit,
+                supplierId,
+                mainstream,
+                purchaseCost
+            );
             validate(
                 input,
                 errors,
@@ -570,6 +696,7 @@ public class ExcelService {
             if (!unit.equals(db.text(current, "unit"))) changed.add("单位");
             if (!Objects.equals(supplierId, current.get("supplier_id"))) changed.add("供应商");
             if (mainstream != Boolean.TRUE.equals(current.get("mainstream"))) changed.add("主流配置");
+            if (!eq(current.get("purchase_cost"), purchaseCost)) changed.add("采购成本");
             String cid = current.get("id").toString();
             ops.add(
                 changed.isEmpty()
@@ -586,7 +713,8 @@ public class ExcelService {
 
     private List<Op> planTypes(ExcelIo.Sheet sheet) {
         var existing = index(catalog.types(), t -> db.text(t, "name"));
-        var products = productIndex();
+        var products = new ProductIndex(db);
+        var bundleLines = new BundleLines(db);
         var groups = group(sheet.rows(), r -> r.get("type"));
         var ops = new ArrayList<Op>();
         for (var g : groups.entrySet()) {
@@ -614,38 +742,20 @@ public class ExcelService {
                 : current == null
                     ? ""
                     : db.text(current, "note");
-            var lines = new ArrayList<CatalogService.TypeLine>();
-            var seen = new HashSet<String>();
-            for (var r : rowsOf) {
-                if (r.get("name").isEmpty() && r.get("specification").isEmpty()) continue;
-                String pid = products.get(
-                    productKey(r.get("scenario"), r.get("name"), r.get("specification"), r.get("model"))
-                );
-                if (pid == null) {
-                    errors.add(
-                        "第 " +
-                            r.number() +
-                            " 行：标准产品库中找不到“" +
-                            r.get("scenario") +
-                            " / " +
-                            r.get("name") +
-                            " / " +
-                            r.get("specification") +
-                            "”"
+            // 组合展开行的默认售价：该类型里原来组合内同一产品的标准售价（单品行的售价不套到组合上）
+            var prices = new HashMap<String, BigDecimal>();
+            if (current != null) {
+                @SuppressWarnings("unchecked")
+                var oldItems = (List<Map<String, Object>>) current.get("items");
+                for (var i : oldItems)
+                    if (i.get("unit_price") != null && i.get("bundle_id") != null) prices.put(
+                        i.get("product_id").toString(),
+                        Rows.decimal(i, "unit_price")
                     );
-                    continue;
-                }
-                if (!seen.add(pid)) errors.add("第 " + r.number() + " 行：同一产品重复");
-                try {
-                    var qty = ExcelIo.decimal(r.get("quantity"), "数量");
-                    if (qty == null || qty.signum() <= 0) errors.add("第 " + r.number() + " 行：数量必须大于 0");
-                    else lines.add(
-                        new CatalogService.TypeLine(pid, qty, ExcelIo.decimal(r.get("unit_price"), "标准售价"))
-                    );
-                } catch (ApiException e) {
-                    errors.add("第 " + r.number() + " 行：" + e.getMessage());
-                }
             }
+            var lines = new ArrayList<CatalogService.TypeLine>();
+            for (var l : bundleLines.parse(rowsOf, products, prices::get, false, errors))
+                lines.add(new CatalogService.TypeLine(l.productId(), l.quantity(), l.unitPrice(), l.group()));
             var input = new CatalogService.TypeInput(typeName, brand, blank(note), active, lines);
             validate(input, errors, Map.of("name", "项目类型", "brand", "业务线"));
             String rows = span(rowsOf);
@@ -671,7 +781,9 @@ public class ExcelService {
                 same =
                     o.get("product_id").equals(n.productId()) &&
                     eq(o.get("quantity"), n.quantity()) &&
-                    eq(o.get("unit_price"), n.unitPrice());
+                    eq(o.get("unit_price"), n.unitPrice()) &&
+                    Objects.equals(o.get("bundle_id"), n.group() == null ? null : n.group().bundleId()) &&
+                    eq(o.get("bundle_sets"), n.group() == null ? null : n.group().sets());
             }
             String tid = current.get("id").toString();
             ops.add(
@@ -691,7 +803,7 @@ public class ExcelService {
     private List<Op> planSupplierTemplates(ExcelIo.Sheet sheet) {
         var suppliers = supplierIndex();
         var types = index(catalog.types(), t -> db.text(t, "name"));
-        var products = productIndex();
+        var products = new ProductIndex(db);
         var existing = index(catalog.supplierTemplates(), t -> t.get("supplier_id") + "::" + t.get("project_type_id"));
         var groups = group(sheet.rows(), r -> r.get("supplier") + "\u0000" + r.get("type"));
         var ops = new ArrayList<Op>();
@@ -718,23 +830,18 @@ public class ExcelService {
             var lines = new ArrayList<CatalogService.CostLine>();
             var seen = new HashSet<String>();
             for (var r : rowsOf) {
-                String pid = products.get(
-                    productKey(r.get("scenario"), r.get("name"), r.get("specification"), r.get("model"))
+                // 成本模板里的产品应是这家供应商的；同一种产品有多家供应商时优先取这家的
+                String pid = products.find(
+                    r.get("scenario"),
+                    r.get("name"),
+                    r.get("specification"),
+                    r.get("model"),
+                    null,
+                    supplierId,
+                    r.number(),
+                    errors
                 );
-                if (pid == null) {
-                    errors.add(
-                        "第 " +
-                            r.number() +
-                            " 行：标准产品库中找不到“" +
-                            r.get("scenario") +
-                            " / " +
-                            r.get("name") +
-                            " / " +
-                            r.get("specification") +
-                            "”"
-                    );
-                    continue;
-                }
+                if (pid == null) continue;
                 if (!seen.add(pid)) errors.add("第 " + r.number() + " 行：同一产品重复");
                 try {
                     var m = ExcelIo.decimal(r.get("material_cost"), "材料成本");
@@ -823,18 +930,11 @@ public class ExcelService {
         return out;
     }
 
-    private Map<String, String> productIndex() {
+    /** 产品编号 → 供应商名称（项目类型导出用）。 */
+    private Map<String, String> productSuppliers() {
         var out = new HashMap<String, String>();
-        for (var p : db.jdbc.queryForList("SELECT id,scenario,name,specification,model FROM product"))
-            out.put(
-                productKey(
-                    db.text(p, "scenario"),
-                    db.text(p, "name"),
-                    db.text(p, "specification"),
-                    db.text(p, "model")
-                ),
-                p.get("id").toString()
-            );
+        for (var p : db.jdbc.queryForList("SELECT p.id,s.name FROM product p JOIN partner s ON s.id=p.supplier_id"))
+            out.put(p.get("id").toString(), db.text(p, "name"));
         return out;
     }
 

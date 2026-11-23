@@ -274,6 +274,13 @@ onMounted(async () => {
           <el-input v-model="invoiceKeyword" clearable :prefix-icon="Search" placeholder="搜索发票号、客户或合同号" />
           <ExcelTools dataset="contract-invoices" title="开票记录" :can-import="canFinance()" @imported="load" />
         </template>
+        <ExcelTools
+          v-if="tab === 'ledger'"
+          dataset="receipts"
+          title="回款登记"
+          :can-import="canFinance()"
+          @imported="load"
+        />
       </div>
       <template v-if="tab === 'contracts'">
         <ContractTable

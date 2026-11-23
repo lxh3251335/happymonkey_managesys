@@ -40,9 +40,11 @@ async function configure(typeId: string) {
 const excel = computed(() =>
   tab.value === 'types'
     ? { dataset: 'project-types', title: '项目类型', canImport: canWrite() }
-    : tab.value === 'costs'
-      ? { dataset: 'supplier-templates', title: '供应商成本模板', canImport: canSeeCost() }
-      : null,
+    : tab.value === 'customers'
+      ? { dataset: 'customer-templates', title: '客户报价模板', canImport: canWrite() }
+      : tab.value === 'costs'
+        ? { dataset: 'supplier-templates', title: '供应商成本模板', canImport: canSeeCost() }
+        : null,
 )
 function switchTab(name: string | number) {
   router.replace({ query: { ...route.query, tab: String(name) } })
@@ -72,7 +74,7 @@ onMounted(async () => {
         <el-tab-pane v-for="t in tabs" :key="t.name" :label="t.label" :name="t.name" />
       </el-tabs>
       <ProjectTypeManager v-if="tab === 'types'" ref="typeManager" :key="`t${reloadKey}`" :products="products" />
-      <CustomerTemplateManager v-else-if="tab === 'customers'" />
+      <CustomerTemplateManager v-else-if="tab === 'customers'" :key="`u${reloadKey}`" />
       <SupplierTemplateManager v-else-if="tab === 'costs'" :key="`c${reloadKey}`" @configure="configure" />
       <TemplateManager v-else-if="tab === 'templates'" />
     </section>

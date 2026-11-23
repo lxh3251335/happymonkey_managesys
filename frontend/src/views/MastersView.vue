@@ -152,9 +152,12 @@ const excel = computed(
       CUSTOMER: { dataset: 'customers', title: '客户资料', canImport: canWrite() },
       SUPPLIER: { dataset: 'suppliers', title: '供应商资料', canImport: canWrite() },
       PRODUCT: { dataset: 'products', title: '标准产品库', canImport: canWrite() },
+      BUNDLE: { dataset: 'bundles', title: '标准组合', canImport: canWrite() },
     })[tab.value],
 )
+const bundleKey = ref(0)
 async function afterImport() {
+  bundleKey.value++
   await load()
 }
 const kindName = computed(() => (tab.value === 'PRODUCT' ? '标准产品' : tab.value === 'CUSTOMER' ? '客户' : '供应商'))
@@ -237,7 +240,7 @@ onMounted(load)
         />
         <span class="muted count">共 {{ filteredProducts.length }} 个产品</span>
       </div>
-      <BundleManager v-if="tab === 'BUNDLE'" ref="bundleManager" :products="products" />
+      <BundleManager v-if="tab === 'BUNDLE'" ref="bundleManager" :key="`bd${bundleKey}`" :products="products" />
       <el-table v-else-if="tab !== 'PRODUCT'" :data="filteredPartners.slice((page - 1) * 12, page * 12)">
         <el-table-column :label="tab === 'CUSTOMER' ? '客户名称' : '供应商名称'" prop="name" min-width="220" />
         <el-table-column label="联系人 / 电话" min-width="150">
