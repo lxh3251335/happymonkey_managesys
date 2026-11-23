@@ -58,9 +58,9 @@ async function load() {
     ElMessage.error((e as Error).message)
   }
 }
-function downloadTemplate() {
+function downloadTemplate(sample = false) {
   const a = document.createElement('a')
-  a.href = '/api/excel/workbook/template'
+  a.href = sample ? '/api/excel/workbook/template?sample=true' : '/api/excel/workbook/template'
   a.rel = 'noopener'
   document.body.appendChild(a)
   a.click()
@@ -93,7 +93,7 @@ async function run(action: 'preview' | 'import') {
       report.value = r
       expanded.value = r.sheets.filter((s) => s.status === 'ERROR').map((s) => s.title)
     } else {
-      ElMessage.success(`已整本导入：新增 ${r.created}，更新 ${r.updated}`)
+      ElMessage.success(`已整本导入：新增 ${r.created}，更新 ${r.updated}。建议到“数据检查”页核对一遍`)
       open.value = false
     }
   } catch (e) {
@@ -110,12 +110,16 @@ onMounted(load)
       <div class="workbook-text">
         <strong>整本导入</strong>
         <span class="muted">
-          下载包含全部表的完整模板，填好后一次导入；按下面的顺序逐张检查并写入，任一张表有错整本不写入。
+          下载包含全部表的完整模板，填好后一次导入；按下面的顺序逐张检查并写入，任一张表有错整本不写入。导入后可到“数据检查”页核对。
         </span>
       </div>
-      <el-button size="small" @click="downloadTemplate">
+      <el-button size="small" @click="downloadTemplate()">
         <el-icon><Download /></el-icon>
         下载完整模板
+      </el-button>
+      <el-button size="small" @click="downloadTemplate(true)">
+        <el-icon><Download /></el-icon>
+        下载填写示范
       </el-button>
       <el-button size="small" type="primary" @click="start">
         <el-icon><Upload /></el-icon>
@@ -139,7 +143,8 @@ onMounted(load)
         <input ref="input" type="file" accept=".xlsx" @change="pick" />
         <span>{{ file ? file.name : '选择按完整模板填写的 .xlsx 文件…' }}</span>
       </label>
-      <el-button size="small" link type="primary" @click="downloadTemplate">下载完整模板</el-button>
+      <el-button size="small" link type="primary" @click="downloadTemplate()">下载完整模板</el-button>
+      <el-button size="small" link type="primary" @click="downloadTemplate(true)">下载填写示范</el-button>
     </div>
     <div v-if="busy && !report" class="muted loading">正在逐张读取并校验…</div>
     <template v-if="report">

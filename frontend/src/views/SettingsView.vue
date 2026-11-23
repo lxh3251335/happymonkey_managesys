@@ -9,12 +9,15 @@ import CompanyManager from '../components/CompanyManager.vue'
 import BotBinding from '../components/BotBinding.vue'
 import WecomBotSettings from '../components/WecomBotSettings.vue'
 import DataImportPanel from '../components/DataImportPanel.vue'
+import DataCheckPanel from '../components/DataCheckPanel.vue'
 import ExcelTools from '../components/ExcelTools.vue'
 import { api, post, put, session } from '../api'
 import type { User, Audit, ImportBatch } from '../types'
 import { actionName, dateTime, day, roleName } from '../utils'
 const route = useRoute()
-const tab = ref(route.query.tab === 'excel' ? 'excel' : 'account'),
+const tab = ref(
+    ['excel', 'check', 'companies'].includes(String(route.query.tab)) ? String(route.query.tab) : 'account',
+  ),
   users = ref<User[]>([]),
   audits = ref<Audit[]>([]),
   imports = ref<ImportBatch[]>([]),
@@ -120,6 +123,7 @@ onMounted(load)
           <el-tab-pane label="签约主体" name="companies" />
           <el-tab-pane label="企业微信机器人" name="wecom" />
           <el-tab-pane label="数据导入" name="excel" />
+          <el-tab-pane label="数据检查" name="check" />
           <el-tab-pane label="操作审计" name="audit" />
           <el-tab-pane label="历史数据导入" name="imports" />
         </template>
@@ -183,6 +187,7 @@ onMounted(load)
         <CompanyManager :key="`c${dictKey}`" />
       </template>
       <DataImportPanel v-if="tab === 'excel'" />
+      <DataCheckPanel v-if="tab === 'check'" />
       <WecomBotSettings v-if="tab === 'wecom'" />
       <el-table v-if="tab === 'audit'" :data="audits" max-height="600">
         <el-table-column label="时间" width="150">
