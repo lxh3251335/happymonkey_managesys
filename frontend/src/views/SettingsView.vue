@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
+import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import PageHeader from '../components/PageHeader.vue'
 import BusinessManager from '../components/BusinessManager.vue'
@@ -7,17 +8,23 @@ import DictionaryManager from '../components/DictionaryManager.vue'
 import CompanyManager from '../components/CompanyManager.vue'
 import BotBinding from '../components/BotBinding.vue'
 import WecomBotSettings from '../components/WecomBotSettings.vue'
+import DataImportPanel from '../components/DataImportPanel.vue'
+import ExcelTools from '../components/ExcelTools.vue'
 import { api, post, put, session } from '../api'
 import type { User, Audit, ImportBatch } from '../types'
 import { actionName, dateTime, day, roleName } from '../utils'
-const tab = ref('account'),
+const route = useRoute()
+const tab = ref(route.query.tab === 'excel' ? 'excel' : 'account'),
   users = ref<User[]>([]),
   audits = ref<Audit[]>([]),
   imports = ref<ImportBatch[]>([]),
   dialog = ref(false),
   busy = ref(false),
   error = ref(''),
-  dictTab = ref<'business' | 'scenario' | 'city'>('business')
+  dictTab = ref<'business' | 'scenario' | 'city'>('business'),
+  dictKey = ref(0)
+const dictExcel = { business: 'business-lines', scenario: 'scenarios', city: 'cities' } as const
+const dictTitle = { business: '客户集团与业务线', scenario: '应用场景', city: '城市' } as const
 const password = ref({ oldPassword: '', newPassword: '' })
 const user = ref({ username: '', displayName: '', role: 'SALES', password: '' })
 const editDialog = ref(false),
@@ -112,6 +119,7 @@ onMounted(load)
           <el-tab-pane label="数据字典" name="business" />
           <el-tab-pane label="签约主体" name="companies" />
           <el-tab-pane label="企业微信机器人" name="wecom" />
+          <el-tab-pane label="数据导入" name="excel" />
           <el-tab-pane label="操作审计" name="audit" />
           <el-tab-pane label="历史数据导入" name="imports" />
         </template>
@@ -151,15 +159,30 @@ onMounted(load)
         </el-table>
       </div>
       <template v-if="tab === 'business'">
-        <el-radio-group v-model="dictTab" size="small" class="dict-switch">
-          <el-radio-button value="business">客户集团与业务线</el-radio-button>
-          <el-radio-button value="scenario">应用场景</el-radio-button>
-          <el-radio-button value="city">城市</el-radio-button>
-        </el-radio-group>
-        <BusinessManager v-if="dictTab === 'business'" />
-        <DictionaryManager v-else :key="dictTab" :kind="dictTab" />
+        <div class="dict-switch">
+          <el-radio-group v-model="dictTab" size="small">
+            <el-radio-button value="business">客户集团与业务线</el-radio-button>
+            <el-radio-button value="scenario">应用场景</el-radio-button>
+            <el-radio-button value="city">城市</el-radio-button>
+          </el-radio-group>
+          <ExcelTools
+            :key="dictTab"
+            :dataset="dictExcel[dictTab]"
+            :title="dictTitle[dictTab]"
+            can-import
+            @imported="dictKey++"
+          />
+        </div>
+        <BusinessManager v-if="dictTab === 'business'" :key="`b${dictKey}`" />
+        <DictionaryManager v-else :key="`${dictTab}${dictKey}`" :kind="dictTab" />
       </template>
-      <CompanyManager v-if="tab === 'companies'" />
+      <template v-if="tab === 'companies'">
+        <div class="dict-switch">
+          <ExcelTools dataset="companies" title="签约主体" can-import @imported="dictKey++" />
+        </div>
+        <CompanyManager :key="`c${dictKey}`" />
+      </template>
+      <DataImportPanel v-if="tab === 'excel'" />
       <WecomBotSettings v-if="tab === 'wecom'" />
       <el-table v-if="tab === 'audit'" :data="audits" max-height="600">
         <el-table-column label="时间" width="150">
@@ -224,6 +247,10 @@ onMounted(load)
 </template>
 <style scoped>
 .dict-switch {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
   margin-bottom: 12px;
 }
 </style>

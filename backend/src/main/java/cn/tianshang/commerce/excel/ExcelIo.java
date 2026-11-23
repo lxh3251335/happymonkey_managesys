@@ -65,9 +65,19 @@ public final class ExcelIo {
 
     private ExcelIo() {}
 
+    /** 一张数据表的定义：表名、列、导出行（模板时为空）。 */
+    public record SheetSpec(String title, List<Column> columns, List<Map<String, Object>> rows) {}
+
     public static byte[] write(String title, List<Column> columns, List<Map<String, Object>> rows, List<String> notes) {
+        return write(List.of(new SheetSpec(title, columns, rows)), notes, false);
+    }
+
+    /**
+     * 写整本：每个 SheetSpec 一张数据表，再加一张“填写说明”（所有表的列说明）。
+     * helpFirst=true 时说明表放在最前（完整模板），否则放在最后（单表导出）。
+     */
+    public static byte[] write(List<SheetSpec> sheets, List<String> notes, boolean helpFirst) {
         try (var wb = new XSSFWorkbook(); var out = new ByteArrayOutputStream()) {
-            var sheet = wb.createSheet(title);
             var headerStyle = wb.createCellStyle();
             var bold = wb.createFont();
             bold.setBold(true);
@@ -85,71 +95,88 @@ public final class ExcelIo {
             textStyle.setDataFormat(wb.createDataFormat().getFormat("@"));
             var numberStyle = wb.createCellStyle();
             numberStyle.setDataFormat(wb.createDataFormat().getFormat("0.######"));
+            var titleStyle = wb.createCellStyle();
+            var big = wb.createFont();
+            big.setBold(true);
+            big.setFontHeightInPoints((short) 13);
+            titleStyle.setFont(big);
 
-            var head = sheet.createRow(0);
-            for (int c = 0; c < columns.size(); c++) {
-                var col = columns.get(c);
-                var cell = head.createCell(c);
-                cell.setCellValue(col.header() + (col.mandatory() ? "*" : ""));
-                cell.setCellStyle(col.mandatory() ? requiredStyle : headerStyle);
-                sheet.setColumnWidth(c, Math.max(8, col.width()) * 256);
-                sheet.setDefaultColumnStyle(c, col.text() ? textStyle : numberStyle);
-            }
-            sheet.createFreezePane(0, 1);
-            int r = 1;
-            for (var row : rows) {
-                var x = sheet.createRow(r++);
+            if (helpFirst) wb.createSheet("填写说明");
+            for (var spec : sheets) {
+                var sheet = wb.createSheet(spec.title());
+                var columns = spec.columns();
+                var head = sheet.createRow(0);
                 for (int c = 0; c < columns.size(); c++) {
                     var col = columns.get(c);
-                    Object v = row.get(col.key());
-                    var cell = x.createCell(c);
-                    if (v == null) {
-                        cell.setCellStyle(col.text() ? textStyle : numberStyle);
-                        continue;
-                    }
-                    if (!col.text() && v instanceof Number n) {
-                        cell.setCellValue(new BigDecimal(n.toString()).doubleValue());
-                        cell.setCellStyle(numberStyle);
-                    } else {
-                        cell.setCellValue(
-                            v instanceof BigDecimal b ? b.stripTrailingZeros().toPlainString() : v.toString()
-                        );
-                        cell.setCellStyle(textStyle);
+                    var cell = head.createCell(c);
+                    cell.setCellValue(col.header() + (col.mandatory() ? "*" : ""));
+                    cell.setCellStyle(col.mandatory() ? requiredStyle : headerStyle);
+                    sheet.setColumnWidth(c, Math.max(8, col.width()) * 256);
+                    sheet.setDefaultColumnStyle(c, col.text() ? textStyle : numberStyle);
+                }
+                sheet.createFreezePane(0, 1);
+                int r = 1;
+                for (var row : spec.rows()) {
+                    var x = sheet.createRow(r++);
+                    for (int c = 0; c < columns.size(); c++) {
+                        var col = columns.get(c);
+                        Object v = row.get(col.key());
+                        var cell = x.createCell(c);
+                        if (v == null) {
+                            cell.setCellStyle(col.text() ? textStyle : numberStyle);
+                            continue;
+                        }
+                        if (!col.text() && v instanceof Number n) {
+                            cell.setCellValue(new BigDecimal(n.toString()).doubleValue());
+                            cell.setCellStyle(numberStyle);
+                        } else {
+                            cell.setCellValue(
+                                v instanceof BigDecimal b ? b.stripTrailingZeros().toPlainString() : v.toString()
+                            );
+                            cell.setCellStyle(textStyle);
+                        }
                     }
                 }
-            }
-            // 下拉选项
-            var helper = sheet.getDataValidationHelper();
-            for (int c = 0; c < columns.size(); c++) {
-                var opts = columns.get(c).options();
-                // Excel 下拉列表的选项文本合计不能超过 255 个字符；超过时只在填写说明中列出
-                if (opts.isEmpty() || String.join(",", opts).length() > 250) continue;
-                var v = helper.createValidation(
-                    helper.createExplicitListConstraint(opts.toArray(String[]::new)),
-                    new CellRangeAddressList(1, MAX_ROWS, c, c)
-                );
-                v.setShowErrorBox(true);
-                sheet.addValidationData(v);
+                // 下拉选项
+                var helper = sheet.getDataValidationHelper();
+                for (int c = 0; c < columns.size(); c++) {
+                    var opts = columns.get(c).options();
+                    // Excel 下拉列表的选项文本合计不能超过 255 个字符；超过时只在填写说明中列出
+                    if (opts.isEmpty() || String.join(",", opts).length() > 250) continue;
+                    var v = helper.createValidation(
+                        helper.createExplicitListConstraint(opts.toArray(String[]::new)),
+                        new CellRangeAddressList(1, MAX_ROWS, c, c)
+                    );
+                    v.setShowErrorBox(true);
+                    sheet.addValidationData(v);
+                }
             }
             // 填写说明
-            var help = wb.createSheet("填写说明");
+            var help = helpFirst ? wb.getSheet("填写说明") : wb.createSheet("填写说明");
             help.setColumnWidth(0, 22 * 256);
             help.setColumnWidth(1, 80 * 256);
             int h = 0;
             for (String n : notes) help.createRow(h++).createCell(0).setCellValue(n);
-            h++;
-            var hh = help.createRow(h++);
-            hh.createCell(0).setCellValue("列名");
-            hh.createCell(1).setCellValue("说明");
-            hh.getCell(0).setCellStyle(headerStyle);
-            hh.getCell(1).setCellStyle(headerStyle);
-            for (var col : columns) {
-                var hr = help.createRow(h++);
-                hr.createCell(0).setCellValue(col.header() + (col.mandatory() ? "（必填）" : ""));
-                String desc = col.hint();
-                if (!col.options().isEmpty()) desc =
-                    (desc.isEmpty() ? "" : desc + "；") + "可选：" + String.join(" / ", col.options());
-                hr.createCell(1).setCellValue(desc);
+            for (var spec : sheets) {
+                h++;
+                if (sheets.size() > 1) {
+                    var t = help.createRow(h++);
+                    t.createCell(0).setCellValue("【" + spec.title() + "】");
+                    t.getCell(0).setCellStyle(titleStyle);
+                }
+                var hh = help.createRow(h++);
+                hh.createCell(0).setCellValue("列名");
+                hh.createCell(1).setCellValue("说明");
+                hh.getCell(0).setCellStyle(headerStyle);
+                hh.getCell(1).setCellStyle(headerStyle);
+                for (var col : spec.columns()) {
+                    var hr = help.createRow(h++);
+                    hr.createCell(0).setCellValue(col.header() + (col.mandatory() ? "（必填）" : ""));
+                    String desc = col.hint();
+                    if (!col.options().isEmpty()) desc =
+                        (desc.isEmpty() ? "" : desc + "；") + "可选：" + String.join(" / ", col.options());
+                    hr.createCell(1).setCellValue(desc);
+                }
             }
             wb.write(out);
             return out.toByteArray();
@@ -160,68 +187,81 @@ public final class ExcelIo {
 
     /** 读取第一张表。按表头文字（去掉 * 与空格）匹配列；未识别的列忽略。 */
     public static Sheet read(MultipartFile file, List<Column> columns) {
+        try (Workbook wb = open(file)) {
+            return readSheet(wb.getSheetAt(0), columns);
+        } catch (IOException | RuntimeException e) {
+            if (e instanceof ApiException a) throw a;
+            throw new ApiException("无法读取 Excel 文件，请确认文件未损坏且为 .xlsx 格式");
+        }
+    }
+
+    /** 打开上传的工作簿（整本导入时按表名逐张读取）。调用方负责关闭。 */
+    public static Workbook open(MultipartFile file) {
         if (file == null || file.isEmpty()) throw new ApiException("请选择 Excel 文件");
         if (file.getSize() > MAX_BYTES) throw new ApiException("Excel 文件不能超过 10 MB");
         String name = Objects.toString(file.getOriginalFilename(), "").toLowerCase(Locale.ROOT);
         if (!name.endsWith(".xlsx")) throw new ApiException(
             "请上传 .xlsx 格式的 Excel 文件（旧版 .xls 请另存为 .xlsx）"
         );
-        try (InputStream in = file.getInputStream(); Workbook wb = WorkbookFactory.create(in)) {
-            var sheet = wb.getSheetAt(0);
-            var head = sheet.getRow(sheet.getFirstRowNum());
-            if (head == null) throw new ApiException("Excel 第一张表没有表头");
-            var byHeader = new HashMap<String, Column>();
-            for (var col : columns) byHeader.put(normalizeHeader(col.header()), col);
-            // 旧版表头别名：早期导出文件的列名（品牌、接单日期、团队人工）仍可导入
-            for (var e : HEADER_ALIASES.entrySet())
-                if (byHeader.containsKey(e.getValue())) byHeader.putIfAbsent(e.getKey(), byHeader.get(e.getValue()));
-            var colIndex = new LinkedHashMap<Integer, Column>();
-            for (var cell : head) {
-                var col = byHeader.get(normalizeHeader(cellText(cell, true)));
-                if (col != null) colIndex.put(cell.getColumnIndex(), col);
-            }
-            var present = new HashSet<String>();
-            colIndex.values().forEach(c -> present.add(c.key()));
-            for (var col : columns)
-                if (col.mandatory() && !present.contains(col.key())) throw new ApiException(
-                    "缺少必填列：" + col.header() + "（请使用导出的文件或模板）"
-                );
-            var rows = new ArrayList<Row>();
-            for (int r = head.getRowNum() + 1; r <= sheet.getLastRowNum(); r++) {
-                var row = sheet.getRow(r);
-                if (row == null) continue;
-                var values = new HashMap<String, String>();
-                boolean any = false;
-                for (var e : colIndex.entrySet()) {
-                    var cell = row.getCell(e.getKey());
-                    var col = e.getValue();
-                    if (
-                        cell != null &&
-                        col.text() &&
-                        cell.getCellType() == CellType.NUMERIC &&
-                        Math.abs(cell.getNumericCellValue()) >= 1e15
-                    ) {
-                        throw new ApiException(
-                            "第 " +
-                                (r + 1) +
-                                " 行“" +
-                                col.header() +
-                                "”是超长数字，Excel 已丢失精度。请将该列设为文本格式后重新填写"
-                        );
-                    }
-                    String v = cell == null ? "" : cellText(cell, col.text()).trim();
-                    if (!v.isEmpty()) any = true;
-                    values.put(col.key(), v);
-                }
-                if (!any) continue;
-                rows.add(new Row(r + 1, values));
-                if (rows.size() > MAX_ROWS) throw new ApiException("一次最多导入 " + MAX_ROWS + " 行");
-            }
-            return new Sheet(present, rows);
+        try (InputStream in = file.getInputStream()) {
+            return WorkbookFactory.create(in);
         } catch (IOException | RuntimeException e) {
-            if (e instanceof ApiException a) throw a;
             throw new ApiException("无法读取 Excel 文件，请确认文件未损坏且为 .xlsx 格式");
         }
+    }
+
+    /** 读一张表：首行表头，之后每行一条；全空的行跳过。 */
+    public static Sheet readSheet(org.apache.poi.ss.usermodel.Sheet sheet, List<Column> columns) {
+        var head = sheet.getRow(sheet.getFirstRowNum());
+        if (head == null) throw new ApiException("表“" + sheet.getSheetName() + "”没有表头");
+        var byHeader = new HashMap<String, Column>();
+        for (var col : columns) byHeader.put(normalizeHeader(col.header()), col);
+        // 旧版表头别名：早期导出文件的列名（品牌、接单日期、团队人工）仍可导入
+        for (var e : HEADER_ALIASES.entrySet())
+            if (byHeader.containsKey(e.getValue())) byHeader.putIfAbsent(e.getKey(), byHeader.get(e.getValue()));
+        var colIndex = new LinkedHashMap<Integer, Column>();
+        for (var cell : head) {
+            var col = byHeader.get(normalizeHeader(cellText(cell, true)));
+            if (col != null) colIndex.put(cell.getColumnIndex(), col);
+        }
+        var present = new HashSet<String>();
+        colIndex.values().forEach(c -> present.add(c.key()));
+        for (var col : columns)
+            if (col.mandatory() && !present.contains(col.key())) throw new ApiException(
+                "缺少必填列：" + col.header() + "（请使用导出的文件或模板）"
+            );
+        var rows = new ArrayList<Row>();
+        for (int r = head.getRowNum() + 1; r <= sheet.getLastRowNum(); r++) {
+            var row = sheet.getRow(r);
+            if (row == null) continue;
+            var values = new HashMap<String, String>();
+            boolean any = false;
+            for (var e : colIndex.entrySet()) {
+                var cell = row.getCell(e.getKey());
+                var col = e.getValue();
+                if (
+                    cell != null &&
+                    col.text() &&
+                    cell.getCellType() == CellType.NUMERIC &&
+                    Math.abs(cell.getNumericCellValue()) >= 1e15
+                ) {
+                    throw new ApiException(
+                        "第 " +
+                            (r + 1) +
+                            " 行“" +
+                            col.header() +
+                            "”是超长数字，Excel 已丢失精度。请将该列设为文本格式后重新填写"
+                    );
+                }
+                String v = cell == null ? "" : cellText(cell, col.text()).trim();
+                if (!v.isEmpty()) any = true;
+                values.put(col.key(), v);
+            }
+            if (!any) continue;
+            rows.add(new Row(r + 1, values));
+            if (rows.size() > MAX_ROWS) throw new ApiException("一次最多导入 " + MAX_ROWS + " 行");
+        }
+        return new Sheet(present, rows);
     }
 
     static String normalizeHeader(String h) {
