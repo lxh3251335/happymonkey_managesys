@@ -8,6 +8,7 @@ import ProductComponents from '../components/ProductComponents.vue'
 import BundleManager from '../components/BundleManager.vue'
 import ExcelTools from '../components/ExcelTools.vue'
 import { api, post, put, canWrite, canSeeCost } from '../api'
+import { useUrlState } from '../urlState'
 import { dict, loadDictionaries } from '../dictionaries'
 import type { Partner, Product } from '../types'
 import { money, missingInvoiceFields, invoiceText, invoiceTypeName } from '../utils'
@@ -36,6 +37,10 @@ const freshPartner = () => ({
   contractCode: '',
 })
 const partner = ref(freshPartner())
+/** 标签页和搜索词写进地址：数据检查、顶栏搜索可以直接打开某条资料。 */
+const urlState = useUrlState()
+urlState('tab', tab, 'CUSTOMER')
+urlState('q', keyword, '')
 const freshProduct = () => ({
   scenario: scenario.value || '',
   name: '',

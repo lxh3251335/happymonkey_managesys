@@ -29,10 +29,10 @@ public class ExcelController {
         return workbook.datasets();
     }
 
-    /** 完整模板：所有数据表 + 总说明。 */
+    /** 完整模板：所有数据表 + 总说明；sample=true 为带示例资料的填写示范。 */
     @GetMapping("/workbook/template")
-    public ResponseEntity<byte[]> workbookTemplate() {
-        return xlsx("基础资料-完整导入模板.xlsx", workbook.template());
+    public ResponseEntity<byte[]> workbookTemplate(@RequestParam(defaultValue = "false") boolean sample) {
+        return xlsx(sample ? "基础资料-填写示范.xlsx" : "基础资料-完整导入模板.xlsx", workbook.template(sample));
     }
 
     @PostMapping(value = "/workbook/preview", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)

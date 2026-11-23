@@ -436,4 +436,29 @@ class FullImportTest extends ApiTestSupport {
             )
             .andExpect(status().isForbidden());
     }
+
+    @Test
+    void sampleWorkbookImportsWithoutErrors() throws Exception {
+        byte[] sample = mvc
+            .perform(get("/api/excel/workbook/template?sample=true"))
+            .andExpect(status().isOk())
+            .andReturn()
+            .getResponse()
+            .getContentAsByteArray();
+        var preview = workbook("preview", sample, status().isOk());
+        var problems = new ArrayList<String>();
+        for (var s : preview.path("sheets"))
+            if (!"OK".equals(s.path("status").asText())) problems.add(
+                s.path("title").asText() +
+                    " " +
+                    s.path("status").asText() +
+                    " " +
+                    s.path("message").asText() +
+                    " " +
+                    s.path("report")
+            );
+        assertThat(problems).isEmpty();
+        assertThat(preview.path("errors").asInt()).isZero();
+        assertThat(preview.path("created").asInt()).isGreaterThan(15);
+    }
 }

@@ -44,11 +44,18 @@ public class WorkbookService {
             .toList();
     }
 
-    /** 完整模板：所有数据表（空表）+ 一张总的填写说明，按导入顺序排列。 */
-    public byte[] template() {
+    /**
+     * 完整模板：所有数据表 + 一张总的填写说明，按导入顺序排列。
+     *
+     * @param sample true 时每张表带几行互相对应的示例资料（填写示范，都以“示例”开头），否则是空表
+     */
+    public byte[] template(boolean sample) {
         var sheets = new ArrayList<ExcelIo.SheetSpec>();
         var notes = new ArrayList<String>();
-        notes.add("基础资料完整导入模板");
+        notes.add(sample ? "基础资料完整导入模板（填写示范）" : "基础资料完整导入模板");
+        if (sample) notes.add(
+            "0. 每张表里都是示例资料（名称都以“示例”开头），从业务线、客户、产品到合同、开票、回款前后对应，照着改成自己的资料即可；正式导入前请删掉示例行。"
+        );
         notes.add(
             "1. 各表按导入顺序排列，后面的表依赖前面的资料；可以一次填多张表后用“整本导入”，也可以把单张表另存后在对应页面单独导入。"
         );
@@ -69,9 +76,9 @@ public class WorkbookService {
                 .stream()
                 .filter(c -> Roles.canSeeCost() || !CostRedaction.SENSITIVE.contains(c.key()))
                 .toList();
-            sheets.add(new ExcelIo.SheetSpec(d.title, columns, List.of()));
+            sheets.add(new ExcelIo.SheetSpec(d.title, columns, sample ? SampleRows.of(d) : List.of()));
         }
-        db.audit("EXCEL_EXPORT", "workbook", "完整导入模板");
+        db.audit("EXCEL_EXPORT", "workbook", sample ? "完整导入模板（填写示范）" : "完整导入模板");
         return ExcelIo.write(sheets, notes, true);
     }
 
